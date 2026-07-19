@@ -1,11 +1,19 @@
 from django.utils import timezone
 from rest_framework import serializers
+from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, SubmissionAttachment
 
 
 class SectionSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='section_id', read_only=True)
+    instructor = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(role=User.RoleChoices.INSTRUCTOR),
+        required=False,
+        allow_null=True
+    )
+    instructor_name = serializers.SerializerMethodField()
+    student_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Section
@@ -17,14 +25,26 @@ class SectionSerializer(serializers.ModelSerializer):
             'program',
             'year_level',
             'academic_year',
-            'adviser_instructor',
+            'instructor',
+            'instructor_name',
             'student_count',
             'status',
         ]
 
+    def get_instructor_name(self, obj):
+        if obj.instructor:
+            return f"{obj.instructor.first_name} {obj.instructor.last_name}".strip() or obj.instructor.username
+        return None
+
+    def get_student_count(self, obj):
+        if hasattr(obj, 'actual_student_count'):
+            return int(obj.actual_student_count or 0)
+        return obj.users.count()
+
 
 class InstructorSectionSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='section_id', read_only=True)
+    student_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Section
@@ -38,6 +58,11 @@ class InstructorSectionSerializer(serializers.ModelSerializer):
             'status',
         ]
 
+    def get_student_count(self, obj):
+        if hasattr(obj, 'actual_student_count'):
+            return int(obj.actual_student_count or 0)
+        return obj.users.count()
+
 
 class UserSerializer(serializers.ModelSerializer):
     section_name = serializers.CharField(source='section.section_name', read_only=True)
@@ -48,10 +73,13 @@ class UserSerializer(serializers.ModelSerializer):
     attendance_percentage = serializers.SerializerMethodField()
     profile_image_url = serializers.SerializerMethodField()
     assigned_sections = serializers.SerializerMethodField()
+    last_access_status = serializers.SerializerMethodField()
+    last_access_time = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
+            'instructor_id',
             'id',
             'student_id',
             'username',
@@ -73,6 +101,8 @@ class UserSerializer(serializers.ModelSerializer):
             'attendance_present_count',
             'attendance_absent_count',
             'attendance_percentage',
+            'last_access_status',
+            'last_access_time',
             'created_at',
             'updated_at'
         ]
@@ -96,10 +126,28 @@ class UserSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(url)
         return url
 
+    def get_last_access_status(self, obj):
+        last_log = obj.access_logs.order_by('-access_time').first()
+        if not last_log:
+            return None
+        return last_log.status
+
+    def get_last_access_time(self, obj):
+        last_log = obj.access_logs.order_by('-access_time').first()
+        if not last_log:
+            return None
+        request = self.context.get('request')
+        try:
+            return last_log.access_time.isoformat()
+        except Exception:
+            return None
+
     def get_assigned_sections(self, obj):
         if obj.role != User.RoleChoices.INSTRUCTOR:
             return []
-        sections = obj.instructor_sections.all()
+        # prefer explicit assigned_sections (ManyToMany), fallback to
+        # sections where the instructor FK is set for backward compatibility
+        sections = obj.assigned_sections.all() if hasattr(obj, 'assigned_sections') and obj.assigned_sections.exists() else obj.instructor_sections.all()
         return [
             {
                 'section_id': section.section_id,
@@ -161,12 +209,51 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class ActivityAttachmentSerializer(serializers.ModelSerializer):
+    filename = serializers.SerializerMethodField()
+    url = serializers.SerializerMethodField()
+    size = serializers.SerializerMethodField()
     file_name = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ActivityAttachment
+        fields = ['id', 'filename', 'url', 'size', 'uploaded_at', 'file_name', 'file_size', 'download_url']
+        read_only_fields = ['id', 'filename', 'url', 'size', 'uploaded_at', 'file_name', 'file_size', 'download_url']
+
+    def get_filename(self, obj):
+        return obj.original_filename or obj.file.name.split('/')[-1]
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        try:
+            url = obj.file.url
+        except ValueError:
+            return None
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_size(self, obj):
+        return obj.file_size or obj.file.size
+
+    def get_file_name(self, obj):
+        return self.get_filename(obj)
+
+    def get_file_size(self, obj):
+        return self.get_size(obj)
+
+    def get_download_url(self, obj):
+        return self.get_url(obj)
+
+
+class SubmissionAttachmentSerializer(serializers.ModelSerializer):
+    file_name = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubmissionAttachment
         fields = ['id', 'file', 'file_name', 'file_size', 'download_url', 'uploaded_at']
         read_only_fields = ['id', 'file_name', 'file_size', 'download_url', 'uploaded_at']
 
@@ -193,11 +280,26 @@ class ActivitySerializer(serializers.ModelSerializer):
     section_name = serializers.CharField(source='section.section_name', read_only=True)
     instructor_name = serializers.SerializerMethodField()
     attachments = ActivityAttachmentSerializer(many=True, read_only=True)
+    deleted_attachments = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
     student_submission_status = serializers.SerializerMethodField()
     student_score = serializers.SerializerMethodField()
     student_feedback = serializers.SerializerMethodField()
     student_submitted_at = serializers.SerializerMethodField()
     student_graded_at = serializers.SerializerMethodField()
+
+    submitted_students_count = serializers.SerializerMethodField()
+    assigned_student_count = serializers.SerializerMethodField()
+    assigned_sections = serializers.PrimaryKeyRelatedField(
+        queryset=Section.objects.all(),
+        many=True,
+        required=False,
+        allow_empty=True
+    )
+    assigned_instructor = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(role=User.RoleChoices.INSTRUCTOR),
+        required=False,
+        allow_null=True
+    )
 
     class Meta:
         model = Activity
@@ -206,11 +308,17 @@ class ActivitySerializer(serializers.ModelSerializer):
             'title',
             'description',
             'instructions',
+            'activity_type',
             'due_date',
             'max_score',
             'allow_resubmission',
             'section',
             'section_name',
+            'assigned_sections',
+            'assigned_instructor',
+            'deleted_attachments',
+            'cabinet_station',
+            'status',
             'created_by',
             'created_by_name',
             'created_by_last_name',
@@ -221,6 +329,8 @@ class ActivitySerializer(serializers.ModelSerializer):
             'student_feedback',
             'student_submitted_at',
             'student_graded_at',
+            'submitted_students_count',
+            'assigned_student_count',
             'created_at',
             'updated_at'
         ]
@@ -231,23 +341,111 @@ class ActivitySerializer(serializers.ModelSerializer):
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return None
 
+    def _get_uploaded_files(self):
+        if not hasattr(self, 'initial_data'):
+            return []
+
+        data = self.initial_data
+        if hasattr(data, 'getlist'):
+            values = data.getlist('attachments')
+            if values:
+                return [value for value in values if value is not None]
+
+        values = data.get('attachments', [])
+        if isinstance(values, (list, tuple)):
+            return [value for value in values if value is not None]
+        if values is None:
+            return []
+        return [values]
+
+    def _get_deleted_attachment_ids(self):
+        if not hasattr(self, 'initial_data'):
+            return []
+
+        data = self.initial_data
+        if hasattr(data, 'getlist'):
+            values = data.getlist('deleted_attachments')
+            if values:
+                return [int(value) for value in values if value is not None and str(value).strip()]
+
+        values = data.get('deleted_attachments', [])
+        if isinstance(values, (list, tuple)):
+            return [int(value) for value in values if value is not None and str(value).strip()]
+        if values in (None, ''):
+            return []
+        return [int(values)]
+
+    def _create_attachment(self, activity, uploaded_file):
+        if uploaded_file is None:
+            return None
+        if not isinstance(uploaded_file, (UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile)) and not hasattr(uploaded_file, 'read'):
+            return None
+
+        attachment = ActivityAttachment(activity=activity, file=uploaded_file)
+        original_name = getattr(uploaded_file, 'name', '') or getattr(uploaded_file, 'filename', '') or ''
+        attachment.original_filename = original_name.split('/')[-1]
+        attachment.file_size = getattr(uploaded_file, 'size', 0) or getattr(uploaded_file, '_size', 0) or 0
+        attachment.content_type = getattr(uploaded_file, 'content_type', '') or ''
+        attachment.save()
+        return attachment
+
+    def _delete_attachments(self, activity, attachment_ids):
+        attachments = ActivityAttachment.objects.filter(activity=activity, id__in=attachment_ids)
+        for attachment in attachments:
+            if attachment.file:
+                attachment.file.delete(save=False)
+            attachment.delete()
+
+    def create(self, validated_data):
+        assigned_sections = validated_data.pop('assigned_sections', [])
+        assigned_instructor = validated_data.pop('assigned_instructor', None)
+        if 'section' not in validated_data and assigned_sections:
+            validated_data['section'] = assigned_sections[0]
+
+        activity = super().create(validated_data)
+        if assigned_instructor is not None:
+            activity.assigned_instructor = assigned_instructor
+            activity.save(update_fields=['assigned_instructor'])
+        if assigned_sections:
+            activity.assigned_sections.set(assigned_sections)
+
+        for uploaded_file in self._get_uploaded_files():
+            self._create_attachment(activity, uploaded_file)
+        return activity
+
+    def update(self, instance, validated_data):
+        assigned_sections = validated_data.pop('assigned_sections', None)
+        assigned_instructor = validated_data.pop('assigned_instructor', None)
+
+        activity = super().update(instance, validated_data)
+        if assigned_instructor is not None:
+            activity.assigned_instructor = assigned_instructor
+            activity.save(update_fields=['assigned_instructor'])
+        if assigned_sections is not None:
+            activity.assigned_sections.set(assigned_sections)
+
+        deleted_attachment_ids = self._get_deleted_attachment_ids()
+        if deleted_attachment_ids:
+            self._delete_attachments(activity, deleted_attachment_ids)
+
+        for uploaded_file in self._get_uploaded_files():
+            self._create_attachment(activity, uploaded_file)
+        return activity
+
     def get_student_submission_status(self, obj):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
         if not user or user.role != User.RoleChoices.STUDENT:
             return None
-
         submission = Submission.objects.filter(activity=obj, student=user).order_by('-submitted_at').first()
-        now = timezone.now()
+
+        # Requirement: status must be 'Not Submitted' unless a Submission record exists.
         if not submission:
-            if obj.due_date and obj.due_date < now:
-                return 'Late Submission'
             return 'Not Submitted'
 
         if submission.score is not None:
             return 'Graded'
-        if obj.due_date and submission.submitted_at and submission.submitted_at > obj.due_date:
-            return 'Late Submission'
+        # If a submission exists and is not graded, mark as Submitted
         return 'Submitted'
 
     def get_student_score(self, obj):
@@ -281,6 +479,18 @@ class ActivitySerializer(serializers.ModelSerializer):
             return None
         submission = Submission.objects.filter(activity=obj, student=user).order_by('-submitted_at').first()
         return submission.graded_at if submission else None
+
+    def get_submitted_students_count(self, obj):
+        if hasattr(obj, 'submitted_students_count'):
+            return int(obj.submitted_students_count or 0)
+        return Submission.objects.filter(activity=obj).values('student').distinct().count()
+
+    def get_assigned_student_count(self, obj):
+        if hasattr(obj, 'assigned_student_count'):
+            return int(obj.assigned_student_count or 0)
+        if obj.section:
+            return obj.section.users.count()
+        return 0
 
 
 class SubmissionHistorySerializer(serializers.ModelSerializer):
@@ -327,6 +537,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     max_score = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
+    temp_upload_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
     previous_attempts = SubmissionHistorySerializer(many=True, read_only=True)
 
     class Meta:
@@ -395,18 +606,55 @@ class SubmissionSerializer(serializers.ModelSerializer):
         return obj.activity.description if obj.activity else None
 
     def get_files(self, obj):
-        """Return file info for display"""
+        """Return file info for display, using SubmissionAttachment when available."""
+        request = self.context.get('request')
+        attachments = getattr(obj, 'attachments', None)
+        if attachments and attachments.exists():
+            data = []
+            for at in attachments.all():
+                try:
+                    data.append({
+                        'id': at.id,
+                        'name': at.file.name.split('/')[-1],
+                        'size': at.file.size if hasattr(at.file, 'size') else None,
+                        'url': request.build_absolute_uri(at.file.url) if request else at.file.url,
+                    })
+                except:
+                    continue
+            return data
+
         if obj.file:
             try:
                 return [{
                     'id': 1,
                     'name': obj.file.name.split('/')[-1],
                     'size': obj.file.size if hasattr(obj.file, 'size') else None,
-                    'url': self.context.get('request').build_absolute_uri(obj.file.url) if self.context.get('request') else obj.file.url
+                    'url': request.build_absolute_uri(obj.file.url) if request else obj.file.url
                 }]
             except:
                 return []
         return []
+
+    def create(self, validated_data):
+        # Support creating a Submission that references TemporaryUpload ids.
+        temp_ids = validated_data.pop('temp_upload_ids', None)
+        submission = super().create(validated_data)
+        if temp_ids:
+            uploads = TemporaryUpload.objects.filter(id__in=temp_ids, user=submission.student)
+            first_saved = False
+            for up in uploads:
+                try:
+                    # Create a SubmissionAttachment for each uploaded temp file
+                    att = SubmissionAttachment.objects.create(submission=submission, file=up.file)
+                    if not first_saved:
+                        # also set main submission.file for backward compatibility
+                        submission.file = att.file
+                        submission.save(update_fields=['file'])
+                        first_saved = True
+                except Exception:
+                    continue
+                up.delete()
+        return submission
 
     def get_previous_attempts(self, obj):
         previous = Submission.objects.filter(activity=obj.activity, student=obj.student).exclude(pk=obj.pk).order_by('-attempt')

@@ -5,7 +5,7 @@ from rest_framework import viewsets, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import IsAdminRole, IsInstructorRole, IsStudentRole
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
@@ -15,7 +15,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
 
-from .models import Section, User, Activity, Submission, AccessLog, CabinetEvent, Notification
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload
+from .models import SubmissionAttachment
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
@@ -57,28 +58,15 @@ class SectionViewSet(viewsets.ModelViewSet):
         if not user or not user.is_authenticated:
             return Section.objects.none()
 
-        full_name = user.get_full_name().strip()
-        instructor_filters = Q(instructor=user)
-        text_filters = Q(adviser_instructor__icontains=user.username)
-
-        if full_name:
-            text_filters |= Q(adviser_instructor__icontains=full_name)
-            text_filters |= Q(adviser_instructor__icontains=user.first_name)
-            text_filters |= Q(adviser_instructor__icontains=user.last_name)
-
-        if user.email:
-            email_local = user.email.split('@')[0]
-            text_filters |= Q(adviser_instructor__icontains=user.email)
-            text_filters |= Q(adviser_instructor__icontains=email_local)
-
-        return Section.objects.filter(instructor_filters | text_filters).distinct()
+        return Section.objects.filter(instructor=user)
 
     def get_queryset(self):
         user = self.request.user
+        queryset = Section.objects.annotate(actual_student_count=models.Count('users', distinct=True))
         if user.role == 'admin':
-            return Section.objects.all()
+            return queryset
         if user.role == 'instructor':
-            return self._instructor_section_filter()
+            return queryset.filter(instructor=user)
         return Section.objects.none()
 
 
@@ -98,22 +86,9 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def _instructor_student_filter(self):
         user = self.request.user
-        full_name = user.get_full_name().strip()
         filters = Q(role='student')
-
         instructor_filters = Q(section__instructor=user)
-        text_filters = Q(section__adviser_instructor__icontains=user.username)
-        if full_name:
-            text_filters |= Q(section__adviser_instructor__icontains=full_name)
-            text_filters |= Q(section__adviser_instructor__icontains=user.first_name)
-            text_filters |= Q(section__adviser_instructor__icontains=user.last_name)
-
-        if user.email:
-            email_local = user.email.split('@')[0]
-            text_filters |= Q(section__adviser_instructor__icontains=user.email)
-            text_filters |= Q(section__adviser_instructor__icontains=email_local)
-
-        return User.objects.filter(filters & (instructor_filters | text_filters)).distinct()
+        return User.objects.filter(filters & instructor_filters).distinct()
 
     def get_queryset(self):
         user = self.request.user
@@ -218,17 +193,6 @@ def get_instructor_notification_recipients_for_student(student):
     instructors = set()
     if student.section and student.section.instructor and student.section.instructor.role == User.RoleChoices.INSTRUCTOR:
         instructors.add(student.section.instructor)
-
-    if student.section and student.section.adviser_instructor:
-        adviser_text = (student.section.adviser_instructor or '').lower()
-        for instructor in User.objects.filter(role=User.RoleChoices.INSTRUCTOR):
-            if instructor.email and instructor.email.lower() in adviser_text:
-                instructors.add(instructor)
-            if instructor.username and instructor.username.lower() in adviser_text:
-                instructors.add(instructor)
-            full_name = instructor.get_full_name().strip().lower()
-            if full_name and full_name in adviser_text:
-                instructors.add(instructor)
 
     return instructors
 
@@ -393,6 +357,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     - Students can view activities
     """
     authentication_classes = [JWTAuthentication]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ActivityFilter
     search_fields = ['title', 'description', 'created_by__first_name', 'created_by__last_name']
@@ -403,14 +368,20 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        base_qs = Activity.objects.select_related('created_by', 'section').prefetch_related('attachments')
+        annotated_qs = base_qs.annotate(
+            submitted_students_count=models.Count('submissions__student', distinct=True),
+            assigned_student_count=models.Count('section__users', distinct=True),
+        )
+
         if user.role == 'admin':
-            return Activity.objects.all().select_related('created_by', 'section').prefetch_related('attachments')
+            return annotated_qs
         elif user.role == 'instructor':
-            return Activity.objects.filter(created_by=user).select_related('created_by', 'section').prefetch_related('attachments')
+            return annotated_qs.filter(created_by=user)
         elif user.role == 'student':
             if not user.section:
                 return Activity.objects.none()
-            return Activity.objects.filter(section=user.section).select_related('created_by', 'section').prefetch_related('attachments')
+            return annotated_qs.filter(section=user.section)
         return Activity.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -441,7 +412,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'list' or self.action == 'retrieve' or self.action == 'stats':
             return [IsAuthenticated()]
-        elif self.action in ['create', 'update', 'partial_update', 'destroy']:
+        elif self.action in ['create', 'update', 'partial_update', 'destroy', 'delete_attachment']:
             return [IsAuthenticated(), IsInstructorRole()]
         else:
             return [IsAuthenticated(), IsAdminRole()]
@@ -452,6 +423,18 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save()
+
+    @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<attachment_id>[^/.]+)')
+    def delete_attachment(self, request, pk=None, attachment_id=None):
+        activity = self.get_object()
+        attachment = activity.attachments.filter(id=attachment_id).first()
+        if not attachment:
+            return Response({'detail': 'Attachment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if attachment.file:
+            attachment.file.delete(save=False)
+        attachment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['get'])
     def submissions(self, request, pk=None):
@@ -505,19 +488,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
 
     def _instructor_submission_filters(self):
         user = self.request.user
-        full_name = user.get_full_name().strip()
-        filters = Q(activity__created_by=user) | Q(student__section__instructor=user) | Q(student__section__adviser_instructor__icontains=user.username)
-
-        if full_name:
-            filters |= Q(student__section__adviser_instructor__icontains=full_name)
-            filters |= Q(student__section__adviser_instructor__icontains=user.first_name)
-            filters |= Q(student__section__adviser_instructor__icontains=user.last_name)
-
-        if user.email:
-            email_local = user.email.split('@')[0]
-            filters |= Q(student__section__adviser_instructor__icontains=user.email)
-            filters |= Q(student__section__adviser_instructor__icontains=email_local)
-
+        filters = Q(activity__created_by=user) | Q(student__section__instructor=user)
         return filters
 
     def get_queryset(self):
@@ -537,19 +508,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             return True
 
         if submission.student and submission.student.section:
-            section = submission.student.section
-            if section.instructor == user:
-                return True
-            if user.username and user.username.lower() in (section.adviser_instructor or '').lower():
-                return True
-            full_name = user.get_full_name().strip()
-            if full_name and full_name.lower() in (section.adviser_instructor or '').lower():
-                return True
-            if user.email and user.email.lower() in (section.adviser_instructor or '').lower():
-                return True
-            email_local = user.email.split('@')[0] if user.email else ''
-            if email_local and email_local.lower() in (section.adviser_instructor or '').lower():
-                return True
+            return submission.student.section.instructor == user
 
         return False
 
@@ -571,71 +530,103 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         submission = serializer.save(student=student, attempt=(last_attempt.attempt + 1 if last_attempt else 1))
         create_submission_notifications(submission)
 
-    @action(detail=False, methods=['get'])
-    def stats(self, request):
-        """Get submission statistics for the logged-in student"""
-        user = request.user
-        if user.role != 'student':
-            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
-        queryset = self.get_queryset()
-        now = timezone.now()
+class TemporaryUploadViewSet(viewsets.ModelViewSet):
+    """Endpoint for students to upload temporary files (drafts).
 
-        total_submissions = queryset.count()
-        pending_review = queryset.filter(score__isnull=True).count()
-        graded_submissions = queryset.filter(score__isnull=False).count()
-        late_submissions = queryset.filter(
-            score__isnull=True,
-            activity__due_date__isnull=False,
-            submitted_at__gt=models.F('activity__due_date')
-        ).count()
+    - POST to create a TemporaryUpload with the file in 'file' form field.
+    - GET to list temporary uploads for the current user.
+    - DELETE to remove a temporary upload.
+    """
+    serializer_class = None
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+    parser_classes = (MultiPartParser, FormParser)
 
-        return Response({
-            'totalSubmissions': total_submissions,
-            'pendingReview': pending_review,
-            'graded': graded_submissions,
-            'lateSubmissions': late_submissions,
-        })
+    def get_queryset(self):
+        return TemporaryUpload.objects.filter(user=self.request.user)
 
-    @action(detail=True, methods=['post'])
-    def grade(self, request, pk=None):
-        submission = self.get_object()
-        if request.user.role == 'instructor' and not self._is_instructor_authorized_for_submission(submission):
-            return Response(
-                {'detail': 'Permission denied. You can only grade submissions for your own activities or students.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        if request.user.role not in ['instructor', 'admin']:
-            return Response(
-                {'detail': 'Only instructors and admins can grade submissions.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+    def list(self, request, *args, **kwargs):
+        uploads = self.get_queryset()
+        data = [
+            {
+                'id': up.id,
+                'name': up.file.name.split('/')[-1],
+                'size': up.file.size if hasattr(up.file, 'size') else None,
+                'uploaded_at': up.uploaded_at,
+                'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
+            }
+            for up in uploads
+        ]
+        return Response(data)
 
-        score = request.data.get('score')
-        feedback = request.data.get('feedback', '')
+    def create(self, request, *args, **kwargs):
+        file = request.FILES.get('file')
+        activity_id = request.data.get('activity')
+        activity = None
+        if activity_id:
+            try:
+                activity = Activity.objects.get(pk=activity_id)
+            except Activity.DoesNotExist:
+                activity = None
+        if not file:
+            return Response({'detail': 'File is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        up = TemporaryUpload.objects.create(user=request.user, file=file, activity=activity)
+        data = {
+            'id': up.id,
+            'name': up.file.name.split('/')[-1],
+            'size': up.file.size if hasattr(up.file, 'size') else None,
+            'uploaded_at': up.uploaded_at,
+            'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
+        }
+        return Response(data, status=status.HTTP_201_CREATED)
 
-        if score is None or score == '':
-            return Response(
-                {'detail': 'Score is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    def destroy(self, request, pk=None, *args, **kwargs):
+        up = self.get_queryset().filter(pk=pk).first()
+        if not up:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        up.file.delete(save=False)
+        up.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-        try:
-            score = float(score)
-        except (ValueError, TypeError):
-            return Response(
-                {'detail': 'Score must be a valid number.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
-        submission.score = score
-        submission.feedback = feedback
-        submission.graded_by = request.user
-        submission.graded_at = timezone.now()
-        submission.save()
+class StudentSubmissionUpload(APIView):
+    """Dedicated endpoint for student temp uploads: POST /api/student/submissions/upload"""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+    parser_classes = (MultiPartParser, FormParser)
 
-        serializer = self.get_serializer(submission)
-        return Response(serializer.data)
+    def post(self, request, *args, **kwargs):
+        files = request.FILES.getlist('files') or []
+        activity_id = request.data.get('activity')
+        activity = None
+        if activity_id:
+            try:
+                activity = Activity.objects.get(pk=activity_id)
+            except Activity.DoesNotExist:
+                activity = None
+
+        if not files:
+            # also allow single file field 'file'
+            single = request.FILES.get('file')
+            if single:
+                files = [single]
+
+        if not files:
+            return Response({'detail': 'No files uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        results = []
+        for f in files:
+            up = TemporaryUpload.objects.create(user=request.user, file=f, activity=activity)
+            results.append({
+                'id': up.id,
+                'name': up.file.name.split('/')[-1],
+                'size': up.file.size if hasattr(up.file, 'size') else None,
+                'uploaded_at': up.uploaded_at,
+                'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
+            })
+
+        return Response({'uploads': results}, status=status.HTTP_201_CREATED)
 
 
 class AccessLogFilter(filters.FilterSet):
@@ -722,22 +713,9 @@ class AccessLogViewSet(viewsets.ModelViewSet):
         if user.role == 'student':
             return AccessLog.objects.filter(user=user)
         if user.role == 'instructor':
-            full_name = user.get_full_name().strip()
             student_filters = Q(user__role=User.RoleChoices.STUDENT)
             instructor_filters = Q(user__section__instructor=user)
-            text_filters = Q(user__section__adviser_instructor__icontains=user.username)
-
-            if full_name:
-                text_filters |= Q(user__section__adviser_instructor__icontains=full_name)
-                text_filters |= Q(user__section__adviser_instructor__icontains=user.first_name)
-                text_filters |= Q(user__section__adviser_instructor__icontains=user.last_name)
-
-            if user.email:
-                email_local = user.email.split('@')[0]
-                text_filters |= Q(user__section__adviser_instructor__icontains=user.email)
-                text_filters |= Q(user__section__adviser_instructor__icontains=email_local)
-
-            return AccessLog.objects.filter(student_filters & (instructor_filters | text_filters)).distinct()
+            return AccessLog.objects.filter(student_filters & instructor_filters).distinct()
         return AccessLog.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -919,10 +897,30 @@ class DashboardStatisticsView(APIView):
         user = request.user
         now = timezone.now()
 
+        # Initialize collections and numeric totals to safe defaults so
+        # later role-specific branches can override them without
+        # causing UnboundLocalError when a variable isn't set.
         upcoming_activities = []
         recent_submissions = []
         recent_access_logs = []
         recent_cabinet_events = []
+
+        total_users = 0
+        total_students = 0
+        total_activities = 0
+        total_submissions = 0
+        total_access_logs = 0
+        total_cabinet_events = 0
+        pending_grading = 0
+        submitted_activities = 0
+        pending_activities = 0
+        overdue_activities = 0
+        cabinet_access_today = 0
+        # assigned_qs and submission_qs are used for some calculations
+        # (overdue etc.) and will be set for students; default to empty
+        # querysets to avoid attribute errors.
+        assigned_qs = Activity.objects.none()
+        submission_qs = Submission.objects.none()
 
         if user.role == 'admin':
             total_users = User.objects.count()

@@ -5,8 +5,7 @@ import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
 import Modal from '../../components/Modal'
-import ViewSubmissionModal from '../../components/student/ViewSubmissionModal.jsx'
-import SubmitActivityModal from '../../components/student/SubmitActivityModal.jsx'
+import ActivityDetailInlineModal from '../../components/student/ActivityDetailInlineModal.jsx'
 
 const statusOptions = [
   { value: 'all', label: 'All' },
@@ -61,7 +60,6 @@ export default function StudentSubmissions() {
   const [pageCount, setPageCount] = useState(0)
   const [activeSubmission, setActiveSubmission] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
-  const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState(null)
 
   useEffect(() => {
@@ -99,18 +97,27 @@ export default function StudentSubmissions() {
     }
   }
 
-  const handleViewSubmission = (submission) => {
-    setActiveSubmission(submission)
-    setIsViewModalOpen(true)
-  }
-
-  const handleOpenSubmitModal = (activity) => {
-    setSelectedActivity(activity)
-    setIsSubmitModalOpen(true)
+  const handleViewSubmission = async (submission) => {
+    // Open integrated activity detail modal (fetch full activity if needed)
+    const activityId = submission?.activity?.id || submission?.activity || submission?.activity_id
+    if (!activityId) {
+      setActiveSubmission(submission)
+      setIsViewModalOpen(true)
+      return
+    }
+    try {
+      const res = await api.get(`/activities/${activityId}/`)
+      setSelectedActivity(res.data)
+      setIsViewModalOpen(true)
+    } catch (err) {
+      console.error('Failed to load activity for view:', err)
+      setActiveSubmission(submission)
+      setIsViewModalOpen(true)
+    }
   }
 
   const handleSubmissionSuccess = () => {
-    setIsSubmitModalOpen(false)
+    setIsViewModalOpen(false)
     setSelectedActivity(null)
     fetchStats()
     fetchSubmissions()
@@ -243,24 +250,12 @@ export default function StudentSubmissions() {
         />
       </div>
 
-      <ViewSubmissionModal
-        submission={activeSubmission}
+      <ActivityDetailInlineModal
+        activity={selectedActivity || activeSubmission?.activity}
         isOpen={isViewModalOpen}
         onClose={() => {
           setIsViewModalOpen(false)
           setActiveSubmission(null)
-        }}
-        onResubmit={(activity) => {
-          setIsViewModalOpen(false)
-          handleOpenSubmitModal(activity)
-        }}
-      />
-
-      <SubmitActivityModal
-        activity={selectedActivity}
-        isOpen={isSubmitModalOpen}
-        onClose={() => {
-          setIsSubmitModalOpen(false)
           setSelectedActivity(null)
         }}
         onSuccess={handleSubmissionSuccess}

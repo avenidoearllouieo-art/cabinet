@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0011_activity_instructions_activityattachment'),
+        ('api', '0011_activity_attachment'),
     ]
 
     operations = [

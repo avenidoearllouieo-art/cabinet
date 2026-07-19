@@ -1,10 +1,10 @@
 import { useMemo, useEffect, useState } from 'react'
-import { ClipboardList, Search, ArrowRight, Plus } from 'lucide-react'
+import { ClipboardList, Search, ArrowRight, Plus, Clock, CheckCircle2, AlertCircle, User } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
-import ActivityDetailModal from '../../components/student/ActivityDetailModal.jsx'
+import ActivityDetailInlineModal from '../../components/student/ActivityDetailInlineModal.jsx'
 
 const statusOptions = [
   { value: 'all', label: 'All' },
@@ -32,6 +32,29 @@ function statusClass(status) {
     default:
       return 'bg-amber-100 text-amber-700'
   }
+}
+
+function humanRemaining(due) {
+  if (!due) return '—'
+  const diff = new Date(due).getTime() - Date.now()
+  const abs = Math.abs(diff)
+  const minutes = Math.round(abs / 60000)
+  if (diff < 0) {
+    if (minutes < 60) return `${minutes}m overdue`
+    if (minutes < 1440) return `${Math.round(minutes / 60)}h overdue`
+    return `${Math.round(minutes / 1440)}d overdue`
+  }
+  if (minutes < 60) return `${minutes}m left`
+  if (minutes < 1440) return `${Math.round(minutes / 60)}h left`
+  return `${Math.round(minutes / 1440)}d left`
+}
+
+function statusBadge(status) {
+  const s = String(status || '').toLowerCase()
+  if (s.includes('graded')) return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700"><CheckCircle2 size={12} /> Graded</span>
+  if (s.includes('submitted')) return <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700"><User size={12} /> Submitted</span>
+  if (s.includes('late') || s.includes('overdue')) return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700"><AlertCircle size={12} /> Overdue</span>
+  return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"><Clock size={12} /> Pending</span>
 }
 
 function formatDate(value) {
@@ -73,6 +96,11 @@ export default function StudentActivities() {
     fetchActivities()
   }, [query, statusFilter, sortBy, page])
 
+  useEffect(() => {
+    // ensure page resets when filters change
+    setPage(1)
+  }, [query, statusFilter, sortBy])
+
   const fetchStats = async () => {
     try {
       const response = await api.get('/activities/stats/')
@@ -80,6 +108,27 @@ export default function StudentActivities() {
     } catch (err) {
       console.error('Failed to load activity stats:', err)
     }
+  }
+
+  const computeStatsFromActivities = (acts) => {
+    const total = acts.length
+    let submitted = 0
+    let overdue = 0
+    let pending = 0
+
+    acts.forEach((a) => {
+      const status = String(a.student_submission_status || '').toLowerCase()
+      if (status === 'submitted') submitted += 1
+      else if (status === 'overdue') overdue += 1
+      else pending += 1
+    })
+
+    setStats({
+      totalActivities: total,
+      pendingActivities: pending,
+      submittedActivities: submitted,
+      overdueActivities: overdue,
+    })
   }
 
   const fetchActivities = async () => {
@@ -94,8 +143,60 @@ export default function StudentActivities() {
         params.status = statusFilter
       }
       const response = await api.get('/activities/', { params })
-      setActivities(response.data.results || [])
+      const fetchedActivities = response.data.results || []
       setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
+
+      // Fetch current user profile to get student id, then fetch that student's submissions
+      let profile = null
+      try {
+        const profileRes = await api.get('/users/profile/')
+        profile = profileRes.data
+      } catch (err) {
+        // ignore profile fetch error
+      }
+
+      let submissions = []
+      try {
+        if (profile?.id) {
+          const subsRes = await api.get('/submissions/', { params: { student: profile.id, page_size: 1000 } })
+          submissions = Array.isArray(subsRes.data) ? subsRes.data : subsRes.data.results || []
+        }
+      } catch (err) {
+        console.error('Failed to load submissions for student:', err)
+      }
+
+      // Map submissions by activity id
+      const submissionMap = new Map()
+      submissions.forEach((s) => {
+        submissionMap.set(String(s.activity), s)
+      })
+
+      // Annotate activities with submission-derived status fields
+      const annotated = fetchedActivities.map((act) => {
+        const sub = submissionMap.get(String(act.id)) || null
+        const duePassed = act.due_date ? new Date(act.due_date) < new Date() : false
+
+        if (sub) {
+          return {
+            ...act,
+            student_submission_status: 'Submitted',
+            student_submitted_at: sub.submitted_at || sub.created_at || null,
+            student_score: sub.score ?? null,
+            submission: sub,
+          }
+        }
+
+        return {
+          ...act,
+          student_submission_status: duePassed ? 'Overdue' : 'Not Submitted',
+          student_submitted_at: null,
+          student_score: null,
+          submission: null,
+        }
+      })
+
+      setActivities(annotated)
+      computeStatsFromActivities(annotated)
     } catch (err) {
       console.error('Failed to load activities:', err)
     } finally {
@@ -109,28 +210,42 @@ export default function StudentActivities() {
   }
 
   const handleSubmitActivity = (activity) => {
-    window.location.href = `/student/submissions?activity=${activity.id}`
+    setActiveActivity(activity)
+    setIsModalOpen(true)
+  }
+
+  const handleModalSuccess = () => {
+    setIsModalOpen(false)
+    setActiveActivity(null)
+    fetchActivities()
   }
 
   const tableColumns = useMemo(() => [
     { key: 'title', label: 'Activity Title' },
-    { key: 'description', label: 'Description', render: (value) => shortDescription(value) },
+    { key: 'description', label: 'Description', render: (value) => shortDescription(value), className: 'max-w-[320px]' },
     { key: 'instructor_name', label: 'Instructor' },
-    { key: 'due_date', label: 'Due Date', render: (value) => formatDate(value) },
-    { key: 'student_submission_status', label: 'Status', render: (value) => (
-      <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${statusClass(value)}`}>
-        {value}
-      </span>
-    ) },
+    { key: 'section_name', label: 'Section' },
+    { key: 'due_date', label: 'Due Date', render: (value) => (<div>{formatDate(value)}<div className="text-xs text-slate-400">{value ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}</div></div>) },
+    { key: 'remaining', label: 'Remaining', render: (_v, row) => humanRemaining(row.due_date) },
+    { key: 'student_submission_status', label: 'Status', render: (value) => statusBadge(value) },
     { key: 'student_score', label: 'Score', render: (value) => (value != null ? value : '—') },
-    { key: 'actions', label: 'Actions', render: (_, row) => (
-      <button
-        type="button"
-        onClick={() => handleViewActivity(row)}
-        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-      >
-        <ArrowRight size={16} /> View Activity
-      </button>
+    { key: 'actions', label: 'Actions', render: (_v, row) => (
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleViewActivity(row) }}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          <ArrowRight size={14} /> View
+        </button>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleSubmitActivity(row) }}
+          className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+        >
+          Submit
+        </button>
+      </div>
     ) },
   ], [])
 
@@ -198,7 +313,18 @@ export default function StudentActivities() {
           columns={tableColumns}
           data={activities}
           loading={loading}
+          onRowClick={handleViewActivity}
           showActions={false}
+          emptyMessage="No activities assigned to your section."
+          rowClassName={(row) => {
+            const due = row?.due_date ? new Date(row.due_date).getTime() : null
+            if (!due) return ''
+            const diffHours = (due - Date.now()) / 3600000
+            const status = String(row?.student_submission_status || '').toLowerCase()
+            if (diffHours < 0 && !status.includes('submitted') && !status.includes('graded')) return 'bg-rose-50'
+            if (diffHours <= 24 && diffHours >= 0 && !status.includes('submitted') && !status.includes('graded')) return 'bg-amber-50'
+            return ''
+          }}
         />
 
         <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
@@ -224,11 +350,14 @@ export default function StudentActivities() {
         </div>
       </div>
 
-      <ActivityDetailModal
+      <ActivityDetailInlineModal
         activity={activeActivity}
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSubmit={handleSubmitActivity}
+        onClose={() => {
+          setIsModalOpen(false)
+          setActiveActivity(null)
+        }}
+        onSuccess={handleModalSuccess}
       />
     </div>
   )

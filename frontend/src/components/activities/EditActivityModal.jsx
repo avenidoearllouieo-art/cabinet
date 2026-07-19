@@ -10,26 +10,33 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
   const [loadingSections, setLoadingSections] = useState(false)
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
+  const [existingAttachments, setExistingAttachments] = useState([])
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState([])
 
   const blank = {
     title: '',
     description: '',
-    activity_type: 'Assignment',
+    instructions: '',
     section: '',
     due_date: '',
+    due_time: '',
     max_score: '',
+    cabinet_station: '',
     status: 'Published',
+    files: [],
   }
 
   const [form, setForm] = useState(blank)
-  const [initialForm, setInitialForm] = useState(blank)
 
   useEffect(() => {
     if (!isOpen) return
     setErrors({})
     setFormError('')
+    setSuccessMessage('')
     setForm(blank)
-    setInitialForm(blank)
+    setExistingAttachments([])
+    setDeletedAttachmentIds([])
     fetchSections()
     if (resolvedActivityId) {
       fetchActivity(resolvedActivityId)
@@ -57,17 +64,27 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
     try {
       const res = await api.get(`/activities/${id}/`)
       const data = res.data || {}
+      let dueDate = ''
+      let dueTime = ''
+      if (data.due_date) {
+        const [datePart, timePart] = data.due_date.split('T')
+        dueDate = datePart || ''
+        dueTime = timePart ? timePart.slice(0, 5) : ''
+      }
       const loaded = {
         title: data.title || '',
         description: data.description || '',
-        activity_type: data.activity_type || data.type || 'Assignment',
+        instructions: data.instructions || '',
         section: data.section || '',
-        due_date: data.due_date || '',
+        due_date: dueDate,
+        due_time: dueTime,
         max_score: data.max_score !== undefined ? String(data.max_score) : '',
+        cabinet_station: data.cabinet_station || '',
         status: data.status || 'Published',
+        files: [],
       }
       setForm(loaded)
-      setInitialForm(loaded)
+      setExistingAttachments(data.attachments || [])
     } catch (e) {
       if (e.response?.status === 401) {
         onUnauthorized && onUnauthorized()
@@ -87,11 +104,22 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
     setFormError('')
   }
 
+  const handleFileChange = (e) => {
+    const selected = Array.from(e.target.files || [])
+    setForm((f) => ({ ...f, files: selected }))
+  }
+
+  const handleRemoveAttachment = (attachmentId) => {
+    setExistingAttachments((prev) => prev.filter((att) => att.id !== attachmentId))
+    setDeletedAttachmentIds((prev) => [...prev, attachmentId])
+  }
+
   const handleSubmit = async (e) => {
     e && e.preventDefault && e.preventDefault()
     setSaving(true)
     setErrors({})
     setFormError('')
+    setSuccessMessage('')
 
     if (!resolvedActivityId) {
       setFormError('Missing activity id')
@@ -99,25 +127,34 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
       return
     }
 
-    const payload = {}
-    const fields = ['title', 'description', 'activity_type', 'section', 'due_date', 'max_score', 'status']
-    fields.forEach((field) => {
-      const value = field === 'section' ? (form.section || null) : form[field]
-      const initial = field === 'section' ? (initialForm.section || null) : initialForm[field]
-      if (value !== initial) payload[field] = value
-    })
-
-    if (Object.keys(payload).length === 0) {
-      onSaved && onSaved({ ...form, id: resolvedActivityId })
-      onClose && onClose()
-      setSaving(false)
-      return
+    const dueDateTime = form.due_date && form.due_time ? `${form.due_date}T${form.due_time}` : form.due_date || null
+    const payload = {
+      title: form.title,
+      description: form.description,
+      instructions: form.instructions,
+      section: form.section || null,
+      due_date: dueDateTime,
+      max_score: form.max_score ? Number(form.max_score) : 100,
+      cabinet_station: form.cabinet_station || '',
+      status: form.status,
     }
 
     try {
-      const res = await api.patch(`/activities/${resolvedActivityId}/`, payload)
+      const formData = new FormData()
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          formData.append(key, value)
+        }
+      })
+      form.files.forEach((file) => formData.append('attachments', file))
+      deletedAttachmentIds.forEach((id) => formData.append('deleted_attachments', id))
+
+      const res = await api.patch(`/activities/${resolvedActivityId}/`, formData)
       onSaved && onSaved(res.data)
-      onClose && onClose()
+      setExistingAttachments(res.data.attachments || [])
+      setForm((prev) => ({ ...prev, files: [] }))
+      setDeletedAttachmentIds([])
+      setSuccessMessage('Activity updated successfully. Attachment changes were saved.')
     } catch (err) {
       if (err.response?.status === 401) {
         onUnauthorized && onUnauthorized()
@@ -160,6 +197,10 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div>
         )}
 
+        {successMessage && (
+          <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{successMessage}</div>
+        )}
+
         {loading ? (
           <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading...</div>
         ) : (
@@ -176,25 +217,19 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
               {errors.description && <p className="mt-1 text-xs text-red-600">{String(errors.description)}</p>}
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Activity Type</label>
-              <select value={form.activity_type} onChange={handleChange('activity_type')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="Assignment">Assignment</option>
-                <option value="Quiz">Quiz</option>
-                <option value="Laboratory">Laboratory</option>
-                <option value="Project">Project</option>
-                <option value="Other">Other</option>
-              </select>
-              {errors.activity_type && <p className="mt-1 text-xs text-red-600">{String(errors.activity_type)}</p>}
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-slate-700">Instructions (Rich Text)</label>
+              <textarea value={form.instructions} onChange={handleChange('instructions')} placeholder="Paste or type detailed instructions here..." rows="4" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+              {errors.instructions && <p className="mt-1 text-xs text-red-600">{String(errors.instructions)}</p>}
             </div>
 
-            <div>
+            <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700">Section</label>
               <select value={form.section} onChange={handleChange('section')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
                 <option value="">Select a section</option>
                 {sections.map((section) => (
-                  <option key={section.id || section.code} value={section.id || section.code}>
-                    {section.name || section.code || '—'}
+                  <option key={section.id || section.section_code || section.section_id} value={section.id || section.section_code || section.section_id}>
+                    {section.section_name || section.name || section.section_code || 'Unnamed section'}
                   </option>
                 ))}
               </select>
@@ -203,8 +238,29 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
 
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Due Date</label>
-              <input type="datetime-local" value={form.due_date} onChange={handleChange('due_date')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+              <input type="date" value={form.due_date} onChange={handleChange('due_date')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
               {errors.due_date && <p className="mt-1 text-xs text-red-600">{String(errors.due_date)}</p>}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Due Time</label>
+              <input type="time" value={form.due_time} onChange={handleChange('due_time')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+              {errors.due_time && <p className="mt-1 text-xs text-red-600">{String(errors.due_time)}</p>}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Upload Files</label>
+              <input type="file" multiple onChange={handleFileChange} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+              {form.files.length > 0 && (
+                <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  <p className="font-medium text-slate-700">New files to upload</p>
+                  <ul className="mt-2 space-y-1">
+                    {form.files.map((file) => (
+                      <li key={`${file.name}-${file.size}`} className="truncate">• {file.name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             <div>
@@ -213,13 +269,55 @@ export default function EditActivityModal({ isOpen, activityId, activity, onClos
               {errors.max_score && <p className="mt-1 text-xs text-red-600">{String(errors.max_score)}</p>}
             </div>
 
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Cabinet Station (optional)</label>
+              <input type="text" value={form.cabinet_station} onChange={handleChange('cabinet_station')} placeholder="e.g., Cabinet 1" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+              {errors.cabinet_station && <p className="mt-1 text-xs text-red-600">{String(errors.cabinet_station)}</p>}
+            </div>
+
             <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700">Status</label>
               <select value={form.status} onChange={handleChange('status')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
                 <option value="Published">Published</option>
                 <option value="Draft">Draft</option>
+                <option value="Scheduled">Scheduled</option>
+                <option value="Archived">Archived</option>
+                <option value="Closed">Closed</option>
               </select>
               {errors.status && <p className="mt-1 text-xs text-red-600">{String(errors.status)}</p>}
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-700">Existing Attachments</p>
+                  <span className="text-xs text-slate-500">Remove files before saving</span>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {existingAttachments.length ? (
+                    existingAttachments.map((attachment) => (
+                      <div key={attachment.id} className="flex flex-col gap-3 rounded-[12px] border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-medium text-slate-900">{attachment.filename || attachment.file_name || attachment.file || 'Attachment'}</p>
+                          <p className="text-sm text-slate-500">{attachment.size ? `${attachment.size} bytes` : attachment.file_size ? `${attachment.file_size} bytes` : ''}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {(attachment.url || attachment.download_url) && (
+                            <a href={attachment.url || attachment.download_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
+                              Download
+                            </a>
+                          )}
+                          <button type="button" onClick={() => handleRemoveAttachment(attachment.id)} className="rounded-full border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50">
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-[12px] border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">No existing files.</div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}

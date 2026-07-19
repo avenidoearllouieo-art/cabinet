@@ -1,7 +1,121 @@
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import AccessLog, Notification, User
+from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment
+
+
+class ActivityCreationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='instructor1',
+            email='instructor1@example.com',
+            password='secret123',
+            role='instructor',
+            first_name='Instructor',
+            last_name='One',
+            instructor_id='I001',
+            nfc_uid='NFC-INST-001',
+        )
+        self.section_a = Section.objects.create(section_name='Section A', section_code='SEC-A', instructor=self.instructor)
+        self.section_b = Section.objects.create(section_name='Section B', section_code='SEC-B', instructor=self.instructor)
+
+    def test_instructor_can_create_activity_with_extended_fields(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        payload = {
+            'title': 'Extended Activity',
+            'description': 'A richer activity form payload.',
+            'instructions': '<p>Read the brief carefully.</p>',
+            'activity_type': 'Assignment',
+            'assigned_sections': [self.section_a.section_id, self.section_b.section_id],
+            'assigned_instructor': self.instructor.id,
+            'due_date': '2026-08-10T09:00:00Z',
+            'max_score': 100,
+            'cabinet_station': 'Cabinet 1',
+            'status': 'Draft',
+        }
+
+        response = self.client.post('/api/activities/', payload, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertEqual(data['title'], 'Extended Activity')
+        self.assertEqual(data['activity_type'], 'Assignment')
+        self.assertEqual(data['status'], 'Draft')
+        self.assertEqual(data['cabinet_station'], 'Cabinet 1')
+        self.assertEqual(data['assigned_instructor'], self.instructor.id)
+        self.assertEqual(set(data['assigned_sections']), {self.section_a.section_id, self.section_b.section_id})
+
+        activity = Activity.objects.get(id=data['id'])
+        self.assertEqual(activity.instructions, '<p>Read the brief carefully.</p>')
+        self.assertTrue(activity.assigned_sections.filter(section_id__in=[self.section_a.section_id, self.section_b.section_id]).count() == 2)
+
+    def test_instructor_can_upload_files_with_activity(self):
+        self.client.force_authenticate(user=self.instructor)
+        file_upload = SimpleUploadedFile('brief.pdf', b'file-content', content_type='application/pdf')
+
+        response = self.client.post('/api/activities/', {
+            'title': 'Activity with File',
+            'description': 'An activity with uploaded files.',
+            'instructions': '<p>Read the brief.</p>',
+            'activity_type': 'Project',
+            'assigned_sections': [self.section_a.section_id],
+            'assigned_instructor': self.instructor.id,
+            'due_date': '2026-08-10T09:00:00Z',
+            'max_score': 100,
+            'cabinet_station': 'Cabinet 2',
+            'status': 'Published',
+            'attachments': [file_upload],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertTrue(data['attachments'])
+        self.assertEqual(data['attachments'][0]['filename'], 'brief.pdf')
+        activity = Activity.objects.get(id=data['id'])
+        self.assertTrue(activity.attachments.exists())
+
+    def test_instructor_can_edit_activity_and_keep_existing_attachments(self):
+        self.client.force_authenticate(user=self.instructor)
+        activity = Activity.objects.create(
+            title='Editable Activity',
+            description='Original description',
+            instructions='Original instructions',
+            created_by=self.instructor,
+            section=self.section_a,
+        )
+        existing_attachment = ActivityAttachment.objects.create(activity=activity, file=SimpleUploadedFile('old.pdf', b'old', content_type='application/pdf'))
+
+        new_file = SimpleUploadedFile('new.pdf', b'new', content_type='application/pdf')
+        response = self.client.patch(f'/api/activities/{activity.id}/', {
+            'title': 'Updated Activity',
+            'attachments': [new_file],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['title'], 'Updated Activity')
+        self.assertEqual(len(data['attachments']), 2)
+        remaining_ids = {item['id'] for item in data['attachments']}
+        self.assertIn(existing_attachment.id, remaining_ids)
+
+    def test_delete_attachment_endpoint_removes_database_and_file(self):
+        self.client.force_authenticate(user=self.instructor)
+        activity = Activity.objects.create(
+            title='Deleteable Activity',
+            description='desc',
+            instructions='instr',
+            created_by=self.instructor,
+            section=self.section_a,
+        )
+        attachment = ActivityAttachment.objects.create(activity=activity, file=SimpleUploadedFile('delete-me.pdf', b'data', content_type='application/pdf'))
+
+        response = self.client.delete(f'/api/activities/{activity.id}/attachments/{attachment.id}/')
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(ActivityAttachment.objects.filter(id=attachment.id).exists())
 
 
 class StudentNotificationTests(TestCase):
@@ -93,6 +207,167 @@ class StudentProfileTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['email'], 'updated@example.com')
         self.assertEqual(response.json()['contact_number'], '09171234567')
+
+
+class ProfileAdminFormTests(TestCase):
+    def test_instructor_creation_form_does_not_require_student_id(self):
+        from .admin import InstructorCreationForm
+
+        form = InstructorCreationForm(data={
+            'first_name': 'Test',
+            'last_name': 'Instructor',
+            'instructor_id': 'I100',
+            'email': 'test-instructor@example.com',
+            'nfc_uid': 'NFC-TEST-001',
+            'password1': 'secret1234',
+            'password2': 'secret1234',
+            'is_active': True,
+        })
+
+        self.assertTrue(form.is_valid(), msg=form.errors)
+        user = form.save()
+        self.assertEqual(user.role, 'instructor')
+        self.assertEqual(user.instructor_id, 'I100')
+        self.assertIsNone(user.student_id)
+
+    def test_student_creation_form_does_not_require_instructor_id(self):
+        from .admin import StudentCreationForm
+
+        form = StudentCreationForm(data={
+            'first_name': 'Test',
+            'last_name': 'Student',
+            'student_id': 'S100',
+            'email': 'test-student@example.com',
+            'nfc_uid': 'NFC-STUD-001',
+            'password1': 'secret1234',
+            'password2': 'secret1234',
+            'is_active': True,
+        })
+
+        self.assertTrue(form.is_valid(), msg=form.errors)
+        user = form.save()
+        self.assertEqual(user.role, 'student')
+        self.assertEqual(user.student_id, 'S100')
+        self.assertIsNone(user.instructor_id)
+
+    def test_admin_creation_form_does_not_create_mixed_role_data(self):
+        from .admin import AdminCreationForm
+
+        form = AdminCreationForm(data={
+            'first_name': 'Test',
+            'last_name': 'Admin',
+            'email': 'test-admin@example.com',
+            'nfc_uid': 'NFC-ADMIN-001',
+            'password1': 'secret1234',
+            'password2': 'secret1234',
+            'is_active': True,
+        })
+
+        self.assertTrue(form.is_valid(), msg=form.errors)
+        user = form.save()
+        self.assertEqual(user.role, 'admin')
+        self.assertIsNone(user.student_id)
+        self.assertIsNone(user.instructor_id)
+        self.assertFalse(user.assigned_sections.exists())
+        from .models import AdminProfile
+        self.assertIsInstance(user, AdminProfile)
+        self.assertEqual(user._meta.model_name, 'adminprofile')
+
+    def test_create_superuser_sets_admin_role_and_superuser_flags(self):
+        from .models import User, AdminProfile, StudentProfile, InstructorProfile
+
+        admin = User.objects.create_superuser(
+            username='superadmin',
+            email='superadmin@example.com',
+            password='secret1234',
+        )
+
+        self.assertEqual(admin.role, User.RoleChoices.ADMIN)
+        self.assertTrue(admin.is_staff)
+        self.assertTrue(admin.is_superuser)
+        self.assertFalse(StudentProfile.objects.filter(pk=admin.pk).exists())
+        self.assertFalse(InstructorProfile.objects.filter(pk=admin.pk).exists())
+        self.assertTrue(AdminProfile.objects.filter(pk=admin.pk).exists())
+        self.assertEqual(admin._meta.model_name, 'user')
+        self.assertEqual(admin._meta.app_label, 'api')
+
+    def test_student_creation_form_saves_studentprofile_instance(self):
+        from .admin import StudentCreationForm
+        from .models import StudentProfile
+
+        form = StudentCreationForm(data={
+            'first_name': 'Test',
+            'last_name': 'Student',
+            'student_id': 'S200',
+            'email': 'test-student2@example.com',
+            'nfc_uid': 'NFC-STUD-002',
+            'password1': 'secret1234',
+            'password2': 'secret1234',
+            'is_active': True,
+        })
+
+        self.assertTrue(form.is_valid(), msg=form.errors)
+        user = form.save()
+        self.assertEqual(user.role, 'student')
+        self.assertIsInstance(user, StudentProfile)
+        self.assertEqual(user._meta.model_name, 'studentprofile')
+
+    def test_instructor_creation_form_saves_instructorprofile_instance(self):
+        from .admin import InstructorCreationForm
+        from .models import InstructorProfile
+
+        form = InstructorCreationForm(data={
+            'first_name': 'Test',
+            'last_name': 'Instructor',
+            'instructor_id': 'I200',
+            'email': 'test-instructor2@example.com',
+            'nfc_uid': 'NFC-INST-002',
+            'password1': 'secret1234',
+            'password2': 'secret1234',
+            'is_active': True,
+        })
+
+        self.assertTrue(form.is_valid(), msg=form.errors)
+        user = form.save()
+        self.assertEqual(user.role, 'instructor')
+        self.assertIsInstance(user, InstructorProfile)
+        self.assertEqual(user._meta.model_name, 'instructorprofile')
+
+    def test_instructor_admin_uses_autocomplete_for_assigned_sections(self):
+        from .admin import InstructorProfileAdmin, SectionAdmin
+
+        self.assertIn('assigned_sections', InstructorProfileAdmin.autocomplete_fields)
+        self.assertIn('section_name', SectionAdmin.search_fields)
+        self.assertIn('section_code', SectionAdmin.search_fields)
+
+    def test_section_admin_instructor_field_filters_instructors(self):
+        from django.contrib import admin
+        from .admin import SectionAdmin
+        from .models import Section, User
+
+        admin_instance = SectionAdmin(Section, admin.site)
+        field = admin_instance.formfield_for_foreignkey(Section._meta.get_field('instructor'), None)
+        self.assertEqual(field.queryset.filter(role=User.RoleChoices.INSTRUCTOR).count(), field.queryset.count())
+
+    def test_activity_admin_instructor_fields_filter_to_instructors(self):
+        from django.contrib import admin
+        from .admin import ActivityAdmin
+        from .models import Activity, User
+
+        admin_instance = ActivityAdmin(Activity, admin.site)
+        assigned_field = admin_instance.formfield_for_foreignkey(Activity._meta.get_field('assigned_instructor'), None)
+        created_field = admin_instance.formfield_for_foreignkey(Activity._meta.get_field('created_by'), None)
+        self.assertEqual(assigned_field.queryset.filter(role=User.RoleChoices.INSTRUCTOR).count(), assigned_field.queryset.count())
+        self.assertEqual(created_field.queryset.filter(role=User.RoleChoices.INSTRUCTOR).count(), created_field.queryset.count())
+
+    def test_submission_admin_student_field_filters_students(self):
+        from django.contrib import admin
+        from .admin import SubmissionAdmin
+        from .models import Submission, User
+
+        admin_instance = SubmissionAdmin(Submission, admin.site)
+        field = admin_instance.formfield_for_foreignkey(Submission._meta.get_field('student'), None)
+        self.assertEqual(field.queryset.filter(role=User.RoleChoices.STUDENT).count(), field.queryset.count())
 
 
 class StudentAccessLogsTests(TestCase):

@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0006_accesslog_cabinet_name_accesslog_reason_and_more'),
+        ('api', '0006_accesslog'),
     ]
 
     operations = [

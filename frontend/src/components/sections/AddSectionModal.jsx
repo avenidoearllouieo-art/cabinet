@@ -1,22 +1,56 @@
 import { createPortal } from 'react-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from '../../services/api.js'
+
+const blank = {
+  section_code: '',
+  section_name: '',
+  program: '',
+  year_level: '',
+  instructor: '',
+  status: 'Active',
+}
 
 export default function AddSectionModal({ isOpen, onClose, onUnauthorized, onSaved }) {
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
 
-  const blank = {
-    section_code: '',
-    section_name: '',
-    program: '',
-    year_level: '',
-    adviser_instructor: '',
-    status: 'Active',
-  }
-
+  const [instructors, setInstructors] = useState([])
+  const [loadingInstructors, setLoadingInstructors] = useState(false)
   const [form, setForm] = useState(blank)
+
+  const fetchInstructors = useCallback(async () => {
+    setLoadingInstructors(true)
+    try {
+      const res = await api.get('/users/?role=instructor')
+      const instructorData = Array.isArray(res.data) ? res.data : res.data.results || []
+      setInstructors(instructorData)
+    } catch (e) {
+      if (e.response?.status === 401) {
+        onUnauthorized && onUnauthorized()
+      } else {
+        console.error('Failed to load instructors', e)
+      }
+    } finally {
+      setLoadingInstructors(false)
+    }
+  }, [onUnauthorized])
+
+  const resetFormState = useCallback(() => {
+    setErrors({})
+    setFormError('')
+    setForm(blank)
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const load = async () => {
+      resetFormState()
+      await fetchInstructors()
+    }
+    load()
+  }, [isOpen, resetFormState, fetchInstructors])
 
   const handleChange = (key) => (e) => {
     const value = e && e.target ? e.target.value : e
@@ -32,7 +66,15 @@ export default function AddSectionModal({ isOpen, onClose, onUnauthorized, onSav
     setFormError('')
 
     try {
-      const res = await api.post('/sections/', form)
+      const payload = {
+        section_code: form.section_code,
+        section_name: form.section_name,
+        program: form.program,
+        year_level: form.year_level,
+        instructor: form.instructor || null,
+        status: form.status,
+      }
+      const res = await api.post('/sections/', payload)
       onSaved && onSaved(res.data)
       setForm(blank)
       onClose && onClose()
@@ -128,15 +170,24 @@ export default function AddSectionModal({ isOpen, onClose, onUnauthorized, onSav
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Adviser / Instructor</label>
-            <input
-              type="text"
-              value={form.adviser_instructor}
-              onChange={handleChange('adviser_instructor')}
-              placeholder="Enter adviser/instructor name"
+            <label className="mb-1 block text-sm font-medium text-slate-700">Instructor</label>
+            <select
+              value={form.instructor || ''}
+              onChange={handleChange('instructor')}
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            {errors.adviser_instructor && <p className="mt-1 text-xs text-red-600">{String(errors.adviser_instructor)}</p>}
+            >
+              <option value="">Select instructor</option>
+              {loadingInstructors ? (
+                <option value="">Loading instructors...</option>
+              ) : (
+                instructors.map((instructor) => (
+                  <option key={instructor.id} value={instructor.id}>
+                    {`${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || instructor.username}
+                  </option>
+                ))
+              )}
+            </select>
+            {errors.instructor && <p className="mt-1 text-xs text-red-600">{String(errors.instructor)}</p>}
           </div>
 
           <div>

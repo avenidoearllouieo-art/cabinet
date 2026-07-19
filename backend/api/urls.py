@@ -12,6 +12,8 @@ from .views import (
     VerifyNFCView,
     DashboardStatisticsView,
     CustomTokenObtainPairView,
+    StudentSubmissionUpload,
+    TemporaryUploadViewSet,
 )
 
 router = DefaultRouter()
@@ -22,6 +24,7 @@ router.register(r'submissions', SubmissionViewSet, basename='submission')
 router.register(r'access-logs', AccessLogViewSet, basename='accesslog')
 router.register(r'cabinet-events', CabinetEventViewSet, basename='cabinetevent')
 router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'temp-uploads', TemporaryUploadViewSet, basename='tempupload')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -31,4 +34,5 @@ urlpatterns = [
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('verify-nfc/', VerifyNFCView.as_view(), name='verify_nfc'),
     path('dashboard/', DashboardStatisticsView.as_view(), name='dashboard_statistics'),
+    path('student/submissions/upload', StudentSubmissionUpload.as_view(), name='student_submission_upload'),
 ]

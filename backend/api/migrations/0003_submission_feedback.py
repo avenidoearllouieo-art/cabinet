@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0002_alter_section_options_section_adviser_instructor_and_more'),
+        ('api', '0002_section_options'),
     ]
 
     operations = [

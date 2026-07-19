@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0003_submission_feedback_submission_graded_at_and_more'),
+        ('api', '0003_submission_feedback'),
     ]
 
     operations = [

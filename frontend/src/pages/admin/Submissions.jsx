@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Search, Send, CheckCircle2, AlertCircle, Clock } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Search, Send, CheckCircle2, AlertCircle, Clock, MoreHorizontal, Eye, Trash2 } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -76,23 +76,59 @@ const resolveStatus = (submission) => {
   return 'pending'
 }
 
+const resolveInstructor = (submission) => {
+  const explicit = submission.instructor_name || submission.activity?.instructor_name || submission.activity?.assigned_instructor_name
+  if (explicit) return explicit
+
+  const assignedInstructor = submission.activity?.assigned_instructor || submission.activity?.assignedInstructor
+  if (assignedInstructor) {
+    const fullName = `${assignedInstructor.first_name || ''} ${assignedInstructor.last_name || ''}`.trim()
+    return fullName || assignedInstructor.username || assignedInstructor.email || '—'
+  }
+
+  return '—'
+}
+
 const normalizeText = (value) => (value || '').toString().toLowerCase()
 
 export default function Submissions() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [activityFilter, setActivityFilter] = useState('all')
+  const [activityIdFilter, setActivityIdFilter] = useState(() => {
+    const params = new URLSearchParams(location.search)
+    return params.get('activity') || ''
+  })
   const [statusFilter, setStatusFilter] = useState('all')
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
   const [deletingSubmission, setDeletingSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
+  const [openActionId, setOpenActionId] = useState(null)
+  const actionMenuRef = useRef(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    setActivityIdFilter(params.get('activity') || '')
+  }, [location.search])
 
   useEffect(() => {
     fetchSubmissions()
+  }, [])
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
+        setOpenActionId(null)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   const fetchSubmissions = async () => {
@@ -128,11 +164,12 @@ export default function Submissions() {
           .some((value) => value.includes(keyword))
 
       const matchesActivityFilter = activityFilter === 'all' || activityType === activityFilter
+      const matchesActivityIdFilter = !activityIdFilter || String(submission.activity?.id ?? submission.activity_id ?? submission.activity?.activity_id ?? '').toString() === String(activityIdFilter)
       const matchesStatusFilter = statusFilter === 'all' || status === statusFilter
 
-      return matchesSearch && matchesActivityFilter && matchesStatusFilter
+      return matchesSearch && matchesActivityFilter && matchesActivityIdFilter && matchesStatusFilter
     })
-  }, [submissions, query, activityFilter, statusFilter])
+  }, [submissions, query, activityFilter, activityIdFilter, statusFilter])
 
   const totalSubmissions = submissions.length
   const submittedCount = submissions.filter((submission) => resolveStatus(submission) === 'submitted').length
@@ -142,73 +179,52 @@ export default function Submissions() {
 
   const columns = [
     {
-      key: 'actions',
-      label: 'Actions',
-      className: 'w-[180px] text-left',
-      render: (_value, row) => (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setSelectedSubmissionId(row.id)
-              setIsViewOpen(true)
-            }}
-            className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-          >
-            View
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setDeletingSubmission(row)
-            }}
-            className="rounded-full bg-red-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
-          >
-            Delete
-          </button>
-        </div>
-      ),
-    },
-    {
       key: 'student',
       label: 'Student',
-      render: (_value, row) => row.student_name || `${row.student?.first_name || ''} ${row.student?.last_name || ''}`.trim() || '—',
-    },
-    {
-      key: 'student_id',
-      label: 'Student ID',
-      render: (_value, row) => row.student?.student_id || '—',
+      className: 'min-w-[180px] whitespace-normal',
+      render: (_value, row) => {
+        const studentName = row.student_name || `${row.student?.first_name || ''} ${row.student?.last_name || ''}`.trim() || '—'
+        return (
+          <div className="space-y-1">
+            <div className="font-medium text-[#111827]">{studentName}</div>
+            <div className="text-xs text-[#6B7280]">{row.student?.student_id || '—'}</div>
+          </div>
+        )
+      },
     },
     {
       key: 'activity',
       label: 'Activity',
-      render: (_value, row) => row.activity_title || row.activity?.title || '—',
+      className: 'min-w-[220px] whitespace-normal',
+      render: (_value, row) => (
+        <div className="space-y-1">
+          <div className="font-medium text-[#111827]">{row.activity_title || row.activity?.title || '—'}</div>
+          <div className="text-xs text-[#6B7280]">{resolveActivityType(row)}</div>
+        </div>
+      ),
     },
     {
-      key: 'activity_type',
-      label: 'Activity Type',
-      render: (_value, row) => resolveActivityType(row) || '—',
+      key: 'instructor',
+      label: 'Instructor',
+      className: 'min-w-[160px] whitespace-normal',
+      render: (_value, row) => resolveInstructor(row),
     },
     {
       key: 'section',
       label: 'Section',
+      className: 'min-w-[140px] whitespace-normal',
       render: (_value, row) => row.student?.section_name || row.student?.section?.section_name || '—',
     },
     {
       key: 'submitted_at',
-      label: 'Submitted At',
+      label: 'Submitted',
+      className: 'min-w-[180px] whitespace-normal',
       render: (value, row) => formatDate(value || row.submitted_at),
-    },
-    {
-      key: 'score',
-      label: 'Score',
-      render: (_value, row) => (row.score != null ? row.score : '—'),
     },
     {
       key: 'status',
       label: 'Status',
+      className: 'min-w-[120px] whitespace-normal',
       render: (_value, row) => {
         const status = resolveStatus(row)
         return (
@@ -217,6 +233,62 @@ export default function Submissions() {
           </span>
         )
       },
+    },
+    {
+      key: 'score',
+      label: 'Score',
+      className: 'min-w-[110px] whitespace-normal',
+      render: (_value, row) => (row.score != null ? `${row.score} / 100` : '—'),
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      className: 'w-[90px] text-left',
+      render: (_value, row) => (
+        <div className="relative" ref={openActionId === row.id ? actionMenuRef : null}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpenActionId((current) => (current === row.id ? null : row.id))
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB]"
+            aria-label="Open submission actions"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+
+          {openActionId === row.id && (
+            <div className="absolute right-0 z-30 mt-2 w-40 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setSelectedSubmissionId(row.id)
+                  setIsViewOpen(true)
+                  setOpenActionId(null)
+                }}
+                className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]"
+              >
+                <Eye size={14} />
+                View
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setDeletingSubmission(row)
+                  setOpenActionId(null)
+                }}
+                className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      ),
     },
   ]
 
@@ -234,11 +306,11 @@ export default function Submissions() {
         description="Monitor and manage all student activity submissions."
       />
 
-      <div className="grid gap-6 md:grid-cols-4">
+      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard icon={<Send size={18} />} label="Total Submissions" value={totalSubmissions} subtitle="All student submissions" />
-        <StatCard icon={<CheckCircle2 size={18} />} label="Submitted" value={submittedCount} subtitle="Received on time" />
+        <StatCard icon={<CheckCircle2 size={18} />} label="Graded" value={gradedCount} subtitle="Fully reviewed" />
+        <StatCard icon={<Clock size={18} />} label="Pending Review" value={pendingCount} subtitle="Awaiting review" />
         <StatCard icon={<AlertCircle size={18} />} label="Late" value={lateCount} subtitle="Past due date" />
-        <StatCard icon={<Clock size={18} />} label="Not Graded" value={pendingCount} subtitle="Awaiting review" />
       </div>
 
       {error && (
@@ -248,29 +320,33 @@ export default function Submissions() {
       )}
 
       <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Submission List</h2>
-            <p className="text-sm text-[#6B7280]">Browse and review student submissions.</p>
+            <h2 className="text-lg font-semibold text-[#111827]">Submission Directory</h2>
+            <p className="text-sm text-[#6B7280]">Browse and review student submissions across activities.</p>
           </div>
-          <div className="grid w-full gap-3 md:w-auto md:grid-cols-3">
-            <label className="relative block w-full md:w-[340px]">
-              <span className="sr-only">Search submissions</span>
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search student, activity, or section"
-                className="w-full rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-3 pl-11 pr-4 text-sm text-[#111827] shadow-sm outline-none transition focus:border-[#2563EB] focus:bg-white"
-              />
-            </label>
-            <label className="block w-full md:w-[220px]">
+        </div>
+
+        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <label className="relative block w-full lg:max-w-[360px]">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
+              <Search size={16} />
+            </span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search submissions..."
+              className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+            />
+          </label>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <label className="block min-w-[180px]">
               <span className="sr-only">Filter activity type</span>
               <select
                 value={activityFilter}
                 onChange={(event) => setActivityFilter(event.target.value)}
-                className="w-full rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-3 px-4 text-sm text-[#111827] outline-none transition focus:border-[#2563EB] focus:bg-white"
+                className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
               >
                 {activityTypeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -279,12 +355,12 @@ export default function Submissions() {
                 ))}
               </select>
             </label>
-            <label className="block w-full md:w-[220px]">
+            <label className="block min-w-[180px]">
               <span className="sr-only">Filter status</span>
               <select
                 value={statusFilter}
                 onChange={(event) => setStatusFilter(event.target.value)}
-                className="w-full rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-3 px-4 text-sm text-[#111827] outline-none transition focus:border-[#2563EB] focus:bg-white"
+                className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
               >
                 {statusOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -296,7 +372,12 @@ export default function Submissions() {
           </div>
         </div>
 
-        <DataTable columns={columns} data={filteredSubmissions} loading={loading} />
+        <div className="mb-4 flex items-center justify-between text-sm text-slate-500">
+          <div />
+          <div>{filteredSubmissions.length} result{filteredSubmissions.length === 1 ? '' : 's'}</div>
+        </div>
+
+        <DataTable columns={columns} data={filteredSubmissions} loading={loading} emptyMessage={submissions.length ? 'No submissions match your filters.' : 'No submissions available.'} />
       </div>
 
       {toastMessage && (

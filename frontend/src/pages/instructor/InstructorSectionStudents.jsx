@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -16,11 +16,7 @@ export default function InstructorSectionStudents() {
   const [sortField, setSortField] = useState('name')
   const [sortDirection, setSortDirection] = useState('asc')
 
-  useEffect(() => {
-    fetchSectionStudents()
-  }, [sectionId])
-
-  const fetchSectionStudents = async () => {
+  const fetchSectionStudents = useCallback(async () => {
     try {
       setLoading(true)
       const [sectionResponse, studentResponse] = await Promise.all([
@@ -36,7 +32,14 @@ export default function InstructorSectionStudents() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [sectionId])
+
+  useEffect(() => {
+    const loadStudents = async () => {
+      await fetchSectionStudents()
+    }
+    loadStudents()
+  }, [sectionId, fetchSectionStudents])
 
   const filteredStudents = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -44,7 +47,13 @@ export default function InstructorSectionStudents() {
 
     if (keyword) {
       result = result.filter((student) =>
-        [student.student_id, `${student.first_name} ${student.last_name}`, student.email]
+        [
+          student.student_id,
+          `${student.first_name} ${student.last_name}`,
+          student.email,
+          student.nfc_uid,
+          student.section_name,
+        ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
@@ -64,39 +73,56 @@ export default function InstructorSectionStudents() {
   }, [students, query, sortField, sortDirection])
 
   const columns = [
-    { key: 'student_id', label: 'Student ID', className: 'min-w-[160px]' },
+    {
+      key: 'profile_image_url',
+      label: 'Photo',
+      className: 'min-w-[100px]',
+      render: (_value, row) => (
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 overflow-hidden rounded-full bg-slate-100">
+            {row.profile_image_url ? (
+              <img src={row.profile_image_url} alt={`${row.first_name || ''} ${row.last_name || ''}`} className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-sm text-slate-500">N/A</span>
+            )}
+          </div>
+        </div>
+      ),
+    },
     {
       key: 'full_name',
-      label: 'Full Name',
+      label: 'Student Name',
       className: 'min-w-[220px]',
       render: (_value, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—',
     },
-    { key: 'email', label: 'Email', className: 'min-w-[220px]' },
+    { key: 'student_id', label: 'Student ID', className: 'min-w-[160px]' },
     {
       key: 'nfc_uid',
-      label: 'RFID Number',
+      label: 'NFC UID',
+      className: 'min-w-[160px]',
+      render: (value) => value || '—',
+    },
+    { key: 'email', label: 'Email', className: 'min-w-[220px]' },
+    {
+      key: 'section_name',
+      label: 'Section',
       className: 'min-w-[180px]',
       render: (value) => value || '—',
     },
     {
       key: 'is_active',
-      label: 'Status',
-      className: 'min-w-[120px]',
+      label: 'Registration Status',
+      className: 'min-w-[160px]',
       render: (value) => (value ? 'Active' : 'Inactive'),
     },
     {
-      key: 'actions',
-      label: 'Actions',
-      className: 'min-w-[160px] text-right',
-      render: (_value, row) => (
-        <button
-          type="button"
-          onClick={() => navigate(`/instructor/students/${row.id}`)}
-          className="rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
-        >
-          View Profile
-        </button>
-      ),
+      key: 'last_access_status',
+      label: 'Cabinet Access Status',
+      className: 'min-w-[180px]',
+      render: (value) => {
+        if (!value) return 'No access records'
+        return value === 'success' ? 'Last access successful' : 'Last access failed'
+      },
     },
   ]
 

@@ -1,6 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import api from '../../services/api.js'
+
+const blank = {
+  section_code: '',
+  section_name: '',
+  program: '',
+  year_level: '',
+  instructor: '',
+  status: 'Active',
+}
 
 export default function EditSectionModal({ isOpen, sectionId, section, onClose, onUnauthorized, onSaved }) {
   const resolvedSectionId = section?.id ?? sectionId
@@ -9,30 +18,28 @@ export default function EditSectionModal({ isOpen, sectionId, section, onClose, 
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
 
-  const blank = {
-    section_code: '',
-    section_name: '',
-    program: '',
-    year_level: '',
-    adviser_instructor: '',
-    status: 'Active',
-  }
-
+  const [instructors, setInstructors] = useState([])
+  const [loadingInstructors, setLoadingInstructors] = useState(false)
   const [form, setForm] = useState(blank)
   const [initialForm, setInitialForm] = useState(blank)
 
-  useEffect(() => {
-    if (!isOpen) return
-    setErrors({})
-    setFormError('')
-    setForm(blank)
-    setInitialForm(blank)
-    if (resolvedSectionId) {
-      fetchSection(resolvedSectionId)
+  const fetchInstructors = useCallback(async () => {
+    setLoadingInstructors(true)
+    try {
+      const res = await api.get('/users/?role=instructor')
+      setInstructors(Array.isArray(res.data) ? res.data : res.data.results || [])
+    } catch (e) {
+      if (e.response?.status === 401) {
+        onUnauthorized && onUnauthorized()
+      } else {
+        console.error('Failed to load instructors', e)
+      }
+    } finally {
+      setLoadingInstructors(false)
     }
-  }, [isOpen, resolvedSectionId])
+  }, [onUnauthorized])
 
-  const fetchSection = async (id) => {
+  const fetchSection = useCallback(async (id) => {
     setLoading(true)
     try {
       const res = await api.get(`/sections/${id}/`)
@@ -42,7 +49,7 @@ export default function EditSectionModal({ isOpen, sectionId, section, onClose, 
         section_name: data.section_name || '',
         program: data.program || '',
         year_level: data.year_level || '',
-        adviser_instructor: data.adviser_instructor || '',
+        instructor: data.instructor || '',
         status: data.status || 'Active',
       }
       setForm(loaded)
@@ -57,7 +64,26 @@ export default function EditSectionModal({ isOpen, sectionId, section, onClose, 
     } finally {
       setLoading(false)
     }
-  }
+  }, [onUnauthorized])
+
+  const resetFormState = useCallback(() => {
+    setErrors({})
+    setFormError('')
+    setForm(blank)
+    setInitialForm(blank)
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const load = async () => {
+      resetFormState()
+      await fetchInstructors()
+      if (resolvedSectionId) {
+        await fetchSection(resolvedSectionId)
+      }
+    }
+    load()
+  }, [isOpen, resolvedSectionId, resetFormState, fetchInstructors, fetchSection])
 
   const handleChange = (key) => (e) => {
     const value = e && e.target ? e.target.value : e
@@ -79,10 +105,12 @@ export default function EditSectionModal({ isOpen, sectionId, section, onClose, 
     }
 
     const payload = {}
-    const fields = ['section_code', 'section_name', 'program', 'year_level', 'adviser_instructor', 'status']
+    const fields = ['section_code', 'section_name', 'program', 'year_level', 'instructor', 'status']
     fields.forEach((field) => {
-      if (form[field] !== initialForm[field]) {
-        payload[field] = form[field]
+      const value = field === 'instructor' ? (form.instructor || null) : form[field]
+      const initialValue = field === 'instructor' ? (initialForm.instructor || null) : initialForm[field]
+      if (value !== initialValue) {
+        payload[field] = value
       }
     })
 
@@ -203,15 +231,24 @@ export default function EditSectionModal({ isOpen, sectionId, section, onClose, 
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Adviser / Instructor</label>
-              <input
-                type="text"
-                value={form.adviser_instructor}
-                onChange={handleChange('adviser_instructor')}
-                placeholder="Enter adviser/instructor name"
+              <label className="mb-1 block text-sm font-medium text-slate-700">Instructor</label>
+              <select
+                value={form.instructor || ''}
+                onChange={handleChange('instructor')}
                 className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              {errors.adviser_instructor && <p className="mt-1 text-xs text-red-600">{String(errors.adviser_instructor)}</p>}
+              >
+                <option value="">Select instructor</option>
+                {loadingInstructors ? (
+                  <option value="">Loading instructors...</option>
+                ) : (
+                  instructors.map((instructor) => (
+                    <option key={instructor.id} value={instructor.id}>
+                      {`${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || instructor.username}
+                    </option>
+                  ))
+                )}
+              </select>
+              {errors.instructor && <p className="mt-1 text-xs text-red-600">{String(errors.instructor)}</p>}
             </div>
 
             <div>

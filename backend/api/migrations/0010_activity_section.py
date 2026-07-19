@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0009_user_contact_number_user_profile_image'),
+        ('api', '0009_user_contact_profile'),
     ]
 
     operations = [

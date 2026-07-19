@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0007_alter_submission_unique_together_and_more'),
+        ('api', '0007_submission_unique_together'),
     ]
 
     operations = [

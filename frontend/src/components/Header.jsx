@@ -98,14 +98,14 @@ export default function Header() {
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#9CA3AF]">
               <Search size={16} />
             </span>
-            <input
+              <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={user.role === 'instructor'
                 ? "Search activities, students, or submissions"
                 : user.role === 'student'
-                ? "Search assignments, submissions, or cabinet logs"
+                ? "Search activities, submissions, or cabinet logs"
                 : "Search users, activities, or logs"}
               className="h-11 w-full rounded-[14px] border border-[#E5E7EB] bg-[#F8FAFC] pl-11 pr-3 text-sm text-[#0F172A] outline-none transition focus:border-[#2563EB] focus:bg-white"
             />
