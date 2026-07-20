@@ -379,9 +379,14 @@ class ActivityViewSet(viewsets.ModelViewSet):
         elif user.role == 'instructor':
             return annotated_qs.filter(created_by=user)
         elif user.role == 'student':
+            # Return only activities assigned to the student's section that
+            # the student has not yet submitted. This keeps the Activities
+            # endpoint aligned with standard LMS behavior (activities page
+            # shows pending assignments only).
             if not user.section:
                 return Activity.objects.none()
-            return annotated_qs.filter(section=user.section)
+            submitted_activity_ids = Submission.objects.filter(student=user).values_list('activity_id', flat=True).distinct()
+            return annotated_qs.filter(section=user.section).exclude(id__in=submitted_activity_ids)
         return Activity.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -390,7 +395,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
         if user.role != 'student':
             return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
-        assigned_qs = self.get_queryset()
+        assigned_qs = Activity.objects.filter(section=user.section) if user.section else Activity.objects.none()
         submission_qs = Submission.objects.filter(student=user)
         submitted_activity_ids = submission_qs.values_list('activity_id', flat=True).distinct()
         now = timezone.now()
@@ -416,6 +421,52 @@ class ActivityViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsInstructorRole()]
         else:
             return [IsAuthenticated(), IsAdminRole()]
+
+    @action(detail=False, methods=['get'])
+    def diagnostics(self, request):
+        """Temporary diagnostic endpoint: lists activities with latest submission
+        info for the authenticated student. Returns: activity id, title,
+        latest_submission_id, has_file, has_attachments, submitted_at, score,
+        serializer_computed_status. Remove this endpoint after debugging.
+        """
+        user = request.user
+        if not user or user.role != 'student':
+            return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        activities = Activity.objects.filter(section=user.section).order_by('due_date') if user.section else Activity.objects.none()
+        results = []
+        for a in activities:
+            sub = Submission.objects.filter(activity=a, student=user).order_by('-submitted_at').first()
+            if not sub:
+                results.append({
+                    'activity_id': a.id,
+                    'title': a.title,
+                    'latest_submission_id': None,
+                    'has_file': False,
+                    'has_attachments': False,
+                    'submitted_at': None,
+                    'score': None,
+                    'computed_status': ActivitySerializer(a, context={'request': request}).data.get('student_submission_status')
+                })
+                continue
+
+            try:
+                has_attachments = sub.attachments.exists()
+            except Exception:
+                has_attachments = False
+
+            results.append({
+                'activity_id': a.id,
+                'title': a.title,
+                'latest_submission_id': sub.id,
+                'has_file': bool(sub.file),
+                'has_attachments': has_attachments,
+                'submitted_at': sub.submitted_at,
+                'score': sub.score,
+                'computed_status': ActivitySerializer(a, context={'request': request}).data.get('student_submission_status')
+            })
+
+        return Response({'results': results})
 
     def perform_create(self, serializer):
         activity = serializer.save(created_by=self.request.user)
@@ -529,6 +580,35 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         last_attempt = Submission.objects.filter(activity=activity, student=student).order_by('-attempt').first()
         submission = serializer.save(student=student, attempt=(last_attempt.attempt + 1 if last_attempt else 1))
         create_submission_notifications(submission)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Return submissions summary counts for the current user.
+
+        Response keys are shaped for the frontend: `totalSubmissions`,
+        `pendingReview`, `graded`, `lateSubmissions`.
+        """
+        user = request.user
+        if user.role == 'admin':
+            base_qs = Submission.objects.all()
+        elif user.role == 'instructor':
+            base_qs = Submission.objects.filter(models.Q(activity__created_by=user) | models.Q(student__section__instructor=user))
+        elif user.role == 'student':
+            base_qs = Submission.objects.filter(student=user)
+        else:
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+        total = base_qs.count()
+        graded = base_qs.filter(score__isnull=False).count()
+        pending = base_qs.filter(score__isnull=True).count()
+        late = base_qs.filter(score__isnull=True, activity__due_date__lt=models.F('submitted_at')).count()
+
+        return Response({
+            'totalSubmissions': total,
+            'pendingReview': pending,
+            'graded': graded,
+            'lateSubmissions': late,
+        })
 
 
 class TemporaryUploadViewSet(viewsets.ModelViewSet):

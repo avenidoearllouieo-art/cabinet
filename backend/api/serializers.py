@@ -437,15 +437,28 @@ class ActivitySerializer(serializers.ModelSerializer):
         user = getattr(request, 'user', None)
         if not user or user.role != User.RoleChoices.STUDENT:
             return None
+        # Pick the latest submission for this activity + student.
         submission = Submission.objects.filter(activity=obj, student=user).order_by('-submitted_at').first()
 
-        # Requirement: status must be 'Not Submitted' unless a Submission record exists.
+        # Requirement: status must be 'Not Submitted' unless a meaningful
+        # Submission record exists. Ignore placeholder/empty submissions that
+        # have no file and no attachments.
         if not submission:
+            return 'Not Submitted'
+
+        has_file = bool(getattr(submission, 'file', None))
+        # Check related attachments if any (avoid raising when relation not set)
+        try:
+            has_attachments = submission.attachments.exists()
+        except Exception:
+            has_attachments = False
+
+        if not has_file and not has_attachments:
             return 'Not Submitted'
 
         if submission.score is not None:
             return 'Graded'
-        # If a submission exists and is not graded, mark as Submitted
+
         return 'Submitted'
 
     def get_student_score(self, obj):
@@ -470,6 +483,14 @@ class ActivitySerializer(serializers.ModelSerializer):
         if not user or user.role != User.RoleChoices.STUDENT:
             return None
         submission = Submission.objects.filter(activity=obj, student=user).order_by('-submitted_at').first()
+        if not submission:
+            return None
+        # Treat empty submissions as not submitted
+        try:
+            if not submission.file and not submission.attachments.exists():
+                return None
+        except Exception:
+            pass
         return submission.submitted_at if submission else None
 
     def get_student_graded_at(self, obj):
@@ -478,6 +499,13 @@ class ActivitySerializer(serializers.ModelSerializer):
         if not user or user.role != User.RoleChoices.STUDENT:
             return None
         submission = Submission.objects.filter(activity=obj, student=user).order_by('-submitted_at').first()
+        if not submission:
+            return None
+        try:
+            if not submission.file and not submission.attachments.exists():
+                return None
+        except Exception:
+            pass
         return submission.graded_at if submission else None
 
     def get_submitted_students_count(self, obj):
@@ -520,6 +548,7 @@ class SubmissionHistorySerializer(serializers.ModelSerializer):
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
+    student = serializers.PrimaryKeyRelatedField(read_only=True)
     student_name = serializers.CharField(source='student.first_name', read_only=True)
     student_last_name = serializers.CharField(source='student.last_name', read_only=True)
     student_id = serializers.CharField(source='student.student_id', read_only=True)
@@ -558,6 +587,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'attempt',
             'file',
             'files',
+            'temp_upload_ids',
             'submitted_at',
             'remarks',
             'score',
@@ -575,6 +605,8 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'updated_at'
         ]
         read_only_fields = ['submitted_at', 'updated_at', 'graded_by', 'graded_by_name', 'graded_at', 'status', 'submission_status', 'instructor_name', 'files', 'previous_attempts']
+
+    file = serializers.FileField(required=False, allow_null=True)
 
     def get_status(self, obj):
         if obj.score is not None:
@@ -638,16 +670,19 @@ class SubmissionSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Support creating a Submission that references TemporaryUpload ids.
         temp_ids = validated_data.pop('temp_upload_ids', None)
-        submission = super().create(validated_data)
+        temp_files = []
         if temp_ids:
-            uploads = TemporaryUpload.objects.filter(id__in=temp_ids, user=submission.student)
+            temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
+            if temp_files and 'file' not in validated_data:
+                validated_data['file'] = temp_files[0].file
+
+        submission = super().create(validated_data)
+        if temp_files:
             first_saved = False
-            for up in uploads:
+            for up in temp_files:
                 try:
-                    # Create a SubmissionAttachment for each uploaded temp file
                     att = SubmissionAttachment.objects.create(submission=submission, file=up.file)
                     if not first_saved:
-                        # also set main submission.file for backward compatibility
                         submission.file = att.file
                         submission.save(update_fields=['file'])
                         first_saved = True

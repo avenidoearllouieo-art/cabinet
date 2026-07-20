@@ -136,6 +136,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       setComments('')
       window.alert('Submission created successfully.')
       onSuccess && onSuccess()
+      window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
     } catch (err) {
       setErrors(['Failed to submit.'])
     } finally {
@@ -175,7 +176,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
 
           <div className="rounded-[12px] border bg-white p-4">
             <h4 className="font-semibold">Submission Status</h4>
-            <div className="mt-2 text-sm text-slate-700">{submission ? 'Submitted' : 'Not Submitted'}</div>
+            <div className="mt-2 text-sm text-slate-700">{activity?.student_submission_status || (submission ? 'Submitted' : 'Not Submitted')}</div>
             <div className="mt-3">
               <h5 className="font-semibold">Your Work</h5>
               {submission ? (

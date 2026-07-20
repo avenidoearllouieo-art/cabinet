@@ -5,7 +5,7 @@ import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
 import Modal from '../../components/Modal'
-import ActivityDetailInlineModal from '../../components/student/ActivityDetailInlineModal.jsx'
+import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 
 const statusOptions = [
   { value: 'all', label: 'All' },
@@ -67,6 +67,15 @@ export default function StudentSubmissions() {
     fetchSubmissions()
   }, [query, statusFilter, sortBy, page])
 
+  useEffect(() => {
+    const handler = () => {
+      fetchStats()
+      fetchSubmissions()
+    }
+    window.addEventListener('studentSubmissionSaved', handler)
+    return () => window.removeEventListener('studentSubmissionSaved', handler)
+  }, [])
+
   const fetchStats = async () => {
     try {
       const response = await api.get('/submissions/stats/')
@@ -98,27 +107,15 @@ export default function StudentSubmissions() {
   }
 
   const handleViewSubmission = async (submission) => {
-    // Open integrated activity detail modal (fetch full activity if needed)
-    const activityId = submission?.activity?.id || submission?.activity || submission?.activity_id
-    if (!activityId) {
-      setActiveSubmission(submission)
-      setIsViewModalOpen(true)
-      return
-    }
-    try {
-      const res = await api.get(`/activities/${activityId}/`)
-      setSelectedActivity(res.data)
-      setIsViewModalOpen(true)
-    } catch (err) {
-      console.error('Failed to load activity for view:', err)
-      setActiveSubmission(submission)
-      setIsViewModalOpen(true)
-    }
+    // Open submission viewer modal
+    setActiveSubmission(submission)
+    setIsViewModalOpen(true)
   }
 
   const handleSubmissionSuccess = () => {
     setIsViewModalOpen(false)
     setSelectedActivity(null)
+    setActiveSubmission(null)
     fetchStats()
     fetchSubmissions()
   }
@@ -126,29 +123,42 @@ export default function StudentSubmissions() {
   const tableColumns = useMemo(() => [
     { key: 'activity_title', label: 'Activity Title' },
     { key: 'instructor_name', label: 'Instructor' },
-    { key: 'submitted_at', label: 'Submitted At', render: (value) => formatDate(value) },
     { key: 'due_date', label: 'Due Date', render: (value) => formatDate(value) },
+    { key: 'submitted_at', label: 'Submitted At', render: (value) => formatDate(value) },
+    { key: 'activity_max_score', label: 'Max Score', render: (v) => (v != null ? v : '—') },
+    { key: 'score', label: 'Your Score', render: (v) => (v != null ? v : '—') },
     {
       key: 'submission_status',
       label: 'Status',
       render: (value) => (
         <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${statusBadge(value)}`}>
-          {value || 'Unknown'}
+          {value || 'Pending'}
         </span>
       ),
     },
-    { key: 'score', label: 'Score', render: (value) => (value != null ? `${value}/${100}` : '—') },
+    {
+      key: 'percentage',
+      label: 'Grade %',
+      render: (_v, row) => {
+        const s = row?.score
+        const m = row?.activity_max_score || row?.activity?.max_score
+        if (s == null || m == null) return '—'
+        return `${Math.round((s / m) * 100)}%`
+      }
+    },
     {
       key: 'actions',
       label: 'Actions',
       render: (_, row) => (
-        <button
-          type="button"
-          onClick={() => handleViewSubmission(row)}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-        >
-          <ArrowUpRight size={16} /> View
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleViewSubmission(row)}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            <ArrowUpRight size={16} /> View
+          </button>
+        </div>
       ),
     },
   ], [])
@@ -237,29 +247,33 @@ export default function StudentSubmissions() {
           </div>
         </div>
 
-        <DataTable
-          columns={tableColumns}
-          data={submissions}
-          loading={loading}
-          showActions={false}
-          pagination={{
-            current: page,
-            total: pageCount,
-            onPageChange: setPage,
-          }}
-        />
+        {loading ? (
+          <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">Loading submissions...</div>
+        ) : submissions.length === 0 ? (
+          <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-12 text-center">
+            <div className="mb-4 text-4xl text-[#9CA3AF]">No submissions yet.</div>
+            <p className="text-sm text-[#6B7280]">You haven't submitted any activities yet.</p>
+          </div>
+        ) : (
+          <DataTable
+            columns={tableColumns}
+            data={submissions}
+            loading={loading}
+            showActions={false}
+            pagination={{
+              current: page,
+              total: pageCount,
+              onPageChange: setPage,
+            }}
+          />
+        )}
       </div>
-
-      <ActivityDetailInlineModal
-        activity={selectedActivity || activeSubmission?.activity}
+      <ViewSubmissionModal
         isOpen={isViewModalOpen}
-        onClose={() => {
-          setIsViewModalOpen(false)
-          setActiveSubmission(null)
-          setSelectedActivity(null)
-        }}
-        onSuccess={handleSubmissionSuccess}
+        submission={activeSubmission}
+        onClose={() => setIsViewModalOpen(false)}
       />
+      
     </div>
   )
 }

@@ -9,8 +9,7 @@ import ActivityDetailInlineModal from '../../components/student/ActivityDetailIn
 const statusOptions = [
   { value: 'all', label: 'All' },
   { value: 'pending', label: 'Pending' },
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'graded', label: 'Graded' },
+  { value: 'due_soon', label: 'Due Soon' },
   { value: 'overdue', label: 'Overdue' },
 ]
 
@@ -21,14 +20,12 @@ const sortOptions = [
   { value: 'title', label: 'Alphabetical' },
 ]
 
-function statusClass(status) {
-  switch ((status || '').toLowerCase()) {
-    case 'graded':
-      return 'bg-emerald-100 text-emerald-700'
-    case 'late submission':
+function stateClass(state) {
+  switch ((state || '').toLowerCase()) {
+    case 'overdue':
       return 'bg-rose-100 text-rose-700'
-    case 'submitted':
-      return 'bg-sky-100 text-sky-700'
+    case 'due soon':
+      return 'bg-amber-100 text-amber-700'
     default:
       return 'bg-amber-100 text-amber-700'
   }
@@ -49,11 +46,10 @@ function humanRemaining(due) {
   return `${Math.round(minutes / 1440)}d left`
 }
 
-function statusBadge(status) {
-  const s = String(status || '').toLowerCase()
-  if (s.includes('graded')) return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700"><CheckCircle2 size={12} /> Graded</span>
-  if (s.includes('submitted')) return <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700"><User size={12} /> Submitted</span>
-  if (s.includes('late') || s.includes('overdue')) return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700"><AlertCircle size={12} /> Overdue</span>
+function stateBadge(state) {
+  const s = String(state || '').toLowerCase()
+  if (s === 'overdue') return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700"><AlertCircle size={12} /> Overdue</span>
+  if (s === 'due soon') return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"><Clock size={12} /> Due Soon</span>
   return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"><Clock size={12} /> Pending</span>
 }
 
@@ -84,7 +80,7 @@ export default function StudentActivities() {
   })
   const [activities, setActivities] = useState([])
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('pending')
   const [sortBy, setSortBy] = useState('-created_at')
   const [page, setPage] = useState(1)
   const [pageCount, setPageCount] = useState(0)
@@ -101,6 +97,15 @@ export default function StudentActivities() {
     setPage(1)
   }, [query, statusFilter, sortBy])
 
+  useEffect(() => {
+    const handler = () => {
+      fetchActivities()
+      fetchStats()
+    }
+    window.addEventListener('studentSubmissionSaved', handler)
+    return () => window.removeEventListener('studentSubmissionSaved', handler)
+  }, [])
+
   const fetchStats = async () => {
     try {
       const response = await api.get('/activities/stats/')
@@ -110,25 +115,8 @@ export default function StudentActivities() {
     }
   }
 
-  const computeStatsFromActivities = (acts) => {
-    const total = acts.length
-    let submitted = 0
-    let overdue = 0
-    let pending = 0
-
-    acts.forEach((a) => {
-      const status = String(a.student_submission_status || '').toLowerCase()
-      if (status === 'submitted') submitted += 1
-      else if (status === 'overdue') overdue += 1
-      else pending += 1
-    })
-
-    setStats({
-      totalActivities: total,
-      pendingActivities: pending,
-      submittedActivities: submitted,
-      overdueActivities: overdue,
-    })
+  const computeStatsFromActivities = () => {
+    // Removed in favor of backend-provided activity stats for accurate counts.
   }
 
   const fetchActivities = async () => {
@@ -145,58 +133,7 @@ export default function StudentActivities() {
       const response = await api.get('/activities/', { params })
       const fetchedActivities = response.data.results || []
       setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
-
-      // Fetch current user profile to get student id, then fetch that student's submissions
-      let profile = null
-      try {
-        const profileRes = await api.get('/users/profile/')
-        profile = profileRes.data
-      } catch (err) {
-        // ignore profile fetch error
-      }
-
-      let submissions = []
-      try {
-        if (profile?.id) {
-          const subsRes = await api.get('/submissions/', { params: { student: profile.id, page_size: 1000 } })
-          submissions = Array.isArray(subsRes.data) ? subsRes.data : subsRes.data.results || []
-        }
-      } catch (err) {
-        console.error('Failed to load submissions for student:', err)
-      }
-
-      // Map submissions by activity id
-      const submissionMap = new Map()
-      submissions.forEach((s) => {
-        submissionMap.set(String(s.activity), s)
-      })
-
-      // Annotate activities with submission-derived status fields
-      const annotated = fetchedActivities.map((act) => {
-        const sub = submissionMap.get(String(act.id)) || null
-        const duePassed = act.due_date ? new Date(act.due_date) < new Date() : false
-
-        if (sub) {
-          return {
-            ...act,
-            student_submission_status: 'Submitted',
-            student_submitted_at: sub.submitted_at || sub.created_at || null,
-            student_score: sub.score ?? null,
-            submission: sub,
-          }
-        }
-
-        return {
-          ...act,
-          student_submission_status: duePassed ? 'Overdue' : 'Not Submitted',
-          student_submitted_at: null,
-          student_score: null,
-          submission: null,
-        }
-      })
-
-      setActivities(annotated)
-      computeStatsFromActivities(annotated)
+      setActivities(fetchedActivities)
     } catch (err) {
       console.error('Failed to load activities:', err)
     } finally {
@@ -218,6 +155,7 @@ export default function StudentActivities() {
     setIsModalOpen(false)
     setActiveActivity(null)
     fetchActivities()
+    fetchStats()
   }
 
   const tableColumns = useMemo(() => [
@@ -227,8 +165,15 @@ export default function StudentActivities() {
     { key: 'section_name', label: 'Section' },
     { key: 'due_date', label: 'Due Date', render: (value) => (<div>{formatDate(value)}<div className="text-xs text-slate-400">{value ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}</div></div>) },
     { key: 'remaining', label: 'Remaining', render: (_v, row) => humanRemaining(row.due_date) },
-    { key: 'student_submission_status', label: 'Status', render: (value) => statusBadge(value) },
-    { key: 'student_score', label: 'Score', render: (value) => (value != null ? value : '—') },
+    { key: 'state', label: 'State', render: (_v, row) => {
+      // Determine activity state for the Activities page (student-facing)
+      const due = row?.due_date ? new Date(row.due_date).getTime() : null
+      if (due && due < Date.now()) return stateBadge('Overdue')
+      // Due soon = within 48 hours
+      if (due && due - Date.now() <= 48 * 60 * 60 * 1000) return stateBadge('Due Soon')
+      return stateBadge('Pending')
+    }},
+    { key: 'points', label: 'Points', render: (_v, row) => (row.max_score != null ? row.max_score : (row.activity_max_score != null ? row.activity_max_score : '—')) },
     { key: 'actions', label: 'Actions', render: (_v, row) => (
       <div className="flex items-center gap-2">
         <button
@@ -241,7 +186,7 @@ export default function StudentActivities() {
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); handleSubmitActivity(row) }}
-          className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+          className={`inline-flex items-center gap-2 rounded-full bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700`}
         >
           Submit
         </button>

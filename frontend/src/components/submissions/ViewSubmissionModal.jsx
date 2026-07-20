@@ -93,73 +93,105 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
   }, [details])
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="View Submission">
+    <Modal isOpen={isOpen} onClose={onClose} title="Submission Details">
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading submission details...</div>
       ) : !details ? (
-        <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">No submission details available.</div>
+        <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">
+          <p className="text-lg font-semibold">No submission yet.</p>
+          <p className="text-sm text-slate-500">You have not submitted for this activity.</p>
+        </div>
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Student Name</p>
-              <p className="mt-1 text-sm text-[#111827]">{details?.student_name || `${details?.student?.first_name || ''} ${details?.student?.last_name || ''}`.trim() || '—'}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Student ID</p>
-              <p className="mt-1 text-sm text-[#111827]">{details?.student?.student_id || '—'}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Section</p>
-              <p className="mt-1 text-sm text-[#111827]">{details?.student?.section_name || details?.student?.section?.section_name || '—'}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Activity</p>
-              <p className="mt-1 text-sm text-[#111827]">{details?.activity_title || details?.activity?.title || '—'}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Activity Type</p>
-              <p className="mt-1 text-sm text-[#111827]">{resolveActivityType(details)}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Submission Date</p>
-              <p className="mt-1 text-sm text-[#111827]">{formatDate(details?.submitted_at)}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Due Date</p>
-              <p className="mt-1 text-sm text-[#111827]">{formatDate(details?.activity?.due_date)}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Score</p>
-              <p className="mt-1 text-sm text-[#111827]">{details?.score != null ? details.score : '—'}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#6B7280]">Status</p>
-              <p className="mt-1 text-sm text-[#111827]">{resolveStatus(details)}</p>
+          {/* Activity Information */}
+          <div className="rounded-[12px] border p-4 bg-white">
+            <h3 className="text-lg font-semibold">{details?.activity_title || details?.activity?.title || 'Activity'}</h3>
+            <div className="mt-2 text-sm text-slate-700">{details?.activity_description || details?.activity?.description || 'No description provided.'}</div>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-slate-600">
+              <div><strong>Instructor:</strong> {details?.instructor_name || details?.activity?.created_by_name || '—'}</div>
+              <div><strong>Due Date:</strong> {formatDate(details?.activity?.due_date)}</div>
+              <div><strong>Max Score:</strong> {details?.activity_max_score ?? details?.activity?.max_score ?? '—'}</div>
             </div>
           </div>
 
-          <div>
-            <p className="text-sm font-medium text-[#6B7280]">Remarks</p>
-            <p className="mt-1 whitespace-pre-wrap rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-sm text-[#111827]">{details?.remarks || '—'}</p>
-          </div>
+          {/* Activity Attachments */}
+          { (details?.activity && details.activity.attachments && details.activity.attachments.length) || (details?.activity_attachments && details.activity_attachments.length) ? (
+            <div className="rounded-[12px] border p-4 bg-white">
+              <h4 className="font-semibold">Activity Attachments</h4>
+              <div className="mt-3 space-y-2">
+                {(details.activity?.attachments || details.activity_attachments || []).map((att) => (
+                  <div key={att.id || att.file} className="flex items-center justify-between rounded bg-slate-50 p-2">
+                    <div>
+                      <div className="font-medium">{att.filename || att.file_name || att.name}</div>
+                      <div className="text-xs text-slate-500">{att.file_size ? `${(att.file_size/1024).toFixed(1)} KB` : ''}</div>
+                    </div>
+                    <a href={att.url || att.download_url || att.file} target="_blank" rel="noreferrer" className="rounded-full bg-slate-900 px-3 py-1 text-white text-sm">Download</a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
-          <div>
-            <p className="text-sm font-medium text-[#6B7280]">Submission File</p>
-            {details?.file ? (
-              <div className="mt-2 flex flex-col gap-3 rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] p-4 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm text-[#111827]">{fileName}</span>
-                <a
-                  href={fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-                >
-                  Download
-                </a>
+          {/* My Submission */}
+          <div className="rounded-[12px] border p-4 bg-white">
+            <h4 className="font-semibold">My Submission</h4>
+            { !details?.submitted_at && !(details?.files && details.files.length) ? (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-slate-600">No submission yet.</p>
               </div>
             ) : (
-              <p className="mt-2 text-sm text-[#6B7280]">No submission file available.</p>
+              <div className="mt-3 space-y-3">
+                <div className="text-sm text-slate-700">Submitted: {formatDate(details?.submitted_at)}</div>
+                {details?.remarks && (
+                  <div>
+                    <p className="text-sm font-medium text-slate-700">Comments</p>
+                    <p className="text-sm text-slate-600 whitespace-pre-wrap">{details.remarks}</p>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Files</p>
+                  { (details.files && details.files.length) ? (
+                    <div className="mt-2 space-y-2">
+                      {details.files.map((f) => (
+                        <div key={f.id || f.url} className="flex items-center justify-between rounded-md bg-white p-3 border">
+                          <div>
+                            <div className="font-medium text-slate-900">{f.name || f.file_name}</div>
+                            <div className="text-xs text-slate-500">{f.size ? `${(f.size/1024).toFixed(1)} KB` : ''} • Uploaded {formatDate(f.uploaded_at || details.submitted_at)}</div>
+                          </div>
+                          <a href={f.url || f.download_url || f.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white">Download</a>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-500">No submitted files available.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Grading */}
+          <div className="rounded-[12px] border p-4 bg-white">
+            <h4 className="font-semibold">Grading</h4>
+            { details?.score != null ? (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-slate-600">Score</p>
+                  <p className="text-lg font-semibold">{details.score} / {details.activity_max_score ?? details.activity?.max_score ?? '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-slate-600">Percentage</p>
+                  <p className="text-lg font-semibold">{details.activity_max_score ? `${Math.round((details.score / details.activity_max_score) * 100)}%` : '—'}</p>
+                </div>
+                <div className="md:col-span-2">
+                  <p className="text-sm text-slate-600">Instructor Feedback</p>
+                  <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">{details.feedback || 'No feedback provided.'}</p>
+                  <p className="mt-2 text-xs text-slate-500">Graded: {formatDate(details.graded_at)}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-slate-600">Waiting for instructor grading.</div>
             )}
           </div>
 

@@ -108,12 +108,13 @@ export default function InstructorDashboard() {
   }
 
   const getSubmissionStatusBadge = (submission) => {
-    const status = submission.submission_status || submission.status || 'Submitted'
-    const statusLower = status.toLowerCase()
+    if (!submission) return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Not Submitted</span>
+    const status = submission.submission_status || submission.status || ''
+    const statusLower = String(status).toLowerCase()
     
-    if (statusLower === 'graded') {
+    if (statusLower.includes('graded')) {
       return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"><CheckCircle2 size={14} /> Graded</span>
-    } else if (statusLower === 'late') {
+    } else if (statusLower.includes('late')) {
       return <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-800"><AlertCircle size={14} /> Late</span>
     }
     return <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800"><Clock size={14} /> Submitted</span>

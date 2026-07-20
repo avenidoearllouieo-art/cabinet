@@ -86,9 +86,9 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
   const fileInputRef = useRef(null)
   const [toastMessage, setToastMessage] = useState('')
 
-  // Determine status from the authoritative submission record when available
+  // Determine status from the authoritative backend field when available
   // Requirement: status must be 'Not Submitted' unless a Submission record exists.
-  const submissionStatus = submission ? (submission.graded_at || submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted'
+  const submissionStatus = activity?.student_submission_status || (submission ? (submission.graded_at || submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
   const isOpenForSubmission = !activity?.due_date || new Date(activity.due_date) >= new Date()
   const canResubmit = activity?.allow_resubmission && !!submission
 
@@ -218,6 +218,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       setSuccessMessage('Submission created successfully.')
       setToastMessage('Submission created successfully.')
       try { onSubmit && onSubmit() } catch (e) {}
+      window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
     } catch (err) {
       setErrors(['Failed to submit activity. Please try again.'])
     } finally {

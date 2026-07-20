@@ -24,6 +24,14 @@ export default function StudentDashboard() {
     fetchProfile()
   }, [])
 
+  useEffect(() => {
+    const handler = () => {
+      fetchDashboard()
+    }
+    window.addEventListener('studentSubmissionSaved', handler)
+    return () => window.removeEventListener('studentSubmissionSaved', handler)
+  }, [])
+
   const fetchProfile = async () => {
     try {
       const res = await api.get('/users/profile/')
