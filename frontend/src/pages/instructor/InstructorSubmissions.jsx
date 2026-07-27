@@ -142,13 +142,17 @@ export default function InstructorSubmissions() {
     }
   }
 
-  const handleSubmissionGraded = (gradedSubmission) => {
+  const handleSubmissionGraded = async (gradedSubmission) => {
     setSubmissions((existing) =>
       existing.map((sub) => (sub.id === gradedSubmission.id ? gradedSubmission : sub))
     )
+    setPendingReviewCount((prev) => Math.max(0, prev - 1))
+    setGradedCount((prev) => prev + 1)
     setToastMessage('Submission graded successfully.')
     setIsGradeModalOpen(false)
     setSelectedSubmission(null)
+    window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
+    await fetchSubmissions()
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 

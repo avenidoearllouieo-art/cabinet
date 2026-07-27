@@ -8,6 +8,8 @@ from .views import (
     SubmissionViewSet,
     AccessLogViewSet,
     CabinetEventViewSet,
+    ActivityDiscussionViewSet,
+    ActivityAnnouncementViewSet,
     NotificationViewSet,
     VerifyNFCView,
     DashboardStatisticsView,
@@ -25,6 +27,8 @@ router.register(r'access-logs', AccessLogViewSet, basename='accesslog')
 router.register(r'cabinet-events', CabinetEventViewSet, basename='cabinetevent')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'temp-uploads', TemporaryUploadViewSet, basename='tempupload')
+router.register(r'activity-discussions', ActivityDiscussionViewSet, basename='activitydiscussion')
+router.register(r'activity-announcements', ActivityAnnouncementViewSet, basename='activityannouncement')
 
 urlpatterns = [
     path('', include(router.urls)),

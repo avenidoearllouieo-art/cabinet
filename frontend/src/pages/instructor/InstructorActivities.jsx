@@ -5,7 +5,8 @@ import DataTable from '../../components/DataTable'
 import AddActivityModal from '../../components/activities/AddActivityModal.jsx'
 import EditActivityModal from '../../components/activities/EditActivityModal.jsx'
 import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
-import { Search, Plus, ClipboardList, Edit2, Trash2 } from 'lucide-react'
+import { Search, Plus, ClipboardList, Edit2, Trash2, Eye } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -31,6 +32,7 @@ export default function InstructorActivities() {
   const [selectedActivity, setSelectedActivity] = useState(null)
   const [deletingActivity, setDeletingActivity] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
+  const navigate = useNavigate()
 
   useEffect(() => {
     fetchActivities()
@@ -129,8 +131,16 @@ export default function InstructorActivities() {
       render: (_value, row) => (
         <div className="flex items-center gap-2">
           <button
-            onClick={() => handleOpenEditModal(row.id, row)}
+            onClick={() => navigate(`/instructor/activities/${row.id}`, { state: { activity: row } })}
             className="inline-flex items-center gap-1 rounded-lg border border-blue-600 bg-blue-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-700"
+            title="View activity"
+          >
+            <Eye size={14} />
+            View
+          </button>
+          <button
+            onClick={() => handleOpenEditModal(row.id, row)}
+            className="inline-flex items-center gap-1 rounded-lg border border-blue-600 bg-white px-2 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-50"
             title="Edit activity"
           >
             <Edit2 size={14} />

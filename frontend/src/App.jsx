@@ -12,6 +12,7 @@ import Sections from './pages/admin/Sections.jsx'
 import InstructorLayout from './layouts/InstructorLayout.jsx'
 import InstructorDashboard from './pages/instructor/InstructorDashboard.jsx'
 import InstructorActivities from './pages/instructor/InstructorActivities.jsx'
+import ActivityDetailsPage from './pages/instructor/ActivityDetailsPage.jsx'
 import InstructorSubmissions from './pages/instructor/InstructorSubmissions.jsx'
 import InstructorSections from './pages/instructor/InstructorSections.jsx'
 import InstructorSectionStudents from './pages/instructor/InstructorSectionStudents.jsx'
@@ -96,6 +97,7 @@ function App() {
             <Route path='profile' element={<InstructorProfile />} />
             <Route path='profile/change-password' element={<InstructorChangePassword />} />
             <Route path='activities' element={<InstructorActivities />} />
+            <Route path='activities/:activityId' element={<ActivityDetailsPage />} />
             <Route path='submissions' element={<InstructorSubmissions />} />
             <Route path='access-logs' element={<InstructorAccessLogs />} />
             <Route path='notifications' element={<InstructorNotifications />} />

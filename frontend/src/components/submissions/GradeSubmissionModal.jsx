@@ -41,14 +41,22 @@ export default function GradeSubmissionModal({ isOpen, submission, onClose, onUn
       return
     }
 
-    if (!form.score || form.score === '') {
+    const normalizedScore = String(form.score).trim()
+    if (!normalizedScore) {
       setErrors({ score: 'Score is required.' })
       setSaving(false)
       return
     }
 
+    const numericScore = Number(normalizedScore)
+    if (Number.isNaN(numericScore)) {
+      setErrors({ score: 'Score must be a valid number.' })
+      setSaving(false)
+      return
+    }
+
     const payload = {
-      score: form.score,
+      score: numericScore,
       feedback: form.feedback || '',
     }
 
@@ -63,7 +71,9 @@ export default function GradeSubmissionModal({ isOpen, submission, onClose, onUn
       }
 
       const data = err.response?.data
-      if (data && typeof data === 'object') {
+      if (typeof data === 'string') {
+        setFormError(data)
+      } else if (data && typeof data === 'object') {
         if (typeof data.detail === 'string') {
           setFormError(data.detail)
         } else {

@@ -4,7 +4,7 @@ from datetime import timedelta
 from rest_framework import viewsets, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .permissions import IsAdminRole, IsInstructorRole, IsStudentRole
+from .permissions import IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole, IsStudentRole
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -15,7 +15,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
 
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
 from .serializers import (
     SectionSerializer,
@@ -27,6 +27,8 @@ from .serializers import (
     CabinetEventSerializer,
     NotificationSerializer,
     CustomTokenObtainPairSerializer,
+    ActivityDiscussionSerializer,
+    ActivityAnnouncementSerializer,
 )
 
 
@@ -379,14 +381,13 @@ class ActivityViewSet(viewsets.ModelViewSet):
         elif user.role == 'instructor':
             return annotated_qs.filter(created_by=user)
         elif user.role == 'student':
-            # Return only activities assigned to the student's section that
-            # the student has not yet submitted. This keeps the Activities
-            # endpoint aligned with standard LMS behavior (activities page
-            # shows pending assignments only).
+            # Return activities assigned to the student's section. Do not
+            # exclude submitted activities here — the frontend can filter
+            # by status when needed. If the student has no section, return
+            # an empty queryset.
             if not user.section:
                 return Activity.objects.none()
-            submitted_activity_ids = Submission.objects.filter(student=user).values_list('activity_id', flat=True).distinct()
-            return annotated_qs.filter(section=user.section).exclude(id__in=submitted_activity_ids)
+            return annotated_qs.filter(section=user.section)
         return Activity.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -468,24 +469,100 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
         return Response({'results': results})
 
+
+class ActivityDiscussionViewSet(viewsets.ModelViewSet):
+    """Discussion messages for activities. Students and instructors can
+    list and create messages for activities they are part of.
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsDiscussionAuthorOrInstructor]
+    serializer_class = ActivityDiscussionSerializer
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['activity']
+    ordering_fields = ['created_at']
+    ordering = ['created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return ActivityDiscussion.objects.none()
+        # Students and instructors can see discussions for activities in their section
+        if user.role == 'admin':
+            queryset = ActivityDiscussion.objects.select_related('sender', 'activity')
+        elif user.role == 'instructor':
+            queryset = ActivityDiscussion.objects.filter(activity__section__instructor=user).select_related('sender', 'activity')
+        elif user.role == 'student':
+            if not user.section:
+                return ActivityDiscussion.objects.none()
+            queryset = ActivityDiscussion.objects.filter(activity__section=user.section).select_related('sender', 'activity')
+        else:
+            return ActivityDiscussion.objects.none()
+        return queryset.order_by('created_at')
+
     def perform_create(self, serializer):
-        activity = serializer.save(created_by=self.request.user)
-        create_activity_notification(activity)
+        user = self.request.user
+        role = getattr(user, 'role', '')
+        serializer.save(sender=user, sender_role=role)
 
     def perform_update(self, serializer):
         serializer.save()
 
-    @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<attachment_id>[^/.]+)')
-    def delete_attachment(self, request, pk=None, attachment_id=None):
-        activity = self.get_object()
-        attachment = activity.attachments.filter(id=attachment_id).first()
-        if not attachment:
-            return Response({'detail': 'Attachment not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if attachment.file:
-            attachment.file.delete(save=False)
-        attachment.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+class ActivityAnnouncementViewSet(viewsets.ModelViewSet):
+    """Announcements for an activity created by instructors."""
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ActivityAnnouncementSerializer
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['activity']
+    ordering_fields = ['created_at', 'is_pinned']
+    ordering = ['-is_pinned', '-created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return ActivityAnnouncement.objects.none()
+        queryset = ActivityAnnouncement.objects.select_related('created_by', 'activity')
+        if user.role == 'admin':
+            return queryset
+        if user.role == 'instructor':
+            return queryset.filter(activity__section__instructor=user)
+        if user.role == 'student':
+            if not user.section:
+                return ActivityAnnouncement.objects.none()
+            return queryset.filter(activity__section=user.section)
+        return ActivityAnnouncement.objects.none()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsInstructorRole()]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def toggle_pin(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.is_pinned = not announcement.is_pinned
+        announcement.save(update_fields=['is_pinned'])
+        return Response(self.get_serializer(announcement).data)
+
+    @action(detail=True, methods=['post'])
+    def toggle_update(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.is_update = not announcement.is_update
+        announcement.save(update_fields=['is_update'])
+        return Response(self.get_serializer(announcement).data)
+
+    def get_serializer(self, *args, **kwargs):
+        kwargs.setdefault('context', {}).update({'request': self.request})
+        return super().get_serializer(*args, **kwargs)
 
     @action(detail=True, methods=['get'])
     def submissions(self, request, pk=None):
@@ -529,7 +606,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     """
     serializer_class = SubmissionSerializer
     authentication_classes = [JWTAuthentication]
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (JSONParser, MultiPartParser, FormParser)
     filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SubmissionFilter
     search_fields = ['student__first_name', 'student__last_name', 'student__student_id', 'activity__title']
@@ -609,6 +686,73 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             'graded': graded,
             'lateSubmissions': late,
         })
+
+    @action(detail=True, methods=['post'])
+    def grade(self, request, pk=None):
+        """Grade a submission and update the existing record in place."""
+        submission = self.get_object()
+
+        if request.user.role == 'instructor' and submission.activity.created_by != request.user:
+            return Response(
+                {'detail': 'Permission denied. You can only grade submissions for your own activities.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        if request.user.role not in ['instructor', 'admin']:
+            return Response(
+                {'detail': 'Only instructors and admins can grade submissions.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        score = request.data.get('score')
+        feedback = request.data.get('feedback', '')
+
+        if score in [None, '']:
+            return Response(
+                {'detail': 'Score is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            score = float(score)
+        except (ValueError, TypeError):
+            return Response(
+                {'detail': 'Score must be a valid number.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if score < 0:
+            return Response(
+                {'detail': 'Score cannot be negative.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        max_score = getattr(submission.activity, 'max_score', None)
+        if max_score is not None and score > float(max_score):
+            return Response(
+                {'detail': f'Score cannot exceed the activity maximum score of {max_score}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            submission.score = score
+            submission.feedback = feedback or ''
+            submission.graded_by = request.user
+            submission.graded_at = timezone.now()
+            submission.save(update_fields=['score', 'feedback', 'graded_by', 'graded_at', 'updated_at'])
+            submission.refresh_from_db()
+            serializer = self.get_serializer(submission)
+            return Response(serializer.data)
+        except Exception as exc:
+            logger = getattr(self, 'logger', None)
+            if logger is not None:
+                logger.exception('Failed to grade submission %s', submission.id)
+            else:
+                import logging
+                logging.getLogger('django.request').exception('Failed to grade submission %s', submission.id)
+            return Response(
+                {'detail': f'Failed to save grade: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class TemporaryUploadViewSet(viewsets.ModelViewSet):
@@ -718,52 +862,6 @@ class AccessLogFilter(filters.FilterSet):
     class Meta:
         model = AccessLog
         fields = ['status', 'user__section', 'cabinet_name', 'access_time']
-
-    def perform_create(self, serializer):
-        serializer.save(student=self.request.user)
-
-    @action(detail=True, methods=['post'])
-    def grade(self, request, pk=None):
-        """Grade a submission"""
-        submission = self.get_object()
-        
-        # Check if user is instructor of this activity or admin
-        if request.user.role == 'instructor' and submission.activity.created_by != request.user:
-            return Response(
-                {'detail': 'Permission denied. You can only grade submissions for your own activities.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        if request.user.role not in ['instructor', 'admin']:
-            return Response(
-                {'detail': 'Only instructors and admins can grade submissions.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        score = request.data.get('score')
-        feedback = request.data.get('feedback', '')
-
-        if score is None:
-            return Response(
-                {'detail': 'Score is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            score = float(score)
-        except (ValueError, TypeError):
-            return Response(
-                {'detail': 'Score must be a valid number.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        submission.score = score
-        submission.feedback = feedback
-        submission.graded_by = request.user
-        submission.graded_at = timezone.now()
-        submission.save()
-
-        serializer = self.get_serializer(submission)
-        return Response(serializer.data)
 
 
 class AccessLogViewSet(viewsets.ModelViewSet):

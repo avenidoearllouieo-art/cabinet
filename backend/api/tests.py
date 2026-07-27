@@ -2,7 +2,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment
+from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission
 
 
 class ActivityCreationTests(TestCase):
@@ -116,6 +116,98 @@ class ActivityCreationTests(TestCase):
 
         self.assertEqual(response.status_code, 204)
         self.assertFalse(ActivityAttachment.objects.filter(id=attachment.id).exists())
+
+
+class SubmissionGradingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='instructor-grade',
+            email='instructor-grade@example.com',
+            password='secret123',
+            role='instructor',
+            first_name='Instructor',
+            last_name='Grade',
+            instructor_id='I-GRADE',
+            nfc_uid='NFC-GRADE-001',
+        )
+        self.section = Section.objects.create(section_name='Section Grade', section_code='SEC-G', instructor=self.instructor)
+        self.activity = Activity.objects.create(
+            title='Graded Activity',
+            description='An activity for grading tests',
+            instructions='Do the work',
+            created_by=self.instructor,
+            section=self.section,
+            max_score=100,
+        )
+        self.student = User.objects.create_user(
+            username='student-grade',
+            email='student-grade@example.com',
+            password='secret123',
+            role='student',
+            first_name='Student',
+            last_name='Grade',
+            student_id='S-GRADE',
+            section=self.section,
+            nfc_uid='NFC-GRADE-002',
+        )
+        self.submission = Submission.objects.create(
+            activity=self.activity,
+            student=self.student,
+            remarks='Initial submission',
+            score=None,
+            feedback='',
+        )
+
+    def test_instructor_can_grade_existing_submission(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.post(f'/api/submissions/{self.submission.id}/grade/', {
+            'score': 88,
+            'feedback': 'Great work',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['score'], 88)
+        self.assertEqual(data['feedback'], 'Great work')
+
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.score, 88)
+        self.assertEqual(self.submission.feedback, 'Great work')
+        self.assertEqual(self.submission.graded_by, self.instructor)
+        self.assertIsNotNone(self.submission.graded_at)
+        self.assertEqual(self.submission.status, 'Graded')
+
+    def test_grade_rejects_score_above_maximum(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.post(f'/api/submissions/{self.submission.id}/grade/', {
+            'score': 101,
+            'feedback': 'Too high',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('cannot exceed', response.json()['detail'])
+
+        self.submission.refresh_from_db()
+        self.assertIsNone(self.submission.score)
+        self.assertEqual(self.submission.feedback, '')
+
+    def test_grade_rejects_negative_score(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.post(f'/api/submissions/{self.submission.id}/grade/', {
+            'score': -1,
+            'feedback': 'Negative score',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('cannot be negative', response.json()['detail'])
+
+        self.submission.refresh_from_db()
+        self.assertIsNone(self.submission.score)
+        self.assertEqual(self.submission.feedback, '')
 
 
 class StudentNotificationTests(TestCase):

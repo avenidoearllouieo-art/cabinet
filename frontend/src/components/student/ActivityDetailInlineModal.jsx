@@ -2,6 +2,8 @@ import { useEffect, useState, useRef } from 'react'
 import { Download, Upload, X, FileText, Image } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
+import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
+import ActivityDiscussion from '../ActivityDiscussion'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -144,6 +146,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
     }
   }
 
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Activity Details">
       {!activity ? (
@@ -153,6 +156,11 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
           <div className="rounded-[12px] border bg-slate-50 p-4">
             <h3 className="text-lg font-semibold">{activity.title}</h3>
             <p className="text-sm text-slate-500">Instructor: {activity.instructor_name || 'Unassigned'}</p>
+          </div>
+
+          <div className="rounded-[12px] border bg-white p-4">
+            <h4 className="font-semibold">Instructions</h4>
+            <div className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">{activity.description || activity.instructions || 'No instructions provided.'}</div>
           </div>
 
           <div className="rounded-[12px] border bg-white p-4">
@@ -174,6 +182,9 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
             )}
           </div>
 
+          <ActivityAnnouncements activityId={activity?.id} />
+          <ActivityDiscussion activityId={activity?.id} />
+
           <div className="rounded-[12px] border bg-white p-4">
             <h4 className="font-semibold">Submission Status</h4>
             <div className="mt-2 text-sm text-slate-700">{activity?.student_submission_status || (submission ? 'Submitted' : 'Not Submitted')}</div>
@@ -190,6 +201,10 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
                       <a href={att.download_url} target="_blank" rel="noreferrer" className="rounded-full bg-slate-900 px-3 py-1 text-white text-sm"><Download size={14} /> Download</a>
                     </div>
                   ))}
+                  <div className="mt-2 text-sm text-slate-600">
+                    <div><strong>Submitted At:</strong> {formatDate(submission.submitted_at)}</div>
+                    {submission.remarks ? <div className="mt-1"><strong>Submission Note:</strong> <span className="text-slate-700">{submission.remarks}</span></div> : null}
+                  </div>
                 </div>
               ) : (
                 <div className="mt-3">
@@ -217,7 +232,8 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
                   )}
 
                   <div className="mt-3">
-                    <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} placeholder="Comments (optional)" className="w-full rounded border p-2" />
+                    <label className="text-sm font-medium">Submission Note (Optional)</label>
+                    <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} placeholder="Add a note to your submission (optional)" className="w-full rounded border p-2 mt-2" />
                   </div>
 
                   {errors.length > 0 && (
@@ -232,7 +248,11 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
 
           <div className="flex gap-3 justify-end">
             <button onClick={onClose} className="rounded-full border px-4 py-2">Cancel</button>
-            <button onClick={handleSubmit} disabled={!canSubmit || loading || uploadedFiles.length === 0} className="rounded-full bg-blue-600 text-white px-4 py-2">Submit Activity</button>
+            {submission ? (
+              <button onClick={handleSubmit} disabled={!activity?.allow_resubmission || loading || uploadedFiles.length === 0} className="rounded-full bg-blue-600 text-white px-4 py-2">{activity?.allow_resubmission ? 'Resubmit' : 'Submit Activity'}</button>
+            ) : (
+              <button onClick={handleSubmit} disabled={!canSubmit || loading || uploadedFiles.length === 0} className="rounded-full bg-blue-600 text-white px-4 py-2">Submit Activity</button>
+            )}
           </div>
         </div>
       )}

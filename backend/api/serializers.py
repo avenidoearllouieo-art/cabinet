@@ -2,7 +2,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, SubmissionAttachment
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, SubmissionAttachment, ActivityDiscussion, ActivityAnnouncement
 
 
 class SectionSerializer(serializers.ModelSerializer):
@@ -567,6 +567,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     description = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
     temp_upload_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    removed_attachment_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
     previous_attempts = SubmissionHistorySerializer(many=True, read_only=True)
 
     class Meta:
@@ -588,6 +589,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'file',
             'files',
             'temp_upload_ids',
+            'removed_attachment_ids',
             'submitted_at',
             'remarks',
             'score',
@@ -668,7 +670,6 @@ class SubmissionSerializer(serializers.ModelSerializer):
         return []
 
     def create(self, validated_data):
-        # Support creating a Submission that references TemporaryUpload ids.
         temp_ids = validated_data.pop('temp_upload_ids', None)
         temp_files = []
         if temp_ids:
@@ -689,6 +690,39 @@ class SubmissionSerializer(serializers.ModelSerializer):
                 except Exception:
                     continue
                 up.delete()
+        return submission
+
+    def update(self, instance, validated_data):
+        temp_ids = validated_data.pop('temp_upload_ids', None)
+        removed_ids = validated_data.pop('removed_attachment_ids', None)
+        temp_files = []
+        if temp_ids:
+            temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
+
+        submission = super().update(instance, validated_data)
+
+        if removed_ids:
+            for attachment in submission.attachments.filter(id__in=removed_ids):
+                try:
+                    if attachment.file:
+                        attachment.file.delete(save=False)
+                except Exception:
+                    pass
+                attachment.delete()
+
+        if temp_files:
+            first_saved = False
+            for up in temp_files:
+                try:
+                    att = SubmissionAttachment.objects.create(submission=submission, file=up.file)
+                    if not first_saved:
+                        submission.file = att.file
+                        submission.save(update_fields=['file'])
+                        first_saved = True
+                except Exception:
+                    continue
+                up.delete()
+
         return submission
 
     def get_previous_attempts(self, obj):
@@ -762,3 +796,58 @@ class NotificationSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'notification_key']
+
+
+class ActivityDiscussionSerializer(serializers.ModelSerializer):
+    sender_name = serializers.CharField(source='sender.first_name', read_only=True)
+    sender_last_name = serializers.CharField(source='sender.last_name', read_only=True)
+    sender_profile_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ActivityDiscussion
+        fields = ['id', 'activity', 'sender', 'sender_name', 'sender_last_name', 'sender_profile_image', 'sender_role', 'message', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'sender', 'sender_name', 'sender_last_name', 'sender_profile_image', 'created_at', 'updated_at']
+
+    def get_sender_profile_image(self, obj):
+        if not obj.sender or not obj.sender.profile_image:
+            return None
+        request = self.context.get('request')
+        try:
+            url = obj.sender.profile_image.url
+        except Exception:
+            return None
+        return request.build_absolute_uri(url) if request else url
+
+
+class ActivityAnnouncementSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.first_name', read_only=True)
+    created_by_last_name = serializers.CharField(source='created_by.last_name', read_only=True)
+    created_by_profile_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ActivityAnnouncement
+        fields = [
+            'id',
+            'activity',
+            'title',
+            'message',
+            'is_pinned',
+            'is_update',
+            'created_by',
+            'created_by_name',
+            'created_by_last_name',
+            'created_by_profile_image',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_by_last_name', 'created_by_profile_image', 'created_at', 'updated_at']
+
+    def get_created_by_profile_image(self, obj):
+        if not obj.created_by or not obj.created_by.profile_image:
+            return None
+        request = self.context.get('request')
+        try:
+            url = obj.created_by.profile_image.url
+        except Exception:
+            return None
+        return request.build_absolute_uri(url) if request else url

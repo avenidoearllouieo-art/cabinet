@@ -175,6 +175,8 @@ class Activity(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    
+
     def __str__(self):
         return self.title
 
@@ -200,6 +202,56 @@ class ActivityAttachment(models.Model):
 
     class Meta:
         ordering = ['-uploaded_at']
+
+
+class ActivityDiscussion(models.Model):
+    id = models.AutoField(primary_key=True)
+    activity = models.ForeignKey(
+        Activity,
+        on_delete=models.CASCADE,
+        related_name='discussions'
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='activity_messages'
+    )
+    sender_role = models.CharField(max_length=20, blank=True)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Msg {self.id} on {self.activity_id} by {self.sender_id}"
+
+
+class ActivityAnnouncement(models.Model):
+    id = models.AutoField(primary_key=True)
+    activity = models.ForeignKey(
+        Activity,
+        on_delete=models.CASCADE,
+        related_name='announcements'
+    )
+    title = models.CharField(max_length=255, blank=True, default='')
+    message = models.TextField()
+    is_pinned = models.BooleanField(default=False)
+    is_update = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='activity_announcements'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_pinned', '-created_at']
+
+    def __str__(self):
+        return f"Announcement {self.id} on {self.activity_id} by {self.created_by_id}"
 
 
 class TemporaryUpload(models.Model):
@@ -367,6 +419,7 @@ class CabinetEvent(models.Model):
 
     class Meta:
         ordering = ['-timestamp']
+ 
 
 
 class StudentProfileManager(models.Manager):

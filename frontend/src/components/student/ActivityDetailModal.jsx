@@ -88,7 +88,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
 
   // Determine status from the authoritative backend field when available
   // Requirement: status must be 'Not Submitted' unless a Submission record exists.
-  const submissionStatus = activity?.student_submission_status || (submission ? (submission.graded_at || submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
+  const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null || submission.graded_at ? 'Graded' : 'Submitted') : 'Not Submitted')
   const isOpenForSubmission = !activity?.due_date || new Date(activity.due_date) >= new Date()
   const canResubmit = activity?.allow_resubmission && !!submission
 
@@ -334,7 +334,13 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
               </div>
               <div className="rounded-[12px] bg-[#F8FAFC] p-4">
                 <p className="text-sm text-slate-500">Score</p>
-                <p className="mt-2 text-lg font-semibold text-slate-900">{submission?.score ?? activity.student_score ?? '—'}</p>
+                <p className="mt-2 text-lg font-semibold text-slate-900">{submission?.score != null ? `${submission.score} / ${activity.max_score ?? submission.activity_max_score ?? '—'}` : '—'}</p>
+              </div>
+              <div className="rounded-[12px] bg-[#F8FAFC] p-4">
+                <p className="text-sm text-slate-500">Percentage</p>
+                <p className="mt-2 text-lg font-semibold text-slate-900">{submission?.score != null && (activity.max_score ?? submission.activity_max_score)
+                  ? `${Math.round((submission.score / (activity.max_score ?? submission.activity_max_score)) * 100)}%`
+                  : '—'}</p>
               </div>
               <div className="rounded-[12px] bg-[#F8FAFC] p-4">
                 <p className="text-sm text-slate-500">Instructor feedback</p>

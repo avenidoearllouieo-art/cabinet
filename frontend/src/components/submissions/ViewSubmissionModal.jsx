@@ -27,13 +27,19 @@ const resolveActivityType = (submission) => {
 const resolveStatus = (submission) => {
   if (!submission) return 'Unknown'
   const raw = submission.status ? String(submission.status).toLowerCase() : null
-  if (raw === 'graded') return 'Graded'
-  if (raw === 'late') return 'Late'
-  if (raw === 'submitted') return 'Submitted'
-  if (raw === 'pending') return 'Pending'
+  const feedback = submission.feedback || submission.remarks
+  const score = submission.score ?? submission.grade
+  const hasFeedback = Boolean(feedback && String(feedback).trim())
+  const isLate = raw === 'late' || submission.is_late || submission.late || (submission.submitted_at && submission.activity_due_date && new Date(submission.submitted_at) > new Date(submission.activity_due_date))
 
-  if (submission.score != null) return 'Graded'
-  if (submission.file || submission.submitted_at) return 'Submitted'
+  if (score != null) return 'Graded'
+  if (hasFeedback) return 'Returned for Revision'
+  if (isLate) return 'Late'
+  if (raw === 'graded') return 'Graded'
+  if (raw === 'returned_for_revision') return 'Returned for Revision'
+  if (raw === 'late') return 'Late'
+  if (raw === 'submitted' || raw === 'under_review' || raw === 'pending') return 'Under Review'
+  if (submission.file || submission.submitted_at || submission.files?.length) return 'Submitted'
   return 'Pending'
 }
 
@@ -93,7 +99,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
   }, [details])
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Submission Details">
+    <Modal isOpen={isOpen} onClose={onClose} title="Submission History">
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading submission details...</div>
       ) : !details ? (
@@ -103,14 +109,18 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Activity Information */}
           <div className="rounded-[12px] border p-4 bg-white">
-            <h3 className="text-lg font-semibold">{details?.activity_title || details?.activity?.title || 'Activity'}</h3>
-            <div className="mt-2 text-sm text-slate-700">{details?.activity_description || details?.activity?.description || 'No description provided.'}</div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">{details?.activity_title || details?.activity?.title || 'Activity'}</h3>
+                <div className="mt-2 text-sm text-slate-700">{details?.activity_description || details?.activity?.description || 'No description provided.'}</div>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">Read-only</span>
+            </div>
             <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-slate-600">
               <div><strong>Instructor:</strong> {details?.instructor_name || details?.activity?.created_by_name || '—'}</div>
-              <div><strong>Due Date:</strong> {formatDate(details?.activity?.due_date)}</div>
-              <div><strong>Max Score:</strong> {details?.activity_max_score ?? details?.activity?.max_score ?? '—'}</div>
+              <div><strong>Submission Status:</strong> {resolveStatus(details)}</div>
+              <div><strong>Submitted:</strong> {formatDate(details?.submitted_at)}</div>
             </div>
           </div>
 
@@ -132,9 +142,8 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             </div>
           ) : null}
 
-          {/* My Submission */}
           <div className="rounded-[12px] border p-4 bg-white">
-            <h4 className="font-semibold">My Submission</h4>
+            <h4 className="font-semibold">Submitted Files</h4>
             { !details?.submitted_at && !(details?.files && details.files.length) ? (
               <div className="mt-4 text-center">
                 <p className="text-sm text-slate-600">No submission yet.</p>
@@ -171,9 +180,22 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             )}
           </div>
 
-          {/* Grading */}
+          {details?.previous_attempts?.length ? (
+            <div className="rounded-[12px] border p-4 bg-white">
+              <h4 className="font-semibold">Submission History</h4>
+              <div className="mt-3 space-y-2">
+                {details.previous_attempts.map((attempt) => (
+                  <div key={attempt.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    <span>Attempt {attempt.attempt || 1}</span>
+                    <span>{formatDate(attempt.submitted_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="rounded-[12px] border p-4 bg-white">
-            <h4 className="font-semibold">Grading</h4>
+            <h4 className="font-semibold">Instructor Feedback & Grade</h4>
             { details?.score != null ? (
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
