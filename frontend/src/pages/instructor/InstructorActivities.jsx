@@ -67,9 +67,9 @@ export default function InstructorActivities() {
     }
   }
 
-  const handleActivitySaved = (savedActivity) => {
+  const handleActivitySaved = async (savedActivity) => {
     if (!savedActivity || !savedActivity.id) {
-      fetchActivities()
+      await fetchActivities()
       return
     }
 
@@ -88,6 +88,7 @@ export default function InstructorActivities() {
     setEditingActivityId(null)
     setSelectedActivity(null)
     window.setTimeout(() => setToastMessage(''), 4000)
+    await fetchActivities()
   }
 
   const handleActivityDeleted = async (deletedActivityId) => {
@@ -98,6 +99,7 @@ export default function InstructorActivities() {
     setIsEditModalOpen(false)
     setEditingActivityId(null)
     setSelectedActivity(null)
+    await fetchActivities()
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 
@@ -245,7 +247,7 @@ export default function InstructorActivities() {
       <EditActivityModal
         isOpen={isEditModalOpen && !!editingActivityId}
         activityId={editingActivityId}
-        initialActivity={selectedActivity}
+        activity={selectedActivity}
         onClose={() => {
           setIsEditModalOpen(false)
           setEditingActivityId(null)

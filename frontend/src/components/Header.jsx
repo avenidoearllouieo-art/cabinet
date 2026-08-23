@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import api from '../services/api.js'
 import NotificationDropdown from './NotificationDropdown'
 
 export default function Header() {
   const navigate = useNavigate()
-  const [searchQuery, setSearchQuery] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
@@ -49,10 +48,6 @@ export default function Header() {
     }
   }
 
-  const handleSearch = (e) => {
-    e.preventDefault()
-  }
-
   const handleNotificationClick = () => {
     if (user.role === 'instructor') {
       navigate('/instructor/notifications')
@@ -92,25 +87,6 @@ export default function Header() {
             <p className="text-xs text-[#6B7280]">{headerText.subtitle}</p>
           </div>
         </div>
-
-        <form onSubmit={handleSearch} className="hidden w-full max-w-[420px] md:block">
-          <label className="relative block">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#9CA3AF]">
-              <Search size={16} />
-            </span>
-              <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={user.role === 'instructor'
-                ? "Search activities, students, or submissions"
-                : user.role === 'student'
-                ? "Search activities, submissions, or cabinet logs"
-                : "Search users, activities, or logs"}
-              className="h-11 w-full rounded-[14px] border border-[#E5E7EB] bg-[#F8FAFC] pl-11 pr-3 text-sm text-[#0F172A] outline-none transition focus:border-[#2563EB] focus:bg-white"
-            />
-          </label>
-        </form>
 
         <div className="flex items-center gap-3">
           {(user.role === 'instructor' || user.role === 'student') && <NotificationDropdown />}
@@ -176,12 +152,6 @@ export default function Header() {
             )}
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="hidden rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-medium text-[#334155] transition hover:bg-[#F8FAFC] sm:inline-flex"
-          >
-            Logout
-          </button>
         </div>
       </div>
     </header>

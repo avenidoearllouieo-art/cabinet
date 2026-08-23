@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Bell, CheckCheck, Sparkles, CircleAlert, ClipboardList, Send, GraduationCap, LockKeyhole, Settings, X, Inbox } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api.js'
@@ -37,7 +37,24 @@ export default function NotificationDropdown() {
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(false)
   const [busyAction, setBusyAction] = useState(false)
+  const [studentUnreadCount, setStudentUnreadCount] = useState(null)
   const navigate = useNavigate()
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+
+  useEffect(() => {
+    if (currentUser.role !== 'student') return undefined
+    const refreshUnreadCount = async () => {
+      try {
+        const response = await api.get('/notifications/unread_count/')
+        setStudentUnreadCount(response.data.unread_count || 0)
+      } catch (error) {
+        console.error('Failed to fetch student unread notification count', error)
+      }
+    }
+    refreshUnreadCount()
+    const intervalId = window.setInterval(refreshUnreadCount, 30000)
+    return () => window.clearInterval(intervalId)
+  }, [currentUser.role])
 
   useEffect(() => {
     if (!open) return
@@ -66,7 +83,9 @@ export default function NotificationDropdown() {
     }
   }
 
-  const unreadCount = useMemo(() => notifications.filter((notification) => !notification.is_read).length, [notifications])
+  const unreadCount = currentUser.role === 'student' && !open && studentUnreadCount !== null
+    ? studentUnreadCount
+    : notifications.filter((notification) => !notification.is_read).length
 
   const markRead = async (id) => {
     try {

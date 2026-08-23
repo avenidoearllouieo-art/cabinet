@@ -529,7 +529,7 @@ export default function ActivityDetailsPage() {
               </div>
               <div className="mt-5 space-y-3">
                 {progressRows.map((row) => {
-                  const percent = Math.max(8, Math.round((row.value / Math.max(row.max, 1)) * 100))
+                  const percent = Math.min(100, Math.max(8, Math.round((row.value / Math.max(row.max, 1)) * 100)))
                   return (
                     <div key={row.label}>
                       <div className="mb-2 flex items-center justify-between text-sm font-medium text-slate-700">

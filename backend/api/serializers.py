@@ -334,7 +334,7 @@ class ActivitySerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
 
     def get_instructor_name(self, obj):
         if obj.created_by:
@@ -793,9 +793,11 @@ class NotificationSerializer(serializers.ModelSerializer):
             'notification_type',
             'notification_key',
             'link',
+            'instructor',
+            'student',
             'created_at',
         ]
-        read_only_fields = ['id', 'created_at', 'notification_key']
+        read_only_fields = ['id', 'created_at', 'notification_key', 'instructor', 'student']
 
 
 class ActivityDiscussionSerializer(serializers.ModelSerializer):

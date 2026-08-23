@@ -371,12 +371,25 @@ class Notification(models.Model):
         RESUBMISSION = 'resubmission', 'Resubmission'
         DEADLINE = 'deadline', 'Deadline'
         ACCESS_LOG = 'access_log', 'Access Log'
+        ACTIVITY = 'activity', 'Activity'
+        ANNOUNCEMENT = 'announcement', 'Announcement'
+        GRADE = 'grade', 'Grade'
+        FEEDBACK = 'feedback', 'Feedback'
 
     id = models.AutoField(primary_key=True)
     instructor = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='notifications'
+    )
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='student_notifications'
     )
     title = models.CharField(max_length=200)
     message = models.TextField()
@@ -387,7 +400,8 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Notification for {self.instructor.username}: {self.title}"
+        recipient = self.instructor or self.student
+        return f"Notification for {recipient.username if recipient else 'unknown user'}: {self.title}"
 
     class Meta:
         ordering = ['-created_at']

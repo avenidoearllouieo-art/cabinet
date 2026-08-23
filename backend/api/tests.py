@@ -20,6 +20,14 @@ class ActivityCreationTests(TestCase):
         )
         self.section_a = Section.objects.create(section_name='Section A', section_code='SEC-A', instructor=self.instructor)
         self.section_b = Section.objects.create(section_name='Section B', section_code='SEC-B', instructor=self.instructor)
+        self.other_instructor = User.objects.create_user(
+            username='instructor2',
+            email='instructor2@example.com',
+            password='secret123',
+            role='instructor',
+            instructor_id='I002',
+            nfc_uid='NFC-INST-002',
+        )
 
     def test_instructor_can_create_activity_with_extended_fields(self):
         self.client.force_authenticate(user=self.instructor)
@@ -49,8 +57,44 @@ class ActivityCreationTests(TestCase):
         self.assertEqual(set(data['assigned_sections']), {self.section_a.section_id, self.section_b.section_id})
 
         activity = Activity.objects.get(id=data['id'])
+        self.assertEqual(activity.created_by, self.instructor)
         self.assertEqual(activity.instructions, '<p>Read the brief carefully.</p>')
         self.assertTrue(activity.assigned_sections.filter(section_id__in=[self.section_a.section_id, self.section_b.section_id]).count() == 2)
+
+    def test_create_assigns_authenticated_instructor_and_list_is_isolated(self):
+        self.client.force_authenticate(user=self.instructor)
+        response = self.client.post('/api/activities/', {
+            'title': 'Owned Activity',
+            'section': self.section_a.section_id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        activity = Activity.objects.get(id=response.json()['id'])
+        self.assertEqual(activity.created_by_id, self.instructor.id)
+
+        self.client.force_authenticate(user=self.other_instructor)
+        other_response = self.client.get('/api/activities/')
+        other_results = other_response.json().get('results', other_response.json())
+        self.assertNotIn(activity.id, [item['id'] for item in other_results])
+
+        self.client.force_authenticate(user=self.instructor)
+        own_response = self.client.get('/api/activities/')
+        own_results = own_response.json().get('results', own_response.json())
+        self.assertIn(activity.id, [item['id'] for item in own_results])
+
+    def test_update_preserves_creator_and_rejects_client_ownership_change(self):
+        activity = Activity.objects.create(title='Owned Activity', created_by=self.instructor)
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.patch(f'/api/activities/{activity.id}/', {
+            'title': 'Updated Activity',
+            'created_by': self.other_instructor.id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        activity.refresh_from_db()
+        self.assertEqual(activity.title, 'Updated Activity')
+        self.assertEqual(activity.created_by_id, self.instructor.id)
 
     def test_instructor_can_upload_files_with_activity(self):
         self.client.force_authenticate(user=self.instructor)
@@ -232,14 +276,14 @@ class StudentNotificationTests(TestCase):
             student_id='S004',
         )
         Notification.objects.create(
-            instructor=self.student,
+            student=self.student,
             title='New activity assigned',
             message='A new activity is ready for you.',
             notification_type='deadline',
             link='/student/activities',
         )
         Notification.objects.create(
-            instructor=self.other_student,
+            student=self.other_student,
             title='Hidden notification',
             message='This should not be visible.',
             notification_type='submission',
@@ -264,6 +308,34 @@ class StudentNotificationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['unread_count'], 1)
+
+    def test_authenticated_instructor_comment_notifies_assigned_student(self):
+        instructor = User.objects.create_user(
+            username='comment-instructor',
+            email='comment-instructor@example.com',
+            password='secret123',
+            role='instructor',
+            instructor_id='I-COMMENT',
+            nfc_uid='NFC-COMMENT',
+        )
+        section = Section.objects.create(section_name='Comment Section', instructor=instructor)
+        self.student.section = section
+        self.student.save(update_fields=['section'])
+        activity = Activity.objects.create(title='Discuss this', created_by=instructor, section=section)
+
+        self.client.force_authenticate(user=instructor)
+        response = self.client.post('/api/activity-discussions/', {
+            'activity': activity.id,
+            'message': 'Please review this activity.',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.client.force_authenticate(user=self.student)
+        notifications = self.client.get('/api/notifications/').json()['results']
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]['student'], self.student.id)
+        self.assertEqual(notifications[0]['notification_type'], 'feedback')
+        self.assertFalse(Notification.objects.filter(student=self.other_student).exists())
 
 
 class StudentProfileTests(TestCase):

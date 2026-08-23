@@ -209,6 +209,30 @@ def create_notification(
 ):
     if not instructor:
         return None
+
+
+def create_student_notification(student, title, message, notification_type, notification_key, link=''):
+    if not student or student.role != User.RoleChoices.STUDENT:
+        return None
+    try:
+        return Notification.objects.create(
+            student=student,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            notification_key=notification_key,
+            link=link,
+        )
+    except Exception:
+        return None
+
+
+def get_activity_students(activity):
+    section_ids = set()
+    if activity.section_id:
+        section_ids.add(activity.section_id)
+    section_ids.update(activity.assigned_sections.values_list('section_id', flat=True))
+    return User.objects.filter(role=User.RoleChoices.STUDENT, section_id__in=section_ids).distinct()
     try:
         return Notification.objects.create(
             instructor=instructor,
@@ -258,6 +282,15 @@ def create_submission_notifications(submission):
             f"{key}-{instructor.id}",
             link,
         )
+
+    create_student_notification(
+        student,
+        'Submission received',
+        f"Your submission for '{activity.title}' was received.",
+        Notification.TypeChoices.SUBMISSION,
+        f'student-submission-{submission.id}',
+        '/student/submissions',
+    )
 
 
 def create_access_log_notifications(access_log):
@@ -423,6 +456,30 @@ class ActivityViewSet(viewsets.ModelViewSet):
         else:
             return [IsAuthenticated(), IsAdminRole()]
 
+    def perform_create(self, serializer):
+        activity = serializer.save(created_by=self.request.user)
+        for student in get_activity_students(activity):
+            create_student_notification(
+                student,
+                'New activity assigned',
+                f'New activity available: {activity.title}.',
+                Notification.TypeChoices.ACTIVITY,
+                f'activity-created-{activity.id}-{student.id}',
+                '/student/activities',
+            )
+
+    def perform_update(self, serializer):
+        activity = serializer.save()
+        for student in get_activity_students(activity):
+            create_student_notification(
+                student,
+                'Activity updated',
+                f'{activity.title} has been updated by your instructor.',
+                Notification.TypeChoices.ACTIVITY,
+                f'activity-update-{activity.id}-{student.id}-{activity.updated_at.isoformat()}',
+                '/student/activities',
+            )
+
     @action(detail=False, methods=['get'])
     def diagnostics(self, request):
         """Temporary diagnostic endpoint: lists activities with latest submission
@@ -502,7 +559,17 @@ class ActivityDiscussionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         role = getattr(user, 'role', '')
-        serializer.save(sender=user, sender_role=role)
+        discussion = serializer.save(sender=user, sender_role=role)
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            for student in get_activity_students(discussion.activity):
+                create_student_notification(
+                    student,
+                    'New instructor comment',
+                    f"{user.get_full_name() or user.username} commented on {discussion.activity.title}.",
+                    Notification.TypeChoices.FEEDBACK,
+                    f'discussion-{discussion.id}-{student.id}',
+                    '/student/activities',
+                )
 
     def perform_update(self, serializer):
         serializer.save()
@@ -538,7 +605,16 @@ class ActivityAnnouncementViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), IsInstructorRole()]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        announcement = serializer.save(created_by=self.request.user)
+        for student in get_activity_students(announcement.activity):
+            create_student_notification(
+                student,
+                announcement.title or 'Activity announcement',
+                announcement.message,
+                Notification.TypeChoices.ANNOUNCEMENT,
+                f'announcement-{announcement.id}-{student.id}',
+                '/student/activities',
+            )
 
     def perform_update(self, serializer):
         serializer.save()
@@ -740,6 +816,14 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             submission.graded_at = timezone.now()
             submission.save(update_fields=['score', 'feedback', 'graded_by', 'graded_at', 'updated_at'])
             submission.refresh_from_db()
+            create_student_notification(
+                submission.student,
+                'Submission graded',
+                f"Your submission for '{submission.activity.title}' has been graded." + (f' Feedback: {feedback}' if feedback else ''),
+                Notification.TypeChoices.GRADE,
+                f'grade-{submission.id}-{submission.updated_at.isoformat()}',
+                '/student/submissions',
+            )
             serializer = self.get_serializer(submission)
             return Response(serializer.data)
         except Exception as exc:
@@ -941,8 +1025,10 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['instructor', 'student']:
+        if user.role == 'instructor':
             return Notification.objects.filter(instructor=user)
+        if user.role == 'student':
+            return Notification.objects.filter(student=user)
         return Notification.objects.none()
 
     def list(self, request, *args, **kwargs):
