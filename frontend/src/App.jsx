@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import RoleSelection from './pages/auth/RoleSelection.jsx'
 import Login from './pages/auth/Login.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
 import AdminDashboard from './pages/admin/AdminDashboard.jsx'
@@ -50,8 +49,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path='/' element={<RoleSelection />} />
-        <Route path='/admin/login' element={<Login />} />
+        <Route path='/' element={<Login />} />
+        <Route path='/admin/login' element={<Login administratorOnly />} />
         <Route path='/instructor/login' element={<Login />} />
         <Route path='/student/login' element={<Login />} />
 

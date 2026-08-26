@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useState } from 'react'
 import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, Settings, BookOpen, LogIn, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import TapTrackLogo from './TapTrackLogo.jsx'
 
 const menuItems = [
   { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutGrid },
@@ -52,6 +53,9 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
   return (
     <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-slate-200 bg-white shadow-sm transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
       <div className={`border-b border-slate-200 py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
+        <div className={`mb-5 flex ${collapsed ? 'justify-center' : 'justify-start max-sm:justify-center'}`}>
+          <TapTrackLogo compact={collapsed} mobileCompact className={collapsed ? 'h-10 w-10' : 'h-auto w-[165px]'} />
+        </div>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-3 max-sm:justify-center'}`}>
           {!collapsed && <p className="text-sm font-semibold text-slate-900 max-sm:hidden">{config.title}</p>}
           <button

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import TapTrackLogo from './TapTrackLogo.jsx'
 
 export default function AppHeader() {
   const navigate = useNavigate()
@@ -40,11 +41,8 @@ export default function AppHeader() {
       <div className="h-full px-6 flex items-center justify-between gap-6">
         {/* Left side - Logo and system name */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg">
-            TT
-          </div>
+          <TapTrackLogo responsive />
           <div>
-            <h1 className="font-bold text-slate-900 text-sm">TapTrack</h1>
             <p className="text-xs text-slate-500">System Manager</p>
           </div>
         </div>

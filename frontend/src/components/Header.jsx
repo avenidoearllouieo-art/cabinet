@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import api from '../services/api.js'
 import NotificationDropdown from './NotificationDropdown'
+import TapTrackLogo from './TapTrackLogo.jsx'
 
 export default function Header() {
   const navigate = useNavigate()
@@ -79,9 +80,7 @@ export default function Header() {
     <header className="fixed inset-x-0 top-0 z-50 h-[70px] border-b border-[#E5E7EB] bg-white px-6 shadow-sm">
       <div className="flex h-full items-center justify-between gap-5">
         <div className="flex items-center gap-4">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2563EB] text-lg font-semibold text-white">
-            TT
-          </div>
+          <TapTrackLogo responsive />
           <div className="hidden sm:block">
             <p className="text-sm font-semibold text-[#111827]">{headerText.title}</p>
             <p className="text-xs text-[#6B7280]">{headerText.subtitle}</p>

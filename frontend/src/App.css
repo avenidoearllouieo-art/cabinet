@@ -15,3 +15,78 @@ body {
 * {
   box-sizing: border-box;
 }
+
+.login-shell {
+  background: #eef4fa;
+  isolation: isolate;
+}
+
+.login-grid {
+  opacity: 0.55;
+  background-image: linear-gradient(rgba(130, 154, 181, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(130, 154, 181, 0.12) 1px, transparent 1px);
+  background-position: center;
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, transparent, black 22%, black 78%, transparent);
+  z-index: -2;
+}
+
+.login-wordmark-pattern {
+  position: absolute;
+  inset: -18% -12%;
+  background-image: url('/logo1.png');
+  background-position: center;
+  background-repeat: repeat;
+  background-size: 380px auto;
+  opacity: 0.075;
+  transform: rotate(-12deg) scale(1.12);
+  pointer-events: none;
+  user-select: none;
+  z-index: -1;
+}
+
+@media (max-width: 640px) {
+  .login-wordmark-pattern {
+    inset: -12% -48%;
+    background-size: 255px auto;
+    transform: rotate(-12deg) scale(1.06);
+  }
+}
+
+.login-shell::before,
+.login-shell::after {
+  position: absolute;
+  content: '';
+  border: 1px solid rgba(37, 99, 235, 0.1);
+  border-radius: 24px;
+  transform: rotate(18deg);
+  z-index: -1;
+}
+
+.login-shell::before {
+  width: 340px;
+  height: 180px;
+  left: -120px;
+  bottom: 10%;
+}
+
+.login-shell::after {
+  width: 300px;
+  height: 150px;
+  right: -100px;
+  top: 13%;
+  transform: rotate(-18deg);
+}
+
+.login-cabinet-mark {
+  display: flex;
+  gap: 7px;
+  opacity: 0.45;
+}
+
+.login-cabinet-mark span {
+  width: 34px;
+  height: 52px;
+  border: 1px solid #a9bdd3;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.35);
+}
