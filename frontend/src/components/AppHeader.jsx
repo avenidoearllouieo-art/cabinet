@@ -56,7 +56,7 @@ export default function AppHeader() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={userRole === 'student' ? 'Search students, activities, or settings...' : 'Search students, assignments, or settings...'}
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:ring-2 focus:ring-blue-900 focus:border-transparent outline-none transition-all"
               />
               <button
                 type="submit"

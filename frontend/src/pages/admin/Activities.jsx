@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
+import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
 import Modal from '../../components/Modal.jsx'
 import ActivityActionsMenu from '../../components/activities/ActivityActionsMenu.jsx'
@@ -487,10 +488,10 @@ export default function Activities() {
       />
 
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<ClipboardList size={18} />} label="Total Activities" value={totalActivities} subtitle="All recorded activities" />
-        <StatCard icon={<CalendarDays size={18} />} label="Active Activities" value={activeActivities} subtitle="Currently open" />
-        <StatCard icon={<CalendarCheck size={18} />} label="Due Today" value={dueTodayActivities} subtitle="Scheduled for today" />
-        <StatCard icon={<XCircle size={18} />} label="Closed Activities" value={closedActivities} subtitle="Closed or expired" />
+        <SummaryCard icon={ClipboardList} title="Total Activities" value={totalActivities} trendText="All recorded activities" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={CalendarDays} title="Active Activities" value={activeActivities} trendText="Currently open" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={CalendarCheck} title="Due Today" value={dueTodayActivities} trendText="Scheduled for today" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={XCircle} title="Closed Activities" value={closedActivities} trendText="Closed or expired" iconBg="bg-slate-100" iconColor="text-slate-700" />
       </div>
 
       {error && (
@@ -513,8 +514,8 @@ export default function Activities() {
           </div>
         </div>
 
-        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <label className="relative block w-full lg:max-w-[360px]">
+        <div className="mb-4 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
+          <label className="relative block w-full md:max-w-md">
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
               <Search size={16} />
             </span>
@@ -522,16 +523,10 @@ export default function Activities() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search activities..."
-              className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <select value={activityTypeFilter} onChange={(event) => setActivityTypeFilter(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-              <option value="">All activity types</option>
-              {activityTypeOptions.map((type) => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
+          <div className="flex w-full flex-wrap items-center justify-end gap-3 md:w-auto">
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
               <option value="">All statuses</option>
               <option value="Active">Active</option>
@@ -539,24 +534,6 @@ export default function Activities() {
               <option value="Scheduled">Scheduled</option>
               <option value="Closed">Closed</option>
               <option value="Archived">Archived</option>
-            </select>
-            <select value={assignedSectionFilter} onChange={(event) => setAssignedSectionFilter(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-              <option value="">All assigned sections</option>
-              {sectionOptions.map((section) => (
-                <option key={section} value={section}>{section}</option>
-              ))}
-            </select>
-            <select value={assignedInstructorFilter} onChange={(event) => setAssignedInstructorFilter(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-              <option value="">All instructors</option>
-              {instructorOptions.map((instructor) => (
-                <option key={instructor} value={instructor}>{instructor}</option>
-              ))}
-            </select>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="due_date">Due Date</option>
-              <option value="alphabetical">Alphabetical</option>
             </select>
           </div>
         </div>
@@ -566,7 +543,11 @@ export default function Activities() {
           <div>{filteredActivities.length} result{filteredActivities.length === 1 ? '' : 's'}</div>
         </div>
 
-        <DataTable columns={columns} data={filteredActivities} loading={loading} showActions={false} emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'} />
+        {loading ? (
+          <TableSkeleton />
+        ) : (
+          <DataTable columns={columns} data={filteredActivities} showActions={false} emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'} />
+        )}
       </div>
 
       {toastMessage && (

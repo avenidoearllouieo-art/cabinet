@@ -8,10 +8,6 @@ export default function InstructorNotifications() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  useEffect(() => {
-    fetchNotifications()
-  }, [])
-
   const fetchNotifications = async () => {
     setLoading(true)
     try {
@@ -25,6 +21,10 @@ export default function InstructorNotifications() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchNotifications()
+  }, [])
 
   const markAllRead = async () => {
     try {

@@ -2,7 +2,8 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
+import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
 import AddUserModal from '../../components/users/AddUserModal.jsx'
 import EditUserModal from '../../components/users/EditUserModal.jsx'
@@ -17,6 +18,7 @@ export default function Users() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [isAddUserOpen, setIsAddUserOpen] = useState(false)
+  const [selectedRole, setSelectedRole] = useState('student')
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const addMenuRef = useRef(null)
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
@@ -34,15 +36,15 @@ export default function Users() {
   const handleOpenAddUserModal = () => {
     setEditingUserId(null)
     setSelectedUser(null)
+    setSelectedRole('student')
     setIsAddUserOpen(true)
   }
 
   const handleOpenAddForRole = (role) => {
     setEditingUserId(null)
     setSelectedUser(null)
+    setSelectedRole(role)
     setIsAddUserOpen(true)
-    // modal will default to student; to preselect role we can set a short-lived global
-    window.__prefill_user_role = role
   }
 
   const showToast = (message, type = 'success') => {
@@ -92,12 +94,6 @@ export default function Users() {
   }, [addMenuOpen, bulkMenuOpen])
 
   useEffect(() => {
-    if (!isAddUserOpen && window.__prefill_user_role) {
-      try { delete window.__prefill_user_role } catch (e) { window.__prefill_user_role = undefined }
-    }
-  }, [isAddUserOpen])
-
-  useEffect(() => {
     window.openEditModal = (id, row) => {
       if (!id) return
       setEditingUserId(id)
@@ -130,13 +126,6 @@ export default function Users() {
       setLoading(false)
     }
   }
-
-  const roleOptions = [
-    { value: '', label: 'All roles' },
-    { value: 'student', label: 'Students' },
-    { value: 'instructor', label: 'Instructors' },
-    { value: 'admin', label: 'Administrators' }
-  ]
 
   const sectionOptions = Array.from(
     new Set(
@@ -345,10 +334,10 @@ export default function Users() {
       />
 
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<UserCheck size={18} />} label="Students" value={totalStudents} subtitle="Current enrolled students" trend={{ direction: 'up', label: 'Stable enrollment' }} />
-        <StatCard icon={<Activity size={18} />} label="Instructors" value={totalInstructors} subtitle="Active teaching staff" trend={{ direction: 'up', label: 'Staff count rising' }} />
-        <StatCard icon={<ShieldCheck size={18} />} label="Administrators" value={totalAdmins} subtitle="Platform administrators" trend={{ direction: 'up', label: 'Consistent coverage' }} />
-        <StatCard icon={<CircleOff size={18} />} label="Inactive Accounts" value={inactiveUsers} subtitle="Requires review" trend={{ direction: 'down', label: 'Fewer inactive accounts' }} />
+        <SummaryCard icon={UserCheck} title="Students" value={totalStudents} trendText="Stable enrollment" trendColor="text-emerald-600" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Activity} title="Instructors" value={totalInstructors} trendText="Staff count rising" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={ShieldCheck} title="Administrators" value={totalAdmins} trendText="Consistent coverage" trendColor="text-emerald-600" iconBg="bg-violet-50" iconColor="text-violet-900" />
+        <SummaryCard icon={CircleOff} title="Inactive Accounts" value={inactiveUsers} trendText="Requires review" trendColor="text-rose-600" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -365,7 +354,7 @@ export default function Users() {
           </div>
           <div className="flex flex-col gap-4 xl:flex-1">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <label className="relative block w-full lg:max-w-[360px]">
+              <label className="relative block w-full lg:mr-auto lg:max-w-[360px]">
                 <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
                   <Search size={16} />
                 </span>
@@ -373,22 +362,15 @@ export default function Users() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search users..."
-                  className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
                 />
               </label>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end lg:ml-auto lg:w-auto">
                 <select value={filters.status} onChange={(e)=>setFilters(f=>({...f,status:e.target.value}))} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
                   <option value="">All statuses</option>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
                 </select>
-                {activeRole === 'all' && (
-                  <select value={filters.section} onChange={(e)=>setFilters(f=>({...f,section:e.target.value}))} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-                    {roleOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                )}
                 {activeRole === 'student' && (
                   <select value={filters.section} onChange={(e)=>setFilters(f=>({...f,section:e.target.value}))} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
                     <option value="">All sections</option>
@@ -406,10 +388,6 @@ export default function Users() {
                   </select>
                 )}
               </div>
-            </div>
-            <div className="flex items-center justify-between text-sm text-slate-500">
-              <div />
-              <div>{filteredUsers.length} result{filteredUsers.length === 1 ? '' : 's'}</div>
             </div>
           </div>
         </div>
@@ -457,22 +435,9 @@ export default function Users() {
           </div>
           <div className="text-sm text-slate-500">{filteredUsers.length} result{filteredUsers.length === 1 ? '' : 's'}</div>
         </div>
-        {loading && filteredUsers.length === 0 ? (
-          <div className="rounded-[12px] border border-dashed border-slate-200 bg-slate-50 p-12 text-center text-slate-500">
-            <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
-                <path d="M4 4v5h.582" />
-                <path d="M20 20v-5h-.581" />
-                <path d="M9 20H5a2 2 0 0 1-2-2V9" />
-                <path d="M15 4h4a2 2 0 0 1 2 2v9" />
-                <path d="M8 12a4 4 0 0 1 7.874-1.039" />
-                <path d="M14 14.5A4 4 0 0 1 9.5 19" />
-              </svg>
-            </div>
-            <p className="text-lg font-semibold text-slate-900">Loading users...</p>
-            <p className="mt-2 text-sm text-slate-600">Please wait while we load the latest users.</p>
-          </div>
-        ) : (!loading && users.length === 0 ? (
+        {loading ? (
+          <TableSkeleton />
+        ) : users.length === 0 ? (
           <div className="rounded-[12px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-500">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl shadow-sm">👥</div>
             <p className="text-lg font-semibold text-slate-900">No users found</p>
@@ -480,7 +445,7 @@ export default function Users() {
           </div>
         ) : (
           <DataTable columns={columns} data={filteredUsers} loading={loading} showActions={false} emptyMessage={users.length ? 'No users match your filters.' : 'No users available.'} />
-        ))}
+        )}
       </div>
 
       {toastMessage && (
@@ -494,6 +459,7 @@ export default function Users() {
         onClose={() => setIsAddUserOpen(false)}
         onUnauthorized={() => navigate('/admin/login')}
         onSaved={handleUserSaved}
+        initialRole={selectedRole}
       />
 
       <EditUserModal

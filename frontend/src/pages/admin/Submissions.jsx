@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Search, Send, CheckCircle2, AlertCircle, Clock, MoreHorizontal, Eye, Trash2 } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import DeleteSubmissionModal from '../../components/submissions/DeleteSubmissionModal.jsx'
@@ -307,10 +307,10 @@ export default function Submissions() {
       />
 
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<Send size={18} />} label="Total Submissions" value={totalSubmissions} subtitle="All student submissions" />
-        <StatCard icon={<CheckCircle2 size={18} />} label="Graded" value={gradedCount} subtitle="Fully reviewed" />
-        <StatCard icon={<Clock size={18} />} label="Pending Review" value={pendingCount} subtitle="Awaiting review" />
-        <StatCard icon={<AlertCircle size={18} />} label="Late" value={lateCount} subtitle="Past due date" />
+        <SummaryCard icon={Send} title="Total Submissions" value={totalSubmissions} trendText="All student submissions" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={CheckCircle2} title="Graded" value={gradedCount} trendText="Fully reviewed" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={Clock} title="Pending Review" value={pendingCount} trendText="Awaiting review" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={AlertCircle} title="Late" value={lateCount} trendText="Past due date" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
       </div>
 
       {error && (
@@ -337,7 +337,7 @@ export default function Submissions() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search submissions..."
-              className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

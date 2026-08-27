@@ -1,4 +1,4 @@
-export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName }) {
+export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName, variant = 'default' }) {
   const tableData = Array.isArray(data) ? data : Array.isArray(rows) ? rows : []
   const hasData = tableData.length > 0
   const addActionsColumn = showActions && !columns.some((c) => c.key === 'actions')
@@ -19,20 +19,20 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
   }
 
   return (
-    <div className="relative overflow-x-auto rounded-[12px] border border-[#E5E7EB] bg-white shadow-sm">
+    <div className="relative max-h-[600px] overflow-auto rounded-[12px] border border-[#E5E7EB] bg-white shadow-sm">
       <table className="min-w-full table-fixed text-sm">
         <thead className="bg-[#F9FAFB]">
           <tr>
             {columns.map((col) => (
               <th
                 key={col.key}
-                className={`sticky top-0 z-20 bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280] ${col.className || 'whitespace-nowrap'}`}
+                className={`sticky top-0 z-20 bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#6B7280]'} ${col.className || 'whitespace-nowrap'}`}
               >
                 {col.label}
               </th>
             ))}
             {addActionsColumn && (
-              <th className="sticky top-0 z-20 whitespace-nowrap bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+              <th className={`sticky top-0 z-20 whitespace-nowrap bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#6B7280]'}`}>
                 Actions
               </th>
             )}
@@ -68,7 +68,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
             <tr
               key={idx}
               onClick={() => onRowClick?.(row)}
-              className={`h-14 transition-colors duration-200 ${onRowClick ? 'cursor-pointer hover:bg-[#F8FAFC]' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'} ${typeof rowClassName === 'function' ? (rowClassName(row, idx) || '') : (rowClassName || '')}`}
+              className={`min-h-14 h-14 transition-colors duration-200 ${onRowClick ? 'cursor-pointer hover:bg-slate-100' : variant === 'monitoring' ? 'hover:bg-slate-100' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'} ${typeof rowClassName === 'function' ? (rowClassName(row, idx) || '') : (rowClassName || '')}`}
             >
               {columns.map((col) => (
                 <td key={`${idx}-${col.key}`} className={`px-6 py-4 align-middle text-[#374151] ${col.className || 'whitespace-nowrap'}`}>
@@ -90,7 +90,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
                       }
                     }}
                     style={{ pointerEvents: 'auto', position: 'relative', zIndex: 50 }}
-                    className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition duration-200 hover:bg-blue-700"
+                    className="min-h-11 rounded-full bg-taptrack-gold px-4 py-2 text-sm font-semibold text-taptrack-navy shadow-sm transition duration-200 hover:bg-taptrack-gold-hover"
                   >
                     Edit User
                   </button>

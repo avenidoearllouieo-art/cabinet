@@ -17,6 +17,8 @@ import {
   Paperclip,
   BadgeCheck,
   BookOpen,
+  PencilLine,
+  Trash2,
 } from 'lucide-react'
 import api from '../../services/api.js'
 import ActivityAnnouncements from '../../components/ActivityAnnouncements.jsx'

@@ -54,6 +54,7 @@ function App() {
         <Route path='/instructor/login' element={<Login />} />
         <Route path='/student/login' element={<Login />} />
 
+        <Route element={<ProtectedRoute redirectTo='/admin/login' allowedRoles={['admin']} />}>
         <Route path='/admin' element={<AdminLayout />}>
           <Route index element={<Navigate to='dashboard' replace />} />
           <Route path='dashboard' element={<AdminDashboard />} />
@@ -73,8 +74,9 @@ function App() {
             }
           />
         </Route>
+        </Route>
 
-        <Route element={<ProtectedRoute redirectTo='/student/login' />}>
+        <Route element={<ProtectedRoute redirectTo='/student/login' allowedRoles={['student']} />}>
           <Route path='/student' element={<StudentLayout />}>
             <Route index element={<Navigate to='dashboard' replace />} />
             <Route path='dashboard' element={<StudentDashboard />} />
@@ -86,7 +88,7 @@ function App() {
           </Route>
         </Route>
 
-        <Route element={<ProtectedRoute redirectTo='/instructor/login' />}>
+        <Route element={<ProtectedRoute redirectTo='/instructor/login' allowedRoles={['instructor']} />}>
           <Route path='/instructor' element={<InstructorLayout />}>
             <Route index element={<Navigate to='dashboard' replace />} />
             <Route path='dashboard' element={<InstructorDashboard />} />

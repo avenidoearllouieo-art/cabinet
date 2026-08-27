@@ -51,17 +51,17 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
   }
 
   return (
-    <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-slate-200 bg-white shadow-sm transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
+    <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-slate-200 bg-white text-taptrack-navy shadow-lg transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
       <div className={`border-b border-slate-200 py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
         <div className={`mb-5 flex ${collapsed ? 'justify-center' : 'justify-start max-sm:justify-center'}`}>
           <TapTrackLogo compact={collapsed} mobileCompact className={collapsed ? 'h-10 w-10' : 'h-auto w-[165px]'} />
         </div>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-3 max-sm:justify-center'}`}>
-          {!collapsed && <p className="text-sm font-semibold text-slate-900 max-sm:hidden">{config.title}</p>}
+          {!collapsed && <p className="text-sm font-semibold text-taptrack-navy max-sm:hidden">{config.title}</p>}
           <button
             type="button"
             onClick={toggleSidebar}
-            className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-taptrack-navy transition hover:bg-yellow-100 hover:text-taptrack-navy focus:outline-none focus:ring-2 focus:ring-taptrack-gold"
             aria-label={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
             title={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
           >
@@ -82,8 +82,8 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
               title={item.label}
               className={`flex h-12 items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-4 max-sm:justify-center max-sm:px-0'} ${
                 active
-                  ? 'bg-slate-100 text-slate-900 shadow-sm'
-                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                  ? 'border-l-4 border-taptrack-gold bg-yellow-100 pl-3 font-bold text-taptrack-navy shadow-sm'
+                  : 'border-l-4 border-transparent text-slate-700 hover:bg-slate-100 hover:text-taptrack-navy'
               }`}
             >
               <Icon size={18} />

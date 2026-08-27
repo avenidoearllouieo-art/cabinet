@@ -1,101 +1,104 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
-import { ClipboardList, Users, Send, TrendingUp } from 'lucide-react'
+import SummaryCard from '../../components/SummaryCard'
+import { Activity, ClipboardList, Radio, Send, ShieldCheck, Users } from 'lucide-react'
+
+const formatDate = (value) => {
+  if (!value) return '—'
+  try {
+    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  } catch {
+    return String(value)
+  }
+}
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState({
-    totalStudents: 0,
-    totalAssignments: 0,
-    totalSubmissions: 0,
-    participationRate: 92,
-  })
+  const [stats, setStats] = useState({ totalStudents: 0, totalAssignments: 0, totalSubmissions: 0, totalAccessLogs: 0 })
+  const [recentAccessLogs, setRecentAccessLogs] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const fetchDashboardData = async () => {
+      setLoading(true)
+      try {
+        const [usersRes, activitiesRes, submissionsRes, dashboardRes] = await Promise.all([
+          api.get('/users/'),
+          api.get('/activities/'),
+          api.get('/submissions/'),
+          api.get('/dashboard/'),
+        ])
+        const users = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data.results || []
+        const activities = Array.isArray(activitiesRes.data) ? activitiesRes.data : activitiesRes.data.results || []
+        const submissions = Array.isArray(submissionsRes.data) ? submissionsRes.data : submissionsRes.data.results || []
+        const dashboard = dashboardRes.data || {}
+
+        setStats({
+          totalStudents: users.filter((user) => user.role === 'student').length,
+          totalAssignments: activities.length,
+          totalSubmissions: submissions.length,
+          totalAccessLogs: dashboard.total_access_logs || 0,
+        })
+        setRecentAccessLogs(Array.isArray(dashboard.recent_access_logs) ? dashboard.recent_access_logs : [])
+      } catch (error) {
+        console.error('Failed to fetch dashboard data:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
     fetchDashboardData()
   }, [])
 
-  const fetchDashboardData = async () => {
-    setLoading(true)
-    try {
-      const token = localStorage.getItem('access')
-      const headers = { Authorization: `Bearer ${token}` }
-
-      const usersRes = await api.get('/users/')
-      const users = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data.results || []
-      const students = users.filter((u) => u.role === 'student')
-
-      const activitiesRes = await api.get('/activities/')
-      const activities = Array.isArray(activitiesRes.data) ? activitiesRes.data : activitiesRes.data.results || []
-
-      const submissionsRes = await api.get('/submissions/')
-      const submissions = Array.isArray(submissionsRes.data) ? submissionsRes.data : submissionsRes.data.results || []
-
-      setStats({
-        totalStudents: students.length,
-        totalAssignments: activities.length,
-        totalSubmissions: submissions.length,
-        participationRate: 92,
-      })
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
-    <div className="space-y-8">
-      <PageHeader
-        title="Dashboard Overview"
-        description="System-wide metrics and recent activity"
-      />
+    <div className="space-y-6">
+      <PageHeader title="Operations Overview" description="Live cabinet activity and system readiness." />
 
       {loading ? (
-        <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">
-          Loading dashboard...
-        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500 shadow-sm">Loading operations dashboard…</div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={<Users size={18} />} label="Total Students" value={stats.totalStudents} subtitle="All enrolled users" />
-          <StatCard icon={<ClipboardList size={18} />} label="Total Assignments" value={stats.totalAssignments} subtitle="Active assignments" />
-          <StatCard icon={<Send size={18} />} label="Total Submissions" value={stats.totalSubmissions} subtitle="All submissions" />
-          <StatCard icon={<TrendingUp size={18} />} label="Participation Rate" value={`${stats.participationRate}%`} subtitle="Student engagement" />
-        </div>
-      )}
-
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-        <h2 className="mb-6 text-lg font-semibold text-[#111827]">Recent Submissions - Needs Grading</h2>
-        <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-16 text-center">
-          <div className="mb-3 flex justify-center text-4xl text-[#2563EB]">
-            <ClipboardList size={32} />
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard icon={Users} title="Enrolled Students" value={stats.totalStudents} trendText="Registered system users" iconBg="bg-blue-50" iconColor="text-blue-900" />
+            <SummaryCard icon={ClipboardList} title="Active Activities" value={stats.totalAssignments} trendText="Published coursework" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+            <SummaryCard icon={Send} title="Submissions" value={stats.totalSubmissions} trendText="Files received" iconBg="bg-violet-50" iconColor="text-violet-900" />
+            <SummaryCard icon={ShieldCheck} title="Access Records" value={stats.totalAccessLogs} trendText="Recorded NFC and login events" iconBg="bg-amber-50" iconColor="text-amber-900" />
           </div>
-          <p className="text-[#6B7280]">All caught up! No pending submissions to grade.</p>
-        </div>
-      </div>
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-        <h2 className="mb-6 text-lg font-semibold text-[#111827]">Quick Actions</h2>
-        <div className="grid gap-6 md:grid-cols-3">
-          <a href="/admin/users" className="rounded-[12px] border border-[#E5E7EB] p-6 transition hover:border-[#2563EB] hover:bg-[#F8FAFC]">
-            <div className="mb-3 text-[#2563EB]"><Users size={24} /></div>
-            <h3 className="mb-1 font-semibold text-[#111827]">Manage Users</h3>
-            <p className="text-sm text-[#6B7280]">Add, edit, or remove users</p>
-          </a>
-          <a href="/admin/activities" className="rounded-[12px] border border-[#E5E7EB] p-6 transition hover:border-[#2563EB] hover:bg-[#F8FAFC]">
-            <div className="mb-3 text-[#2563EB]"><ClipboardList size={24} /></div>
-            <h3 className="mb-1 font-semibold text-[#111827]">Manage Activities</h3>
-            <p className="text-sm text-[#6B7280]">Create and manage activities</p>
-          </a>
-          <a href="/admin/sections" className="rounded-[12px] border border-[#E5E7EB] p-6 transition hover:border-[#2563EB] hover:bg-[#F8FAFC]">
-            <div className="mb-3 text-[#2563EB]"><TrendingUp size={24} /></div>
-            <h3 className="mb-1 font-semibold text-[#111827]">Manage Sections</h3>
-            <p className="text-sm text-[#6B7280]">Organize course sections</p>
-          </a>
-        </div>
-      </div>
+          <div className="grid gap-6">
+            <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-taptrack-navy"><Radio size={18} className="text-taptrack-gold" /> Recent access activity</p>
+                  <p className="mt-1 text-sm text-slate-500">Latest events recorded by TapTrack.</p>
+                </div>
+                <Link to="/admin/access-logs" className="inline-flex min-h-11 items-center rounded-lg border border-taptrack-navy px-4 text-sm font-semibold text-taptrack-navy transition hover:bg-taptrack-navy hover:text-white">View logs</Link>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {recentAccessLogs.length ? recentAccessLogs.slice(0, 5).map((log, index) => {
+                  const success = String(log.status).toLowerCase() === 'success'
+                  return (
+                    <div key={log.id || index} className={`flex min-h-14 items-center justify-between gap-4 px-6 py-3 ${index % 2 ? 'bg-taptrack-stripe' : 'bg-white'} hover:bg-slate-100`}>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-taptrack-navy">{log.user?.name?.trim() || 'Unregistered card'}</p>
+                        <p className="text-xs text-slate-500">{log.user?.student_id || 'NFC access event'} · {formatDate(log.access_time)}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${success ? 'bg-emerald-50 text-[#16A34A]' : 'bg-red-50 text-[#B91C1C]'}`}>{success ? 'Success' : 'Failed'}</span>
+                    </div>
+                  )
+                }) : <div className="px-6 py-12 text-center text-sm text-slate-500">No access activity has been recorded yet.</div>}
+              </div>
+            </section>
+          </div>
+
+          <section className="grid gap-4 md:grid-cols-3">
+            <Link to="/admin/access-logs" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><ShieldCheck className="text-taptrack-gold" size={24} /><span><strong className="block">Access monitoring</strong><span className="text-sm text-slate-500">Review NFC authentication outcomes.</span></span></Link>
+            <Link to="/admin/cabinet-events" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><Activity className="text-taptrack-gold" size={24} /><span><strong className="block">Cabinet events</strong><span className="text-sm text-slate-500">Inspect locking and alert history.</span></span></Link>
+            <Link to="/admin/users" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><Users className="text-taptrack-gold" size={24} /><span><strong className="block">User management</strong><span className="text-sm text-slate-500">Maintain authorized users.</span></span></Link>
+          </section>
+        </>
+      )}
     </div>
   )
 }

@@ -473,41 +473,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                 )}
               </div>
             </section>
-<div className="flex gap-4 justify-end border-t border-slate-200 pt-6">
-+          <div className="flex gap-4 justify-end border-t border-slate-200 pt-6">
-+            <button
-+              type="button"
-+              onClick={onClose}
-+              disabled={loading}
-+              className="flex-1 rounded-full border border-slate-200 bg-white px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100"
-+            >
-+              Cancel
-+            </button>
-+            <button
-+              type="button"
-+              onClick={handleSubmit}
-+              disabled={loading || !canSubmit || uploadedFiles.length === 0}
-+              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-400"
-+            >
-+              {loading ? 'Submitting...' : (
-+                <>
-+                  <Upload size={18} /> Submit Activity
-+                </>
-+              )}
-+            </button>
-                setSubmission(null)
-                  } catch (err) {
-                    console.error('Failed to unsubmit:', err)
-                    alert('Failed to unsubmit. Try again.')
-                  }
-                }}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Unsubmit
-              </button>
-            )}
-          </div>
-
+          </section>
           <div className="flex gap-4 justify-end border-t border-slate-200 pt-6">
             <button
               type="button"

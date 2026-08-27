@@ -230,8 +230,8 @@ export default function InstructorAccessLogs() {
           </button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3 xl:grid-cols-5">
-          <label className="relative block">
+        <div className="mb-6 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
+          <label className="relative block w-full md:max-w-md">
             <span className="sr-only">Search logs</span>
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
@@ -242,11 +242,12 @@ export default function InstructorAccessLogs() {
                 setPage(1)
               }}
               placeholder="Search student ID, name, or RFID"
-              className="w-full rounded-full border border-[#E5E7EB] bg-[#F8FAFC] py-3 pl-11 pr-4 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
 
-          <div>
+          <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
+          <div className="min-w-[150px]">
             <label className="block text-xs font-medium text-slate-700 mb-1">Section</label>
             <select
               value={sectionFilter}
@@ -311,6 +312,7 @@ export default function InstructorAccessLogs() {
               }}
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
             />
+          </div>
           </div>
         </div>
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
 import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
@@ -261,10 +261,10 @@ export default function Sections() {
       />
 
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<BookOpen size={18} />} label="Total Sections" value={totalSections} subtitle="All sections" />
-        <StatCard icon={<Users size={18} />} label="Students Enrolled" value={totalStudents} subtitle="Across all sections" />
-        <StatCard icon={<UserCog size={18} />} label="Assigned Instructors" value={totalInstructors} subtitle="Sections with instructors" />
-        <StatCard icon={<Layers3 size={18} />} label="Average Students per Section" value={averageStudentsPerSection} subtitle="Enrolled per section" />
+        <SummaryCard icon={BookOpen} title="Total Sections" value={totalSections} trendText="All sections" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Users} title="Students Enrolled" value={totalStudents} trendText="Across all sections" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={UserCog} title="Assigned Instructors" value={totalInstructors} trendText="Sections with instructors" iconBg="bg-violet-50" iconColor="text-violet-900" />
+        <SummaryCard icon={Layers3} title="Average Students per Section" value={averageStudentsPerSection} trendText="Enrolled per section" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -286,7 +286,7 @@ export default function Sections() {
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
               <Search size={16} />
             </span>
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections..." className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15" />
+            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections..." className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900" />
           </label>
 
           <div className="flex flex-wrap gap-3 lg:justify-end">

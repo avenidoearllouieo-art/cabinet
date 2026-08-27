@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEventModal.jsx'
 import EditCabinetEventModal from '../../components/cabinetevents/EditCabinetEventModal.jsx'
@@ -175,7 +175,7 @@ export default function CabinetEvents() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => handleOpenViewModal(row.id, row)}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-2 py-2 text-xs font-medium text-white hover:bg-blue-700"
+            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-taptrack-gold px-3 py-2 text-xs font-semibold text-taptrack-navy hover:bg-taptrack-gold-hover"
             title="View event"
           >
             <Eye size={14} />
@@ -183,7 +183,7 @@ export default function CabinetEvents() {
           </button>
           <button
             onClick={() => handleOpenEditModal(row.id, row)}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-2 py-2 text-xs font-medium text-white hover:bg-blue-700"
+            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-taptrack-gold px-3 py-2 text-xs font-semibold text-taptrack-navy hover:bg-taptrack-gold-hover"
             title="Edit event"
           >
             <Edit2 size={14} />
@@ -191,7 +191,7 @@ export default function CabinetEvents() {
           </button>
           <button
             onClick={() => handleOpenDeleteModal(row)}
-            className="inline-flex items-center gap-2 rounded-md bg-red-600 px-2 py-2 text-xs font-medium text-white hover:bg-red-700"
+            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
             title="Delete event"
           >
             <Trash2 size={14} />
@@ -269,10 +269,10 @@ export default function CabinetEvents() {
       />
 
       <div className="grid gap-6 md:grid-cols-4">
-        <StatCard icon={<Box size={18} />} label="Total Events" value={totalEvents} subtitle="All cabinet events" />
-        <StatCard icon={<Box size={18} />} label="Cabinet Opened" value={cabinetOpened} subtitle="Opened events" />
-        <StatCard icon={<Box size={18} />} label="Cabinet Closed" value={cabinetClosed} subtitle="Closed events" />
-        <StatCard icon={<Box size={18} />} label="Active Sessions" value={activeSessions} subtitle="Unlocked sessions" />
+        <SummaryCard icon={Box} title="Total Events" value={totalEvents} trendText="All cabinet events" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Box} title="Cabinet Opened" value={cabinetOpened} trendText="Opened events" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={Box} title="Cabinet Closed" value={cabinetClosed} trendText="Closed events" iconBg="bg-slate-100" iconColor="text-slate-700" />
+        <SummaryCard icon={Box} title="Active Sessions" value={activeSessions} trendText="Unlocked sessions" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -297,7 +297,7 @@ export default function CabinetEvents() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search student, ID, cabinet, section"
-                className="w-full rounded-full border border-[#E5E7EB] bg-[#F9FAFB] py-3 pl-11 pr-4 text-sm text-[#111827] shadow-sm outline-none transition focus:border-[#2563EB] focus:bg-white"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
               />
             </label>
 
@@ -306,7 +306,7 @@ export default function CabinetEvents() {
               <select
                 value={cabinetFilter}
                 onChange={(e) => setCabinetFilter(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-taptrack-gold/50"
               >
                 <option value="all">All Cabinets</option>
                 {uniqueCabinets.map((cabinet) => (
@@ -322,7 +322,7 @@ export default function CabinetEvents() {
               <select
                 value={eventTypeFilter}
                 onChange={(e) => setEventTypeFilter(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-taptrack-gold/50"
               >
                 <option value="all">All</option>
                 <option value="Opened">Opened</option>
@@ -334,7 +334,7 @@ export default function CabinetEvents() {
           </div>
         </div>
 
-        <DataTable columns={columns} data={filteredEvents} loading={loading} showActions={false} />
+        <DataTable columns={columns} data={filteredEvents} loading={loading} showActions={false} variant="monitoring" />
       </div>
 
       {toastMessage && (

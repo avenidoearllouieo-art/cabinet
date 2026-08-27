@@ -167,7 +167,7 @@ export default function InstructorSectionStudents() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search student ID, name, or email"
-              className="w-full rounded-full border border-[#E5E7EB] bg-[#F8FAFC] py-3 pl-11 pr-4 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
 

@@ -6,7 +6,6 @@ export default function ActionsMenu({ user, onAction }) {
   const [open, setOpen] = useState(false)
   const buttonRef = useRef(null)
   const menuRef = useRef(null)
-  if (!user) return null
 
   const toggle = (e) => {
     e?.stopPropagation()
@@ -29,6 +28,8 @@ export default function ActionsMenu({ user, onAction }) {
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [open])
+
+  if (!user) return null
 
   // compute placement
   const getMenuStyle = () => {

@@ -4,6 +4,8 @@ import api from '../../services/api.js'
 
 const getBlankForm = () => ({
   student_id: '',
+  instructor_id: '',
+  admin_id: '',
   username: '',
   email: '',
   password: '',
@@ -11,10 +13,23 @@ const getBlankForm = () => ({
   last_name: '',
   role: 'student',
   section: '',
+  assigned_sections: [],
   is_active: true,
 })
 
-export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved, userId }) {
+const getIdField = (role) => {
+  if (role === 'instructor') return 'instructor_id'
+  if (role === 'admin') return 'admin_id'
+  return 'student_id'
+}
+
+const getIdLabel = (role) => {
+  if (role === 'instructor') return 'Instructor ID'
+  if (role === 'admin') return 'Admin ID'
+  return 'Student ID'
+}
+
+export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved, userId, initialRole = 'student' }) {
   const [saving, setSaving] = useState(false)
   const [sections, setSections] = useState([])
   const [loadingSections, setLoadingSections] = useState(false)
@@ -40,6 +55,11 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
     }
   }, [isOpen, userId])
 
+  useEffect(() => {
+    if (!isOpen || userId) return
+    setForm((current) => ({ ...current, role: initialRole || 'student' }))
+  }, [initialRole, isOpen, userId])
+
   const fetchUser = async (id) => {
     setLoadingUser(true)
     try {
@@ -47,6 +67,8 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
       const data = res.data
       const loadedForm = {
         student_id: data.student_id || '',
+        instructor_id: data.instructor_id || '',
+        admin_id: data.admin_id || '',
         username: data.username || '',
         email: data.email || '',
         password: '',
@@ -54,6 +76,9 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
         last_name: data.last_name || '',
         role: data.role || 'student',
         section: data.section || '' ,
+        assigned_sections: Array.isArray(data.assigned_sections)
+          ? data.assigned_sections.map((section) => section?.section_id || section?.id || section).filter(Boolean)
+          : [],
         is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
       }
       setForm(loadedForm)
@@ -92,6 +117,30 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
     setFormError('')
   }
 
+  const handleRoleChange = (e) => {
+    const role = e.target.value
+    setForm((current) => ({
+      ...current,
+      role,
+      section: '',
+      assigned_sections: [],
+    }))
+    setErrors((current) => ({ ...current, role: undefined, section: undefined, assigned_sections: undefined }))
+    setFormError('')
+  }
+
+  const toggleAssignedSection = (sectionId) => {
+    setForm((current) => {
+      const selected = current.assigned_sections || []
+      const next = selected.includes(sectionId)
+        ? selected.filter((id) => id !== sectionId)
+        : [...selected, sectionId]
+      return { ...current, assigned_sections: next }
+    })
+    setErrors((current) => ({ ...current, assigned_sections: undefined }))
+    setFormError('')
+  }
+
   const handleSubmit = async (e) => {
     e && e.preventDefault && e.preventDefault()
     setSaving(true)
@@ -101,11 +150,14 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
     let payload = {}
 
     if (userId) {
-      const fields = ['student_id', 'username', 'email', 'first_name', 'last_name', 'role', 'section', 'is_active']
+      const fields = ['student_id', 'instructor_id', 'username', 'email', 'first_name', 'last_name', 'role', 'section', 'assigned_sections', 'is_active']
       fields.forEach((field) => {
-        const value = field === 'section' ? (form.section || null) : form[field]
-        const initialValue = field === 'section' ? (initialForm.section || null) : initialForm[field]
-        if (value !== initialValue) {
+        const value = field === 'section' ? (form.section || null) : field === 'assigned_sections' ? (form.assigned_sections || []) : form[field]
+        const initialValue = field === 'section' ? (initialForm.section || null) : field === 'assigned_sections' ? (initialForm.assigned_sections || []) : initialForm[field]
+        const changed = field === 'assigned_sections'
+          ? JSON.stringify(value) !== JSON.stringify(initialValue)
+          : value !== initialValue
+        if (changed) {
           payload[field] = value
         }
       })
@@ -116,6 +168,7 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
     } else {
       payload = {
         student_id: form.student_id || null,
+        instructor_id: form.instructor_id || null,
         username: form.username,
         email: form.email,
         password: form.password,
@@ -123,9 +176,12 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
         last_name: form.last_name,
         role: form.role,
         section: form.section || null,
+        assigned_sections: form.assigned_sections || [],
         is_active: !!form.is_active,
       }
     }
+
+    // TODO: Backend Update Required - Make 'assigned_sections' writable in UserSerializer before deploying.
 
     try {
       if (userId) {
@@ -188,23 +244,30 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Student ID</label>
-            <input value={form.student_id} onChange={handleChange('student_id')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
-            {errors.student_id && <p className="mt-1 text-xs text-red-600">{String(errors.student_id)}</p>}
+            <label className="mb-1 block text-sm font-medium text-slate-700">First Name</label>
+            <input value={form.first_name} onChange={handleChange('first_name')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+            {errors.first_name && <p className="mt-1 text-xs text-red-600">{String(errors.first_name)}</p>}
           </div>
-
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Username</label>
-            <input value={form.username} onChange={handleChange('username')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
-            {errors.username && <p className="mt-1 text-xs text-red-600">{String(errors.username)}</p>}
+            <label className="mb-1 block text-sm font-medium text-slate-700">Last Name</label>
+            <input value={form.last_name} onChange={handleChange('last_name')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+            {errors.last_name && <p className="mt-1 text-xs text-red-600">{String(errors.last_name)}</p>}
           </div>
-
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
             <input type="email" value={form.email} onChange={handleChange('email')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
             {errors.email && <p className="mt-1 text-xs text-red-600">{String(errors.email)}</p>}
           </div>
-
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Username</label>
+            <input value={form.username} onChange={handleChange('username')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+            {errors.username && <p className="mt-1 text-xs text-red-600">{String(errors.username)}</p>}
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">{getIdLabel(form.role)}</label>
+            <input value={form[getIdField(form.role)] || ''} onChange={handleChange(getIdField(form.role))} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
+            {errors[getIdField(form.role)] && <p className="mt-1 text-xs text-red-600">{String(errors[getIdField(form.role)])}</p>}
+          </div>
           {!userId && (
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
@@ -212,39 +275,44 @@ export default function AddUserModal({ isOpen, onClose, onUnauthorized, onSaved,
               {errors.password && <p className="mt-1 text-xs text-red-600">{String(errors.password)}</p>}
             </div>
           )}
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">First Name</label>
-            <input value={form.first_name} onChange={handleChange('first_name')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
-            {errors.first_name && <p className="mt-1 text-xs text-red-600">{String(errors.first_name)}</p>}
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Last Name</label>
-            <input value={form.last_name} onChange={handleChange('last_name')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
-            {errors.last_name && <p className="mt-1 text-xs text-red-600">{String(errors.last_name)}</p>}
-          </div>
-
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
-            <select value={form.role} onChange={handleChange('role')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
+            <select value={form.role} onChange={handleRoleChange} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
               <option value="admin">admin</option>
               <option value="instructor">instructor</option>
               <option value="student">student</option>
             </select>
             {errors.role && <p className="mt-1 text-xs text-red-600">{String(errors.role)}</p>}
           </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Section</label>
-            <select value={form.section || ''} onChange={handleChange('section')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">(none)</option>
-              {loadingSections ? <option>Loading...</option> : sections.map((s) => (
-                <option key={s.id} value={s.id}>{s.name || s.title || `Section ${s.id}`}</option>
-              ))}
-            </select>
-            {errors.section && <p className="mt-1 text-xs text-red-600">{String(errors.section)}</p>}
-          </div>
+          {form.role === 'student' && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Section</label>
+              <select value={form.section || ''} onChange={handleChange('section')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
+                <option value="">(none)</option>
+                {loadingSections ? <option>Loading...</option> : sections.map((s) => (
+                  <option key={s.id} value={s.id}>{s.section_name || s.name || s.title || `Section ${s.id}`}</option>
+                ))}
+              </select>
+              {errors.section && <p className="mt-1 text-xs text-red-600">{String(errors.section)}</p>}
+            </div>
+          )}
+          {form.role === 'instructor' && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Sections</label>
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-2">
+                {loadingSections ? <p className="px-2 py-2 text-sm text-slate-500">Loading sections...</p> : sections.map((s) => {
+                  const selected = (form.assigned_sections || []).includes(s.id)
+                  return (
+                    <label key={s.id} className="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <input type="checkbox" checked={selected} onChange={() => toggleAssignedSection(s.id)} className="h-4 w-4" />
+                      {s.section_name || s.name || s.title || `Section ${s.id}`}
+                    </label>
+                  )
+                })}
+              </div>
+              {errors.assigned_sections && <p className="mt-1 text-xs text-red-600">{String(errors.assigned_sections)}</p>}
+            </div>
+          )}
 
           <div className="md:col-span-2 flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm">

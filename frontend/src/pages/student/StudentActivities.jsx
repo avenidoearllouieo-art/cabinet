@@ -268,7 +268,7 @@ export default function StudentActivities() {
       <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-3">
-            <div className="relative flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 shadow-sm">
+            <div className="relative flex w-full items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900">
               <Search size={16} className="text-slate-500" />
               <input
                 type="text"

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import { Search, BookOpen, Users, ClipboardCheck, FileText, Clock3, MoreHorizontal, ChevronRight, RefreshCcw, UserRound, CalendarDays, BadgeCheck, CircleOff, Archive, X } from 'lucide-react'
+import { Search, BookOpen, Users, ClipboardCheck, FileText, Clock3, RefreshCcw, UserRound, BadgeCheck, CircleOff, X } from 'lucide-react'
 
 const statusStyles = {
   active: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
@@ -64,7 +64,6 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
   const sectionSubmissions = Array.isArray(submissions) ? submissions : []
   const completedActivities = sectionActivities.filter((activity) => String(activity.status || '').toLowerCase().includes('complete') || String(activity.status || '').toLowerCase().includes('graded')).length
   const pendingActivities = Math.max(0, sectionActivities.length - completedActivities)
-  const pendingReviews = sectionSubmissions.filter((submission) => !(submission.score !== null && submission.score !== undefined)).length
   const submittedCount = sectionSubmissions.length
   const missingCount = Math.max(0, studentCount - submittedCount)
   const lateCount = sectionSubmissions.filter((submission) => {
@@ -280,12 +279,6 @@ export default function InstructorSections() {
   const [sortBy, setSortBy] = useState('name-asc')
   const [selectedSection, setSelectedSection] = useState(null)
   const [selectedStudents, setSelectedStudents] = useState([])
-  const [drawerLoading, setDrawerLoading] = useState(false)
-  
-
-  useEffect(() => {
-    fetchSections()
-  }, [])
 
   const fetchSections = async () => {
     try {
@@ -311,6 +304,10 @@ export default function InstructorSections() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchSections()
+  }, [])
 
   const sectionMetrics = useMemo(() => {
     const map = new Map()
@@ -429,7 +426,6 @@ export default function InstructorSections() {
 
   const openDrawer = async (section) => {
     setSelectedSection(section)
-    setDrawerLoading(true)
     try {
       const sectionId = section.section_id ?? section.id
       const response = await api.get(`/users/?section=${sectionId}&role=student`)
@@ -438,8 +434,6 @@ export default function InstructorSections() {
     } catch (err) {
       console.error('Failed to load section students:', err)
       setSelectedStudents([])
-    } finally {
-      setDrawerLoading(false)
     }
   }
 
@@ -489,9 +483,9 @@ export default function InstructorSections() {
       <PageHeader title="Sections" description="Manage your assigned classes with a polished, modern dashboard experience." />
 
       <div className="grid gap-6 xl:grid-cols-4 md:grid-cols-2">
-        <div className="group min-h-[150px] rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
           <div className="flex items-center justify-between">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-700"><BookOpen size={20} /></div>
+            <div className="flex w-fit items-center justify-center rounded-xl bg-blue-50 p-3 text-blue-900"><BookOpen size={20} /></div>
           </div>
           <div className="mt-6">
             <p className="text-sm font-medium text-slate-500">Assigned Sections</p>
@@ -499,9 +493,9 @@ export default function InstructorSections() {
             <p className="mt-1 text-sm text-slate-500">Classes assigned to you</p>
           </div>
         </div>
-        <div className="group min-h-[150px] rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
           <div className="flex items-center justify-between">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><Users size={20} /></div>
+            <div className="flex w-fit items-center justify-center rounded-xl bg-emerald-50 p-3 text-emerald-900"><Users size={20} /></div>
           </div>
           <div className="mt-6">
             <p className="text-sm font-medium text-slate-500">Total Students</p>
@@ -509,9 +503,9 @@ export default function InstructorSections() {
             <p className="mt-1 text-sm text-slate-500">Enrolled learners across your sections</p>
           </div>
         </div>
-        <div className="group min-h-[150px] rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
           <div className="flex items-center justify-between">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700"><ClipboardCheck size={20} /></div>
+            <div className="flex w-fit items-center justify-center rounded-xl bg-violet-50 p-3 text-violet-900"><ClipboardCheck size={20} /></div>
           </div>
           <div className="mt-6">
             <p className="text-sm font-medium text-slate-500">Active Activities</p>
@@ -519,9 +513,9 @@ export default function InstructorSections() {
             <p className="mt-1 text-sm text-slate-500">Current class tasks and assignments</p>
           </div>
         </div>
-        <div className="group min-h-[150px] rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
           <div className="flex items-center justify-between">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700"><Clock3 size={20} /></div>
+            <div className="flex w-fit items-center justify-center rounded-xl bg-amber-50 p-3 text-amber-900"><Clock3 size={20} /></div>
           </div>
           <div className="mt-6">
             <p className="text-sm font-medium text-slate-500">Pending Reviews</p>
@@ -538,8 +532,8 @@ export default function InstructorSections() {
       )}
 
       <div className="rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6 grid gap-4 xl:grid-cols-6 lg:grid-cols-3 md:grid-cols-2">
-          <label className="relative block xl:col-span-2">
+        <div className="mb-6 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
+          <label className="relative block w-full md:max-w-md">
             <span className="sr-only">Search sections</span>
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
@@ -547,11 +541,12 @@ export default function InstructorSections() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search by section code, section name, program, or academic year..."
-              className="w-full rounded-full border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
               aria-label="Search sections"
             />
           </label>
 
+          <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Program</label>
             <select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500" aria-label="Filter by program">
@@ -603,6 +598,7 @@ export default function InstructorSections() {
               <option value="activities-desc">Most Activities</option>
               <option value="updated-desc">Recently Updated</option>
             </select>
+          </div>
           </div>
         </div>
 

@@ -86,8 +86,8 @@ export default function Login({ administratorOnly = false }) {
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]"
-              placeholder="ID Number"
-              aria-label="ID Number"
+              placeholder="Username"
+              aria-label="Username"
               autoComplete="username"
               required
             />
@@ -147,6 +147,8 @@ export default function Login({ administratorOnly = false }) {
             )}
           </div>
         </form>
+
+        <p className="mt-4 text-center text-xs text-[#718096]">Use the username assigned to your account.</p>
 
         <div className="mt-7 flex items-center justify-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[#9aa8b8]">
           <span className="h-px w-8 bg-[#e5ebf2]" />

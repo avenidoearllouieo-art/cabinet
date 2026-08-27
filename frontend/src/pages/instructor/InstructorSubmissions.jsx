@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Send,
   Filter,
-  ArrowUpDown,
   Circle,
 } from 'lucide-react'
 
@@ -69,14 +68,6 @@ export default function InstructorSubmissions() {
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false)
   const [selectedSubmission, setSelectedSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
-
-  useEffect(() => {
-    fetchFilters()
-  }, [])
-
-  useEffect(() => {
-    fetchSubmissions()
-  }, [query, selectedSection, selectedActivity, selectedStatus, selectedSort])
 
   const fetchFilters = async () => {
     try {
@@ -165,6 +156,14 @@ export default function InstructorSubmissions() {
     setSelectedSubmission(submission)
     setIsGradeModalOpen(true)
   }
+
+  useEffect(() => {
+    fetchFilters()
+  }, [])
+
+  useEffect(() => {
+    fetchSubmissions()
+  }, [query, selectedSection, selectedActivity, selectedStatus, selectedSort])
 
   const filteredSubmissions = useMemo(() => {
     return submissions
@@ -257,8 +256,8 @@ export default function InstructorSubmissions() {
       </div>
 
       <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr] xl:grid-cols-[1.5fr_1fr_1fr_1fr]">
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        <div className="mb-6 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
+          <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
             <Search size={18} className="text-slate-400" />
             <input
               type="text"
@@ -269,7 +268,8 @@ export default function InstructorSubmissions() {
             />
           </div>
 
-          <label className="flex flex-col text-sm text-slate-700">
+          <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
+          <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
             Section
             <select
               value={selectedSection}
@@ -330,6 +330,7 @@ export default function InstructorSubmissions() {
               ))}
             </select>
           </label>
+          </div>
         </div>
 
         {error && (

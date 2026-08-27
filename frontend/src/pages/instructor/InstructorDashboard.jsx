@@ -27,10 +27,6 @@ export default function InstructorDashboard() {
   const [recentSubmissions, setRecentSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetchDashboardData()
-  }, [])
-
   const fetchDashboardData = async () => {
     setLoading(true)
     try {
@@ -84,6 +80,10 @@ export default function InstructorDashboard() {
     }
   }
 
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
+
   const formatDate = (value) => {
     if (!value) return '—'
     try {
@@ -91,7 +91,7 @@ export default function InstructorDashboard() {
         dateStyle: 'short',
         timeStyle: 'short',
       }).format(new Date(value))
-    } catch (err) {
+    } catch {
       return String(value)
     }
   }
@@ -102,7 +102,7 @@ export default function InstructorDashboard() {
       return new Intl.DateTimeFormat('en-US', {
         dateStyle: 'short',
       }).format(new Date(value))
-    } catch (err) {
+    } catch {
       return String(value)
     }
   }

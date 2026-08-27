@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
-import { ChevronLeft, User, ClipboardList, AlertCircle } from 'lucide-react'
+import { ChevronLeft, ClipboardList, AlertCircle } from 'lucide-react'
 
 export default function InstructorStudentProfile() {
   const { studentId } = useParams()
@@ -13,11 +13,6 @@ export default function InstructorStudentProfile() {
   const [error, setError] = useState('')
   const [submissionsCount, setSubmissionsCount] = useState(0)
   const [activitiesCount, setActivitiesCount] = useState(0)
-
-  useEffect(() => {
-    if (!studentId) return
-    fetchProfile()
-  }, [studentId])
 
   const fetchProfile = async () => {
     try {
@@ -39,6 +34,11 @@ export default function InstructorStudentProfile() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!studentId) return
+    fetchProfile()
+  }, [studentId])
 
   const missingActivities = Math.max(0, activitiesCount - submissionsCount)
   const fullName = student ? `${student.first_name || ''} ${student.last_name || ''}`.trim() : ''

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
-import StatCard from '../../components/StatCard'
+import SummaryCard from '../../components/SummaryCard'
 import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus } from 'lucide-react'
@@ -358,10 +358,10 @@ export default function AccessLogs() {
       />
 
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<LogIn size={18} />} label="Total Access Logs" value={totalLogs} subtitle="All login records" />
-        <StatCard icon={<CheckCircle2 size={18} />} label="Successful Access" value={successfulLogins} subtitle="Completed sessions" />
-        <StatCard icon={<AlertCircle size={18} />} label="Failed Access" value={failedLogins} subtitle="Login failures" />
-        <StatCard icon={<ShieldCheck size={18} />} label="Cabinet Unlocks Today" value={cabinetUnlocksToday} subtitle="Unlock events today" />
+        <SummaryCard icon={LogIn} title="Total Access Logs" value={totalLogs} trendText="All login records" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={CheckCircle2} title="Successful Access" value={successfulLogins} trendText="Completed sessions" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={AlertCircle} title="Failed Access" value={failedLogins} trendText="Login failures" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
+        <SummaryCard icon={ShieldCheck} title="Cabinet Unlocks Today" value={cabinetUnlocksToday} trendText="Unlock events today" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -388,14 +388,14 @@ export default function AccessLogs() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search access logs..."
-              className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white pl-10 pr-3 text-sm text-[#374151] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
 
           <div className="flex flex-1 flex-wrap gap-3 lg:justify-end">
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
               <span className="sr-only">Filter role</span>
-              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {roleOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -403,7 +403,7 @@ export default function AccessLogs() {
             </label>
             <label className="min-w-[165px] flex-1 lg:max-w-[190px]">
               <span className="sr-only">Filter access type</span>
-              <select value={accessTypeFilter} onChange={(e) => setAccessTypeFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
+              <select value={accessTypeFilter} onChange={(e) => setAccessTypeFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {accessTypeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -411,7 +411,7 @@ export default function AccessLogs() {
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[160px]">
               <span className="sr-only">Filter result</span>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All results</option>
                 <option value="success">Success</option>
                 <option value="failed">Failed</option>
@@ -419,11 +419,11 @@ export default function AccessLogs() {
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
               <span className="sr-only">Filter date</span>
-              <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15" />
+              <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50" />
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
               <span className="sr-only">Filter section</span>
-              <select value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
+              <select value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {sectionOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -431,7 +431,7 @@ export default function AccessLogs() {
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[170px]">
               <span className="sr-only">Sort by</span>
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="newest">Newest first</option>
                 <option value="oldest">Oldest first</option>
                 <option value="name">Name</option>
@@ -453,12 +453,12 @@ export default function AccessLogs() {
           <div>{filteredLogs.length} result{filteredLogs.length === 1 ? '' : 's'}</div>
         </div>
 
-        <div className="overflow-x-auto rounded-[12px] border border-[#E5E7EB]">
+        <div className="max-h-[600px] overflow-auto rounded-[12px] border border-[#E5E7EB] shadow-sm">
           <table className="min-w-full divide-y divide-[#E5E7EB] text-sm">
-            <thead className="bg-[#F9FAFB]">
+            <thead className="sticky top-0 z-10 bg-[#F9FAFB] shadow-sm">
               <tr>
                 <th className="px-4 py-3 text-left">
-                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-[#D1D5DB]" />
+                  <label className="flex h-11 w-11 items-center justify-center" aria-label="Select all visible access logs"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="h-5 w-5 rounded border-[#D1D5DB]" /></label>
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Time</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">User</th>
@@ -495,12 +495,12 @@ export default function AccessLogs() {
                 </tr>
               )}
 
-              {!loading && paginatedLogs.map((log) => {
+              {!loading && paginatedLogs.map((log, index) => {
                 const isSelected = selectedIds.includes(log.id)
                 return (
-                  <tr key={log.id} className="transition hover:bg-[#F9FAFB]">
+                  <tr key={log.id} className={`${index % 2 ? 'bg-[#F9FAFB]' : 'bg-white'} transition hover:bg-slate-100`}>
                     <td className="px-4 py-4">
-                      <input type="checkbox" checked={isSelected} onChange={() => toggleSelection(log.id)} className="h-4 w-4 rounded border-[#D1D5DB]" />
+                      <label className="flex h-11 w-11 items-center justify-center" aria-label={`Select access log ${log.id}`}><input type="checkbox" checked={isSelected} onChange={() => toggleSelection(log.id)} className="h-5 w-5 rounded border-[#D1D5DB]" /></label>
                     </td>
                     <td className="px-4 py-4 text-[#374151]">{formatDate(log.access_time)}</td>
                     <td className="px-4 py-4">
@@ -516,21 +516,21 @@ export default function AccessLogs() {
                     <td className="px-4 py-4 text-[#374151]">{getDurationValue(log)}</td>
                     <td className="px-4 py-4">
                       <div className="relative" ref={openActionId === log.id ? actionMenuRef : null}>
-                        <button type="button" onClick={() => setOpenActionId((current) => (current === log.id ? null : log.id))} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB]" aria-label="Open access log actions">
+                        <button type="button" onClick={() => setOpenActionId((current) => (current === log.id ? null : log.id))} className="flex h-11 w-11 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-taptrack-navy transition hover:bg-taptrack-gold/20" aria-label="Open access log actions">
                           <MoreHorizontal size={16} />
                         </button>
                         {openActionId === log.id && (
                           <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
-                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenViewModal(log.id, log) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
+                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenViewModal(log.id, log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
                               <Eye size={14} />View Details
                             </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleViewUserProfile(log) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
+                            <button type="button" onClick={() => { setOpenActionId(null); handleViewUserProfile(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
                               <ShieldCheck size={14} />View User Profile
                             </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleExportRecord(log) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
+                            <button type="button" onClick={() => { setOpenActionId(null); handleExportRecord(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
                               <Globe size={14} />Export Record
                             </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(log) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]">
+                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]">
                               <Trash2 size={14} />Delete
                             </button>
                           </div>
@@ -547,13 +547,13 @@ export default function AccessLogs() {
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-[#6B7280]">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredLogs.length)} of {filteredLogs.length}</div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+            <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="min-h-11 rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
             {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-              <button key={pageNumber} type="button" onClick={() => setPage(pageNumber)} className={`h-9 w-9 rounded-[8px] text-sm ${pageNumber === page ? 'bg-[#2563EB] text-white' : 'border border-[#D1D5DB] text-[#374151]'}`}>
+              <button key={pageNumber} type="button" onClick={() => setPage(pageNumber)} className={`h-11 w-11 rounded-[8px] text-sm ${pageNumber === page ? 'bg-taptrack-gold font-semibold text-taptrack-navy' : 'border border-[#D1D5DB] text-[#374151]'}`}>
                 {pageNumber}
               </button>
             ))}
-            <button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages} className="rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+            <button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages} className="min-h-11 rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Next</button>
           </div>
         </div>
       </div>

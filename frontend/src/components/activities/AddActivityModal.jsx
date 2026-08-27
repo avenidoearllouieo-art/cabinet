@@ -6,7 +6,7 @@ const getBlankForm = () => ({
   title: '',
   description: '',
   instructions: '',
-  section: '',
+  sections: [],
   due_date: '',
   due_time: '',
   max_score: '100',
@@ -58,6 +58,18 @@ export default function AddActivityModal({ isOpen, onClose, onUnauthorized, onSa
     setFormError('')
   }
 
+  const toggleSection = (sectionId) => {
+    setForm((current) => {
+      const selected = current.sections || []
+      const nextSections = selected.includes(sectionId)
+        ? selected.filter((id) => id !== sectionId)
+        : [...selected, sectionId]
+      return { ...current, sections: nextSections }
+    })
+    setErrors((current) => ({ ...current, sections: undefined, section: undefined }))
+    setFormError('')
+  }
+
   const handleFileChange = (e) => {
     const selected = Array.from(e.target.files || [])
     setForm((f) => ({ ...f, files: selected }))
@@ -75,7 +87,8 @@ export default function AddActivityModal({ isOpen, onClose, onUnauthorized, onSa
       title: form.title,
       description: form.description,
       instructions: form.instructions,
-      section: form.section || null,
+      section: form.sections[0] || null,
+      assigned_sections: form.sections,
       due_date: dueDateTime,
       max_score: form.max_score ? Number(form.max_score) : 100,
       cabinet_station: form.cabinet_station || '',
@@ -187,20 +200,20 @@ export default function AddActivityModal({ isOpen, onClose, onUnauthorized, onSa
           </div>
 
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-slate-700">Section</label>
-            <select
-              value={form.section}
-              onChange={handleChange('section')}
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="">Select a section</option>
-              {sections.map((section) => (
-                <option key={section.id || section.section_id || section.section_code} value={section.id || section.section_id || section.section_code}>
-                  {section.section_name || section.name || section.section_code || 'Unnamed section'}
-                </option>
-              ))}
-            </select>
-            {errors.section && <p className="mt-1 text-xs text-red-600">{String(errors.section)}</p>}
+            <label className="mb-1 block text-sm font-medium text-slate-700">Sections</label>
+            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-2">
+              {loadingOptions ? <p className="px-2 py-2 text-sm text-slate-500">Loading sections...</p> : sections.map((section) => {
+                const sectionId = section.id || section.section_id || section.section_code
+                const selected = (form.sections || []).includes(sectionId)
+                return (
+                  <label key={sectionId} className="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-slate-700 hover:bg-slate-50">
+                    <input type="checkbox" checked={selected} onChange={() => toggleSection(sectionId)} className="h-4 w-4" />
+                    {section.section_name || section.name || section.section_code || 'Unnamed section'}
+                  </label>
+                )
+              })}
+            </div>
+            {(errors.sections || errors.section) && <p className="mt-1 text-xs text-red-600">{String(errors.sections || errors.section)}</p>}
           </div>
 
           <div>

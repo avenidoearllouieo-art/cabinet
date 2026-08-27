@@ -15,7 +15,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -34,24 +34,6 @@ export default function InstructorActivities() {
   const [toastMessage, setToastMessage] = useState('')
   const navigate = useNavigate()
 
-  useEffect(() => {
-    fetchActivities()
-  }, [])
-
-  useEffect(() => {
-    window.openEditActivityModal = (id, row) => {
-      if (!id) return
-      setEditingActivityId(id)
-      setSelectedActivity(row || null)
-      setIsEditModalOpen(true)
-    }
-    return () => {
-      try {
-        delete window.openEditActivityModal
-      } catch (err) {}
-    }
-  }, [])
-
   const fetchActivities = async () => {
     try {
       setLoading(true)
@@ -66,6 +48,26 @@ export default function InstructorActivities() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchActivities()
+  }, [])
+
+  useEffect(() => {
+    window.openEditActivityModal = (id, row) => {
+      if (!id) return
+      setEditingActivityId(id)
+      setSelectedActivity(row || null)
+      setIsEditModalOpen(true)
+    }
+    return () => {
+      try {
+        delete window.openEditActivityModal
+      } catch {
+        // no-op: best effort cleanup for browser globals
+      }
+    }
+  }, [])
 
   const handleActivitySaved = async (savedActivity) => {
     if (!savedActivity || !savedActivity.id) {
@@ -195,15 +197,12 @@ export default function InstructorActivities() {
       </div>
 
       <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-          <Search size={18} className="text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search activities..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 border-0 bg-transparent text-sm outline-none"
-          />
+        <div className="mb-6 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
+          <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
+            <Search size={18} className="text-slate-400" />
+            <input type="text" placeholder="Search activities..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-full flex-1 border-0 bg-transparent text-sm outline-none" />
+          </div>
+          <div className="flex w-full flex-wrap items-center gap-3 md:w-auto" />
         </div>
 
         {error && (
