@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -12,7 +12,7 @@ import EditActivityModal from '../../components/activities/EditActivityModal.jsx
 import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
 import AssignSectionsModal from '../../components/activities/AssignSectionsModal.jsx'
 import AddActivityModal from '../../components/activities/AddActivityModal.jsx'
-import { Search, Plus, ClipboardList, CalendarDays, CalendarCheck, XCircle, CheckCircle2 } from 'lucide-react'
+import { Search, Plus, ClipboardList, CalendarDays, CalendarCheck, XCircle } from 'lucide-react'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -21,7 +21,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -43,15 +43,11 @@ export default function Activities() {
   const [pendingAction, setPendingAction] = useState(null)
   const [pendingActivity, setPendingActivity] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
-  const [activityTypeFilter, setActivityTypeFilter] = useState('')
+  const activityTypeFilter = ''
   const [statusFilter, setStatusFilter] = useState('')
-  const [assignedSectionFilter, setAssignedSectionFilter] = useState('')
-  const [assignedInstructorFilter, setAssignedInstructorFilter] = useState('')
-  const [sortBy, setSortBy] = useState('newest')
-
-  useEffect(() => {
-    fetchActivities()
-  }, [])
+  const assignedSectionFilter = ''
+  const assignedInstructorFilter = ''
+  const sortBy = 'newest'
 
   useEffect(() => {
     // expose a global helper so Edit buttons rendered by DataTable can open the modal
@@ -61,14 +57,10 @@ export default function Activities() {
       setSelectedActivity(row || null)
       setIsEditModalOpen(true)
     }
-    return () => {
-      try {
-        delete window.openEditActivityModal
-      } catch (err) {}
-    }
+    return () => { delete window.openEditActivityModal }
   }, [])
 
-  const fetchActivities = async () => {
+  const fetchActivities = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/activities/')
@@ -81,7 +73,12 @@ export default function Activities() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchActivities, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchActivities])
 
   const showToast = (message) => {
     setToastMessage(message)
@@ -236,27 +233,6 @@ export default function Activities() {
     }
   }
 
-  const activityTypeOptions = useMemo(
-    () => Array.from(new Set(activities.map((activity) => (activity.activity_type || activity.type || '').trim()).filter(Boolean))).sort(),
-    [activities],
-  )
-
-  const sectionOptions = useMemo(
-    () => Array.from(new Set(activities.map((activity) => (activity.section_name || activity.section || '').trim()).filter(Boolean))).sort(),
-    [activities],
-  )
-
-  const instructorOptions = useMemo(
-    () => Array.from(
-      new Set(
-        activities
-          .map((activity) => (activity.instructor_name || `${activity.created_by_name || ''} ${activity.created_by_last_name || ''}`.trim()).trim())
-          .filter(Boolean),
-      ),
-    ).sort(),
-    [activities],
-  )
-
   const filteredActivities = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     const keywordFiltered = activities.filter((activity) => {
@@ -289,7 +265,6 @@ export default function Activities() {
     })
 
     return [...keywordFiltered].sort((a, b) => {
-      const lower = sortBy === 'oldest' || sortBy === 'newest'
       const dateA = new Date(a.created_at || a.due_date || 0).getTime() || 0
       const dateB = new Date(b.created_at || b.due_date || 0).getTime() || 0
 

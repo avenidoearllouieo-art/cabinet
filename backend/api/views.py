@@ -14,6 +14,7 @@ from django_filters import rest_framework as filters
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
@@ -210,6 +211,18 @@ def create_notification(
     if not instructor:
         return None
 
+    try:
+        return Notification.objects.create(
+            instructor=instructor,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            notification_key=notification_key,
+            link=link,
+        )
+    except Exception:
+        return None
+
 
 def create_student_notification(student, title, message, notification_type, notification_key, link=''):
     if not student or student.role != User.RoleChoices.STUDENT:
@@ -233,17 +246,6 @@ def get_activity_students(activity):
         section_ids.add(activity.section_id)
     section_ids.update(activity.assigned_sections.values_list('section_id', flat=True))
     return User.objects.filter(role=User.RoleChoices.STUDENT, section_id__in=section_ids).distinct()
-    try:
-        return Notification.objects.create(
-            instructor=instructor,
-            title=title,
-            message=message,
-            notification_type=notification_type,
-            notification_key=notification_key,
-            link=link,
-        )
-    except Exception:
-        return None
 
 
 def create_submission_notifications(submission):
@@ -479,6 +481,23 @@ class ActivityViewSet(viewsets.ModelViewSet):
                 f'activity-update-{activity.id}-{student.id}-{activity.updated_at.isoformat()}',
                 '/student/activities',
             )
+
+    @action(
+        detail=True,
+        methods=['delete'],
+        url_path=r'attachments/(?P<attachment_id>[^/.]+)',
+    )
+    def delete_attachment(self, request, pk=None, attachment_id=None):
+        activity = self.get_object()
+        attachment = get_object_or_404(
+            ActivityAttachment,
+            id=attachment_id,
+            activity=activity,
+        )
+        if attachment.file:
+            attachment.file.delete(save=False)
+        attachment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['get'])
     def diagnostics(self, request):

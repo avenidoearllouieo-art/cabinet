@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useMemo, useState } from 'react'
-import { X, CheckCircle2, CircleOff, Mail, Wifi, Clock3, User, Badge, ClipboardList, LayoutList, BookOpen } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { X, CheckCircle2, CircleOff, Mail, Wifi, Clock3, Badge, ClipboardList, LayoutList, BookOpen } from 'lucide-react'
 import api from '../../services/api.js'
 
 const getUserId = (user) => {
@@ -71,15 +71,7 @@ export default function UserDrawer({ user, onClose }) {
     return fullName || user.username || 'Untitled User'
   }, [user])
 
-  useEffect(() => {
-    if (!user) return
-    setLogs([])
-    setSubmissions([])
-    setActivities([])
-    fetchDetails()
-  }, [user])
-
-  const fetchDetails = async () => {
+  const fetchDetails = useCallback(async () => {
     setLoading(true)
     try {
       const uid = user?.id || user?.pk || user?.user_id || user?.uuid
@@ -96,7 +88,18 @@ export default function UserDrawer({ user, onClose }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    const timeoutId = window.setTimeout(() => {
+      setLogs([])
+      setSubmissions([])
+      setActivities([])
+      fetchDetails()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [user, fetchDetails])
 
   if (!user) return null
 

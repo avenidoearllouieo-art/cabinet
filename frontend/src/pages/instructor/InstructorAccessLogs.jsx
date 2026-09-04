@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -29,7 +29,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -55,24 +55,23 @@ export default function InstructorAccessLogs() {
   const [pageSize] = useState(25)
   const [selectedLog, setSelectedLog] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
-  const [toastMessage, setToastMessage] = useState('')
 
-  const fetchSections = async () => {
+  const fetchSections = useCallback(async () => {
     const response = await api.get('/sections/')
     const sectionData = Array.isArray(response.data) ? response.data : response.data.results || []
     setSections(sectionData)
-  }
+  }, [])
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const response = await api.get('/access-logs/stats/')
-      setStats(response.data || stats)
+      setStats((current) => response.data || current)
     } catch (err) {
       console.error('Failed to load access log stats:', err)
     }
-  }
+  }, [])
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true)
       const params = {
@@ -102,16 +101,20 @@ export default function InstructorAccessLogs() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [cabinetFilter, page, pageSize, query, sectionFilter, selectedDate, statusFilter])
 
   useEffect(() => {
-    fetchSections()
-    fetchStats()
-  }, [])
+    const timeoutId = window.setTimeout(() => {
+      fetchSections()
+      fetchStats()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchSections, fetchStats])
 
   useEffect(() => {
-    fetchLogs()
-  }, [query, statusFilter, sectionFilter, cabinetFilter, selectedDate, page])
+    const timeoutId = window.setTimeout(fetchLogs, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchLogs])
 
   const uniqueCabinets = useMemo(() => {
     return Array.from(new Set(logs.map((log) => log.cabinet_name).filter(Boolean))).sort()
@@ -344,12 +347,6 @@ export default function InstructorAccessLogs() {
           </div>
         </div>
       </div>
-
-      {toastMessage && (
-        <div className="fixed bottom-4 right-4 rounded-2xl bg-green-600 px-6 py-3 text-sm font-semibold text-white shadow-lg">
-          {toastMessage}
-        </div>
-      )}
 
       <ViewInstructorAccessLogModal
         isOpen={isViewModalOpen}

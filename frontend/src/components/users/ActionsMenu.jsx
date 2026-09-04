@@ -4,12 +4,31 @@ import { Eye, Edit2, Wifi, Key, UserMinus, Trash2 } from 'lucide-react'
 
 export default function ActionsMenu({ user, onAction }) {
   const [open, setOpen] = useState(false)
+  const [menuStyle, setMenuStyle] = useState({ position: 'absolute', left: 0, top: 0, width: 220, zIndex: 9999 })
   const buttonRef = useRef(null)
   const menuRef = useRef(null)
 
   const toggle = (e) => {
     e?.stopPropagation()
-    setOpen((s) => !s)
+    setOpen((current) => {
+      if (!current) {
+        const rect = buttonRef.current?.getBoundingClientRect()
+        if (rect) {
+          const menuHeight = 240
+          const scrollX = window.scrollX || window.pageXOffset
+          const scrollY = window.scrollY || window.pageYOffset
+          const openUp = window.innerHeight - rect.bottom < menuHeight && rect.top > menuHeight
+          setMenuStyle({
+            position: 'absolute',
+            width: 220,
+            zIndex: 9999,
+            left: Math.max(8, rect.right - 220 + scrollX),
+            top: openUp ? rect.top + scrollY - menuHeight - 8 : rect.bottom + scrollY + 8,
+          })
+        }
+      }
+      return !current
+    })
   }
 
   const handle = (action, e) => {
@@ -31,33 +50,8 @@ export default function ActionsMenu({ user, onAction }) {
 
   if (!user) return null
 
-  // compute placement
-  const getMenuStyle = () => {
-    const rect = buttonRef.current?.getBoundingClientRect()
-    const MENU_WIDTH = 220
-    const MENU_HEIGHT = 240
-    const style = { position: 'absolute', width: MENU_WIDTH, zIndex: 9999 }
-    if (!rect) {
-      style.left = 0
-      style.top = 0
-      return style
-    }
-    const scrollX = window.scrollX || window.pageXOffset
-    const scrollY = window.scrollY || window.pageYOffset
-    const spaceBelow = window.innerHeight - rect.bottom
-    const openUp = spaceBelow < MENU_HEIGHT && rect.top > MENU_HEIGHT
-    if (openUp) {
-      style.left = Math.max(8, rect.right - MENU_WIDTH + scrollX)
-      style.top = rect.top + scrollY - MENU_HEIGHT - 8
-    } else {
-      style.left = Math.max(8, rect.right - MENU_WIDTH + scrollX)
-      style.top = rect.bottom + scrollY + 8
-    }
-    return style
-  }
-
   const menu = open ? (
-    <div ref={menuRef} style={getMenuStyle()} className="rounded-md border bg-white shadow-lg transition-all duration-200 ease-out" onClick={(e) => e.stopPropagation()}>
+    <div ref={menuRef} style={menuStyle} className="rounded-md border bg-white shadow-lg transition-all duration-200 ease-out" onClick={(e) => e.stopPropagation()}>
       <div className="flex flex-col p-1">
         <button type="button" style={{ pointerEvents: 'auto' }} className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 transition" onClick={(e) => handle('view', e)}>
           <Eye size={16} />

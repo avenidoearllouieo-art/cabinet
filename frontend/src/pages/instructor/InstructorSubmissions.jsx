@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -21,7 +21,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -69,7 +69,7 @@ export default function InstructorSubmissions() {
   const [selectedSubmission, setSelectedSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
 
-  const fetchFilters = async () => {
+  const fetchFilters = useCallback(async () => {
     try {
       const [sectionsRes, activitiesRes] = await Promise.all([
         api.get('/sections/'),
@@ -89,23 +89,9 @@ export default function InstructorSubmissions() {
     } catch (err) {
       console.error('Error fetching filter lists:', err)
     }
-  }
+  }, [])
 
-  const buildOrderingParam = () => {
-    switch (selectedSort) {
-      case 'oldest':
-        return 'submitted_at'
-      case 'highest_score':
-        return '-score'
-      case 'lowest_score':
-        return 'score'
-      case 'newest':
-      default:
-        return '-submitted_at'
-    }
-  }
-
-  const fetchSubmissions = async () => {
+  const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
       const params = {
@@ -113,7 +99,7 @@ export default function InstructorSubmissions() {
         student__section: selectedSection || undefined,
         activity: selectedActivity || undefined,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
-        ordering: buildOrderingParam(),
+        ordering: selectedSort === 'oldest' ? 'submitted_at' : selectedSort === 'highest_score' ? '-score' : selectedSort === 'lowest_score' ? 'score' : '-submitted_at',
       }
 
       const response = await api.get('/submissions/', { params })
@@ -131,7 +117,7 @@ export default function InstructorSubmissions() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [query, selectedActivity, selectedSection, selectedSort, selectedStatus])
 
   const handleSubmissionGraded = async (gradedSubmission) => {
     setSubmissions((existing) =>
@@ -158,12 +144,14 @@ export default function InstructorSubmissions() {
   }
 
   useEffect(() => {
-    fetchFilters()
-  }, [])
+    const timeoutId = window.setTimeout(fetchFilters, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchFilters])
 
   useEffect(() => {
-    fetchSubmissions()
-  }, [query, selectedSection, selectedActivity, selectedStatus, selectedSort])
+    const timeoutId = window.setTimeout(fetchSubmissions, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchSubmissions])
 
   const filteredSubmissions = useMemo(() => {
     return submissions

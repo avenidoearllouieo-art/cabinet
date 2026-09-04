@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { RadioTower } from 'lucide-react'
 import api from '../../services/api.js'
+import { controlClass } from '../forms/formStyles.js'
+import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../forms/FormPrimitives.jsx'
+
+const EMPTY_EVENT_FORM = { status: '', remarks: '' }
 
 export default function EditCabinetEventModal({ isOpen, eventId, event, onClose, onUnauthorized, onSaved }) {
   const resolvedEventId = event?.id ?? eventId
@@ -9,26 +13,10 @@ export default function EditCabinetEventModal({ isOpen, eventId, event, onClose,
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
 
-  const blank = {
-    status: '',
-    remarks: '',
-  }
+  const [form, setForm] = useState(EMPTY_EVENT_FORM)
+  const [initialForm, setInitialForm] = useState(EMPTY_EVENT_FORM)
 
-  const [form, setForm] = useState(blank)
-  const [initialForm, setInitialForm] = useState(blank)
-
-  useEffect(() => {
-    if (!isOpen) return
-    setErrors({})
-    setFormError('')
-    setForm(blank)
-    setInitialForm(blank)
-    if (resolvedEventId) {
-      fetchEvent(resolvedEventId)
-    }
-  }, [isOpen, resolvedEventId])
-
-  const fetchEvent = async (id) => {
+  const fetchEvent = useCallback(async (id) => {
     setLoading(true)
     try {
       const res = await api.get(`/cabinet-events/${id}/`)
@@ -41,7 +29,7 @@ export default function EditCabinetEventModal({ isOpen, eventId, event, onClose,
       setInitialForm(loaded)
     } catch (e) {
       if (e.response?.status === 401) {
-        onUnauthorized && onUnauthorized()
+        onUnauthorized?.()
       } else {
         console.error('Failed to load event', e)
         setFormError('Failed to load event.')
@@ -49,7 +37,19 @@ export default function EditCabinetEventModal({ isOpen, eventId, event, onClose,
     } finally {
       setLoading(false)
     }
-  }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const timeoutId = window.setTimeout(() => {
+      setErrors({})
+      setFormError('')
+      setForm(EMPTY_EVENT_FORM)
+      setInitialForm(EMPTY_EVENT_FORM)
+      if (resolvedEventId) fetchEvent(resolvedEventId)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [isOpen, resolvedEventId, fetchEvent])
 
   const handleChange = (key) => (e) => {
     const value = e && e.target ? e.target.value : e
@@ -114,72 +114,12 @@ export default function EditCabinetEventModal({ isOpen, eventId, event, onClose,
   const title = 'Edit Cabinet Event'
   const submitLabel = 'Save Changes'
 
-  return createPortal(
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-8 shadow-xl" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold text-[#0F172A]">{title}</h2>
-            <p className="mt-1 text-sm text-[#6B7280]">Update the cabinet event details.</p>
-          </div>
-          <button type="button" onClick={onClose} className="text-xl font-bold text-[#475569] transition hover:text-[#0F172A]" aria-label="Close modal">
-            ×
-          </button>
-        </div>
-
-        {formError && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div>
-        )}
-
-        {loading ? (
-          <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading...</div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Status</label>
-              <select value={form.status} onChange={handleChange('status')} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="">Select status</option>
-                <option value="Opened">Opened</option>
-                <option value="Closed">Closed</option>
-                <option value="Unlocked">Unlocked</option>
-                <option value="Locked">Locked</option>
-              </select>
-              {errors.status && <p className="mt-1 text-xs text-red-600">{String(errors.status)}</p>}
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Remarks</label>
-              <textarea value={form.remarks} onChange={handleChange('remarks')} rows="4" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" />
-              {errors.remarks && <p className="mt-1 text-xs text-red-600">{String(errors.remarks)}</p>}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving || loading}
-            className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving || loading}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            {saving && (
-              <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-                <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" className="opacity-75" />
-              </svg>
-            )}
-            {submitLabel}
-          </button>
-        </div>
-      </form>
-    </div>,
-    document.body,
+  return (
+    <FormDialog isOpen title={title} description="Update the recorded hardware state and operator remarks." onClose={onClose} onSubmit={handleSubmit} dirty={JSON.stringify(form) !== JSON.stringify(initialForm)} busy={saving} maxWidth="max-w-xl" zIndex="z-[99999]" actions={<FormActions onCancel={onClose} isLastStep submitLabel={submitLabel} busy={saving} disabled={loading} dirty={JSON.stringify(form) !== JSON.stringify(initialForm)} />}>
+      <div className="space-y-4"><InlineFeedback>{formError}</InlineFeedback>{loading ? <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">Loading event…</div> : <FormSection icon={RadioTower} title="Cabinet event" description="Use remarks to explain any manual correction."><div className="space-y-5">
+        <FormField label="Status" required error={errors.status}>{({ id, describedBy, invalid }) => <select id={id} value={form.status} onChange={handleChange('status')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Select status</option><option value="Opened">Opened</option><option value="Closed">Closed</option><option value="Unlocked">Unlocked</option><option value="Locked">Locked</option></select>}</FormField>
+        <FormField label="Remarks" optional error={errors.remarks}>{({ id, describedBy, invalid }) => <textarea id={id} value={form.remarks} onChange={handleChange('remarks')} rows={5} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid, 'resize-y')} />}</FormField>
+      </div></FormSection>}</div>
+    </FormDialog>
   )
 }

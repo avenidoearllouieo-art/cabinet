@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
@@ -7,18 +7,6 @@ import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEve
 import EditCabinetEventModal from '../../components/cabinetevents/EditCabinetEventModal.jsx'
 import DeleteCabinetEventModal from '../../components/cabinetevents/DeleteCabinetEventModal.jsx'
 import { Search, Box, Eye, Edit2, Trash2 } from 'lucide-react'
-
-const formatDate = (value) => {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(value))
-  } catch (err) {
-    return String(value)
-  }
-}
 
 export default function CabinetEvents() {
   const [events, setEvents] = useState([])
@@ -36,11 +24,7 @@ export default function CabinetEvents() {
   const [deletingEvent, setDeletingEvent] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
 
-  useEffect(() => {
-    fetchEvents()
-  }, [])
-
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/cabinet-events/')
@@ -53,7 +37,12 @@ export default function CabinetEvents() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchEvents, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchEvents])
 
   const handleEventSaved = (savedEvent) => {
     if (!savedEvent || !savedEvent.id) {

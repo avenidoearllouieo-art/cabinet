@@ -331,6 +331,14 @@ class Submission(models.Model):
     def __str__(self):
         return f"{self.student.first_name} - {self.activity.title}"
 
+    @property
+    def status(self):
+        if self.score is not None:
+            return 'Graded'
+        if self.activity_id and self.activity.due_date and self.submitted_at > self.activity.due_date:
+            return 'Late'
+        return 'Submitted'
+
     class Meta:
         ordering = ['-submitted_at']
 

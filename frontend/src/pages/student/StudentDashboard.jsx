@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { BookOpen, Clock, CheckCircle2, LogIn, Send, User, AlertCircle, CalendarDays } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { BookOpen, Clock, LogIn, Send, AlertCircle } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -18,30 +18,18 @@ export default function StudentDashboard() {
   const [upcomingActivities, setUpcomingActivities] = useState([])
   const [recentSubmissions, setRecentSubmissions] = useState([])
   const [recentAccessLogs, setRecentAccessLogs] = useState([])
+  const [renderedAt] = useState(() => Date.now())
 
-  useEffect(() => {
-    fetchDashboard()
-    fetchProfile()
-  }, [])
-
-  useEffect(() => {
-    const handler = () => {
-      fetchDashboard()
-    }
-    window.addEventListener('studentSubmissionSaved', handler)
-    return () => window.removeEventListener('studentSubmissionSaved', handler)
-  }, [])
-
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       const res = await api.get('/users/profile/')
       setUser(res.data)
-    } catch (err) {
-      // ignore profile errors
+    } catch {
+      setUser(null)
     }
-  }
+  }, [])
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.get('/dashboard/')
@@ -63,7 +51,21 @@ export default function StudentDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      fetchDashboard()
+      fetchProfile()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchDashboard, fetchProfile])
+
+  useEffect(() => {
+    const handler = () => { fetchDashboard() }
+    window.addEventListener('studentSubmissionSaved', handler)
+    return () => window.removeEventListener('studentSubmissionSaved', handler)
+  }, [fetchDashboard])
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -72,14 +74,14 @@ export default function StudentDashboard() {
         dateStyle: 'short',
         timeStyle: 'short',
       }).format(new Date(value))
-    } catch (err) {
+    } catch {
       return String(value)
     }
   }
 
   const timeRemaining = (due) => {
     if (!due) return '—'
-    const diff = new Date(due).getTime() - Date.now()
+    const diff = new Date(due).getTime() - renderedAt
     const abs = Math.abs(diff)
     const minutes = Math.round(abs / 60000)
     if (diff < 0) {
@@ -94,7 +96,7 @@ export default function StudentDashboard() {
 
   const dueBadge = (dueDate) => {
     if (!dueDate) return null
-    const diffHours = (new Date(dueDate).getTime() - Date.now()) / 3600000
+    const diffHours = (new Date(dueDate).getTime() - renderedAt) / 3600000
     if (diffHours < 0) return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700"><AlertCircle size={12} /> Overdue</span>
     if (diffHours <= 48) return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"><Clock size={12} /> Due Soon</span>
     return null

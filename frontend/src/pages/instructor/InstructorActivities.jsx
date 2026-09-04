@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
@@ -34,7 +34,7 @@ export default function InstructorActivities() {
   const [toastMessage, setToastMessage] = useState('')
   const navigate = useNavigate()
 
-  const fetchActivities = async () => {
+  const fetchActivities = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/activities/')
@@ -47,11 +47,12 @@ export default function InstructorActivities() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    fetchActivities()
-  }, [])
+    const timeoutId = window.setTimeout(fetchActivities, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchActivities])
 
   useEffect(() => {
     window.openEditActivityModal = (id, row) => {

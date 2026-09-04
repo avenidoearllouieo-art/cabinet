@@ -184,13 +184,13 @@ export default function StudentProfile() {
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-2xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">
+        <div role="status" className="fixed bottom-6 right-6 z-50 rounded-xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">
           {toastMessage}
         </div>
       )}
@@ -212,19 +212,20 @@ export default function StudentProfile() {
                 <div className="space-y-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Profile Picture</p>
                   <p>Upload JPG, JPEG, or PNG. Max 5 MB.</p>
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700">
+                  <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus-within:ring-2 focus-within:ring-blue-900">
                     <Camera size={16} />
                     Choose Photo
                     <input type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
                   </label>
+                  {selectedImage && <p className="break-all rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">{selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
                   {selectedImage && (
-                    <button type="button" onClick={handleUploadImage} disabled={imageSaving} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-60">
+                    <button type="button" onClick={handleUploadImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100 disabled:opacity-60">
                       <UploadCloud size={16} />
                       {imageSaving ? 'Uploading...' : 'Upload Selected'}
                     </button>
                   )}
                   {profile?.profile_image_url && (
-                    <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-60">
+                    <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60">
                       <Trash2 size={16} />
                       {imageSaving ? 'Removing...' : 'Remove Photo'}
                     </button>
@@ -271,7 +272,7 @@ export default function StudentProfile() {
                       type="email"
                       value={form.email}
                       onChange={handleInputChange('email')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                   <div>
@@ -280,7 +281,7 @@ export default function StudentProfile() {
                       type="text"
                       value={form.contact_number}
                       onChange={handleInputChange('contact_number')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                 </div>
@@ -303,7 +304,7 @@ export default function StudentProfile() {
                       type="email"
                       value={form.email}
                       onChange={handleInputChange('email')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                   <div>
@@ -312,7 +313,7 @@ export default function StudentProfile() {
                       type="text"
                       value={form.contact_number}
                       onChange={handleInputChange('contact_number')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                 </div>
@@ -321,7 +322,7 @@ export default function StudentProfile() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60"
                   >
                     {saving ? 'Saving...' : 'Save Changes'}
                   </button>

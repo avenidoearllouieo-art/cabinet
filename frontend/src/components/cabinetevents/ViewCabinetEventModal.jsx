@@ -10,28 +10,29 @@ export default function ViewCabinetEventModal({ isOpen, eventId, event, onClose,
 
   useEffect(() => {
     if (!isOpen || !resolvedEventId) return
-
-    setFormError('')
-    setFetchedEvent(null)
-
-    const fetchEvent = async () => {
+    let active = true
+    const timeoutId = window.setTimeout(async () => {
+      setFormError('')
+      setFetchedEvent(null)
       setLoading(true)
       try {
         const res = await api.get(`/cabinet-events/${resolvedEventId}/`)
-        setFetchedEvent(res.data || {})
+        if (active) setFetchedEvent(res.data || {})
       } catch (e) {
         if (e.response?.status === 401) {
-          onUnauthorized && onUnauthorized()
+          onUnauthorized?.()
         } else {
           console.error('Failed to load event', e)
-          setFormError('Failed to load event details.')
+          if (active) setFormError('Failed to load event details.')
         }
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
+    }, 0)
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
     }
-
-    fetchEvent()
   }, [isOpen, resolvedEventId, onUnauthorized])
 
   if (!isOpen || !resolvedEventId) {
@@ -39,18 +40,6 @@ export default function ViewCabinetEventModal({ isOpen, eventId, event, onClose,
   }
 
   const displayEvent = fetchedEvent || event || {}
-
-  const formatDate = (value) => {
-    if (!value) return '—'
-    try {
-      return new Intl.DateTimeFormat('en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }).format(new Date(value))
-    } catch (err) {
-      return String(value)
-    }
-  }
 
   const getStatusColor = (status) => {
     if (!status) return 'text-slate-600'

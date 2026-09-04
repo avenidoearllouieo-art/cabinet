@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
 
@@ -9,19 +9,9 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
-}
-
-const resolveActivityType = (submission) => {
-  if (!submission) return '—'
-  return (
-    submission.activity_type ||
-    submission.activity?.activity_type ||
-    submission.activity?.type ||
-    '—'
-  )
 }
 
 const resolveStatus = (submission) => {
@@ -43,37 +33,12 @@ const resolveStatus = (submission) => {
   return 'Pending'
 }
 
-const buildFileUrl = (filePath) => {
-  if (!filePath) return null
-  if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
-  return `${window.location.origin}${filePath}`
-}
-
 export default function ViewSubmissionModal({ isOpen, submissionId, submission, onClose, onUnauthorized }) {
   const [details, setDetails] = useState(submission || null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    if (!isOpen) return
-    setError('')
-
-    if (submission) {
-      setDetails(submission)
-      setLoading(false)
-      return
-    }
-
-    if (submissionId) {
-      setDetails(null)
-      fetchSubmission(submissionId)
-      return
-    }
-
-    setDetails(null)
-  }, [isOpen, submissionId, submission])
-
-  const fetchSubmission = async (id) => {
+  const fetchSubmission = useCallback(async (id) => {
     setLoading(true)
     try {
       const response = await api.get(`/submissions/${id}/`)
@@ -81,7 +46,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
       setError('')
     } catch (err) {
       if (err.response?.status === 401) {
-        onUnauthorized && onUnauthorized()
+        onUnauthorized?.()
       } else {
         console.error('Error loading submission details:', err)
         setError('Failed to load submission details.')
@@ -89,17 +54,28 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
     } finally {
       setLoading(false)
     }
-  }
+  }, [onUnauthorized])
 
-  const fileUrl = useMemo(() => buildFileUrl(details?.file), [details])
-  const fileName = useMemo(() => {
-    if (!details?.file) return ''
-    const parts = details.file.split('/')
-    return parts[parts.length - 1]
-  }, [details])
+  useEffect(() => {
+    if (!isOpen) return
+    const timeoutId = window.setTimeout(() => {
+      setError('')
+      if (submission) {
+        setDetails(submission)
+        setLoading(false)
+      } else if (submissionId) {
+        setDetails(null)
+        fetchSubmission(submissionId)
+      } else {
+        setDetails(null)
+      }
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [isOpen, submissionId, submission, fetchSubmission])
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Submission History">
+      {error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading submission details...</div>
       ) : !details ? (

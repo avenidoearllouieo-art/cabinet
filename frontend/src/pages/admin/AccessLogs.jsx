@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -14,7 +14,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -46,10 +46,6 @@ export default function AccessLogs() {
   const actionMenuRef = useRef(null)
 
   useEffect(() => {
-    fetchLogs()
-  }, [])
-
-  useEffect(() => {
     const handleClickOutside = (event) => {
       if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
         setOpenActionId(null)
@@ -61,11 +57,14 @@ export default function AccessLogs() {
   }, [])
 
   useEffect(() => {
-    setPage(1)
-    setSelectedIds([])
+    const timeoutId = window.setTimeout(() => {
+      setPage(1)
+      setSelectedIds([])
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, sortBy])
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/access-logs/')
@@ -78,7 +77,12 @@ export default function AccessLogs() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchLogs, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchLogs])
 
   const handleLogDeleted = async (deletedLogId) => {
     setLogs((existingLogs) => existingLogs.filter((log) => log.id !== deletedLogId))
@@ -213,7 +217,7 @@ export default function AccessLogs() {
 
     if (accessTypeFilter !== 'all') {
       result = result.filter((log) => {
-        const accessType = Boolean(log.cabinet_name || log.cabinet || log.rfid_tag) ? 'cabinet' : 'other'
+        const accessType = log.cabinet_name || log.cabinet || log.rfid_tag ? 'cabinet' : 'other'
         return accessType === accessTypeFilter
       })
     }

@@ -10,7 +10,7 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose }) {
         dateStyle: 'medium',
         timeStyle: 'short',
       }).format(new Date(value))
-    } catch (err) {
+    } catch {
       return String(value)
     }
   }

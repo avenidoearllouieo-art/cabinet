@@ -1,0 +1,43 @@
+name: Quality checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [frontend, kiosk]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_SECRET_KEY: ci-only-not-for-production
+      DJANGO_DEBUG: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - run: python backend/manage.py check
+      - run: python backend/manage.py makemigrations --check --dry-run
+      - run: python backend/manage.py test

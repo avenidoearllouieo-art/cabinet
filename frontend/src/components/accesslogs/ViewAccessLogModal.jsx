@@ -10,28 +10,29 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
 
   useEffect(() => {
     if (!isOpen || !resolvedLogId) return
-    
-    setFormError('')
-    setFetchedLog(null)
-    
-    const fetchLog = async () => {
+    let active = true
+    const timeoutId = window.setTimeout(async () => {
+      setFormError('')
+      setFetchedLog(null)
       setLoading(true)
       try {
         const res = await api.get(`/access-logs/${resolvedLogId}/`)
-        setFetchedLog(res.data || {})
+        if (active) setFetchedLog(res.data || {})
       } catch (e) {
         if (e.response?.status === 401) {
-          onUnauthorized && onUnauthorized()
+          onUnauthorized?.()
         } else {
           console.error('Failed to load log', e)
-          setFormError('Failed to load log details.')
+          if (active) setFormError('Failed to load log details.')
         }
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
+    }, 0)
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
     }
-
-    fetchLog()
   }, [isOpen, resolvedLogId, onUnauthorized])
 
   if (!isOpen || !resolvedLogId) {
@@ -47,7 +48,7 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
         dateStyle: 'medium',
         timeStyle: 'short',
       }).format(new Date(value))
-    } catch (err) {
+    } catch {
       return String(value)
     }
   }

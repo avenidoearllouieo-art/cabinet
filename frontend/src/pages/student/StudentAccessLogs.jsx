@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -51,16 +51,16 @@ export default function StudentAccessLogs() {
   const [selectedLog, setSelectedLog] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const response = await api.get('/access-logs/stats/')
       setStats((current) => response.data || current)
     } catch (err) {
       console.error('Failed to load access log stats:', err)
     }
-  }
+  }, [])
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true)
     try {
       const params = { page, page_size: 10 }
@@ -80,15 +80,17 @@ export default function StudentAccessLogs() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [cabinetFilter, page, query, statusFilter])
 
   useEffect(() => {
-    fetchStats()
-  }, [])
+    const timeoutId = window.setTimeout(fetchStats, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchStats])
 
   useEffect(() => {
-    fetchLogs()
-  }, [query, statusFilter, cabinetFilter, page])
+    const timeoutId = window.setTimeout(fetchLogs, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchLogs])
 
   const uniqueCabinets = useMemo(() => {
     return Array.from(new Set(logs.map((log) => log.cabinet_name).filter(Boolean))).sort()

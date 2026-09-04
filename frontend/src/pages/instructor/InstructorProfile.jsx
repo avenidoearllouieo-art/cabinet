@@ -189,13 +189,13 @@ export default function InstructorProfile() {
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-2xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">
+        <div role="status" className="fixed bottom-6 right-6 z-50 rounded-xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">
           {toastMessage}
         </div>
       )}
@@ -258,8 +258,9 @@ export default function InstructorProfile() {
                       type="email"
                       value={form.email}
                       onChange={handleInputChange('email')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
+                    {selectedImage && <p className="mt-2 break-all text-xs text-slate-500">Selected: {selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Contact Number</label>
@@ -267,7 +268,7 @@ export default function InstructorProfile() {
                       type="text"
                       value={form.contact_number}
                       onChange={handleInputChange('contact_number')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                 </div>
@@ -308,7 +309,7 @@ export default function InstructorProfile() {
                       type="email"
                       value={form.email}
                       onChange={handleInputChange('email')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                   <div>
@@ -317,7 +318,7 @@ export default function InstructorProfile() {
                       type="text"
                       value={form.contact_number}
                       onChange={handleInputChange('contact_number')}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-400"
+                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
                 </div>
@@ -326,7 +327,7 @@ export default function InstructorProfile() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60"
                   >
                     Save Changes
                   </button>
@@ -355,7 +356,7 @@ export default function InstructorProfile() {
                       type="file"
                       accept="image/jpeg,image/jpg,image/png"
                       onChange={handleImageSelect}
-                      className="w-full text-sm text-slate-700"
+                      className="min-h-12 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-semibold file:text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
 
@@ -370,7 +371,7 @@ export default function InstructorProfile() {
                       type="button"
                       onClick={handleUploadImage}
                       disabled={imageSaving || !selectedImage}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                      className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-4 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60"
                     >
                       <UploadCloud size={16} />
                       Upload
@@ -379,7 +380,7 @@ export default function InstructorProfile() {
                       type="button"
                       onClick={handleRemoveImage}
                       disabled={imageSaving || !profile?.profile_image}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                      className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60"
                     >
                       <Trash2 size={16} />
                       Remove

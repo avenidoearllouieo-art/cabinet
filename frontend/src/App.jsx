@@ -1,34 +1,36 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/auth/Login.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
-import AdminDashboard from './pages/admin/AdminDashboard.jsx'
-import Users from './pages/admin/Users.jsx'
-import Activities from './pages/admin/Activities.jsx'
-import Submissions from './pages/admin/Submissions.jsx'
-import AccessLogs from './pages/admin/AccessLogs.jsx'
-import CabinetEvents from './pages/admin/CabinetEvents.jsx'
-import Sections from './pages/admin/Sections.jsx'
 import InstructorLayout from './layouts/InstructorLayout.jsx'
-import InstructorDashboard from './pages/instructor/InstructorDashboard.jsx'
-import InstructorActivities from './pages/instructor/InstructorActivities.jsx'
-import ActivityDetailsPage from './pages/instructor/ActivityDetailsPage.jsx'
-import InstructorSubmissions from './pages/instructor/InstructorSubmissions.jsx'
-import InstructorSections from './pages/instructor/InstructorSections.jsx'
-import InstructorSectionStudents from './pages/instructor/InstructorSectionStudents.jsx'
-import InstructorStudentProfile from './pages/instructor/InstructorStudentProfile.jsx'
-import InstructorProfile from './pages/instructor/InstructorProfile.jsx'
-import InstructorChangePassword from './pages/instructor/InstructorChangePassword.jsx'
-import InstructorAccessLogs from './pages/instructor/InstructorAccessLogs.jsx'
-import InstructorNotifications from './pages/instructor/InstructorNotifications.jsx'
 import StudentLayout from './layouts/StudentLayout.jsx'
-import StudentDashboard from './pages/student/StudentDashboard.jsx'
-import StudentActivities from './pages/student/StudentActivities.jsx'
-import StudentSubmissions from './pages/student/StudentSubmissions.jsx'
-import StudentAccessLogs from './pages/student/StudentAccessLogs.jsx'
-import StudentProfile from './pages/student/StudentProfile.jsx'
-import StudentChangePassword from './pages/student/StudentChangePassword.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import './App.css'
+
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard.jsx'))
+const Users = lazy(() => import('./pages/admin/Users.jsx'))
+const Activities = lazy(() => import('./pages/admin/Activities.jsx'))
+const Submissions = lazy(() => import('./pages/admin/Submissions.jsx'))
+const AccessLogs = lazy(() => import('./pages/admin/AccessLogs.jsx'))
+const CabinetEvents = lazy(() => import('./pages/admin/CabinetEvents.jsx'))
+const Sections = lazy(() => import('./pages/admin/Sections.jsx'))
+const InstructorDashboard = lazy(() => import('./pages/instructor/InstructorDashboard.jsx'))
+const InstructorActivities = lazy(() => import('./pages/instructor/InstructorActivities.jsx'))
+const ActivityDetailsPage = lazy(() => import('./pages/instructor/ActivityDetailsPage.jsx'))
+const InstructorSubmissions = lazy(() => import('./pages/instructor/InstructorSubmissions.jsx'))
+const InstructorSections = lazy(() => import('./pages/instructor/InstructorSections.jsx'))
+const InstructorSectionStudents = lazy(() => import('./pages/instructor/InstructorSectionStudents.jsx'))
+const InstructorStudentProfile = lazy(() => import('./pages/instructor/InstructorStudentProfile.jsx'))
+const InstructorProfile = lazy(() => import('./pages/instructor/InstructorProfile.jsx'))
+const InstructorChangePassword = lazy(() => import('./pages/instructor/InstructorChangePassword.jsx'))
+const InstructorAccessLogs = lazy(() => import('./pages/instructor/InstructorAccessLogs.jsx'))
+const InstructorNotifications = lazy(() => import('./pages/instructor/InstructorNotifications.jsx'))
+const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard.jsx'))
+const StudentActivities = lazy(() => import('./pages/student/StudentActivities.jsx'))
+const StudentSubmissions = lazy(() => import('./pages/student/StudentSubmissions.jsx'))
+const StudentAccessLogs = lazy(() => import('./pages/student/StudentAccessLogs.jsx'))
+const StudentProfile = lazy(() => import('./pages/student/StudentProfile.jsx'))
+const StudentChangePassword = lazy(() => import('./pages/student/StudentChangePassword.jsx'))
 
 // Placeholder page component for pages under construction
 function PagePlaceholder({ title, description }) {
@@ -48,7 +50,8 @@ function PagePlaceholder({ title, description }) {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
+      <Suspense fallback={<div className="grid min-h-screen place-items-center bg-slate-50 text-sm font-medium text-slate-600">Loading TapTrack…</div>}>
+        <Routes>
         <Route path='/' element={<Login />} />
         <Route path='/admin/login' element={<Login administratorOnly />} />
         <Route path='/instructor/login' element={<Login />} />
@@ -104,7 +107,8 @@ function App() {
             <Route path='notifications' element={<InstructorNotifications />} />
           </Route>
         </Route>
-      </Routes>
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

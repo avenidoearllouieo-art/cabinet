@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import Modal from '../Modal.jsx'
 
@@ -11,21 +11,7 @@ export default function AssignSectionsModal({ isOpen, activity, onClose, onSaved
   const [saving, setSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  useEffect(() => {
-    if (!isOpen) return
-
-    const initialIds = Array.isArray(activity?.assigned_sections)
-      ? activity.assigned_sections
-          .map((section) => getSectionId(section))
-          .filter(Boolean)
-      : []
-
-    setSelectedSectionIds(initialIds)
-    setErrorMessage('')
-    loadSections()
-  }, [isOpen, activity?.id])
-
-  const loadSections = async () => {
+  const loadSections = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.get('/sections/')
@@ -41,7 +27,20 @@ export default function AssignSectionsModal({ isOpen, activity, onClose, onSaved
     } finally {
       setLoading(false)
     }
-  }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const timeoutId = window.setTimeout(() => {
+      const initialIds = Array.isArray(activity?.assigned_sections)
+        ? activity.assigned_sections.map((section) => getSectionId(section)).filter(Boolean)
+        : []
+      setSelectedSectionIds(initialIds)
+      setErrorMessage('')
+      loadSections()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [isOpen, activity, loadSections])
 
   const toggleSection = (sectionId) => {
     setSelectedSectionIds((current) => {
@@ -83,13 +82,15 @@ export default function AssignSectionsModal({ isOpen, activity, onClose, onSaved
     })).filter((section) => section.id != null)
   }, [sections])
 
+  const initialSectionIds = useMemo(() => Array.isArray(activity?.assigned_sections) ? activity.assigned_sections.map((section) => getSectionId(section)).filter(Boolean) : [], [activity])
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Assign Sections">
+    <Modal isOpen={isOpen} onClose={onClose} title="Assign Sections" description="Choose every class that should receive this activity." dirty={JSON.stringify([...selectedSectionIds].sort()) !== JSON.stringify([...initialSectionIds].sort())} busy={saving}>
       <div className="space-y-4">
         <p className="text-sm text-slate-600">Select the sections that should receive this activity.</p>
 
         {errorMessage && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</div>
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</div>
         )}
 
         {loading ? (
@@ -101,12 +102,12 @@ export default function AssignSectionsModal({ isOpen, activity, onClose, onSaved
             {sectionOptions.map((section) => {
               const isSelected = selectedSectionIds.includes(section.id)
               return (
-                <label key={section.id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
+                <label key={section.id} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   <input
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => toggleSection(section.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    className="h-5 w-5 rounded border-slate-300 text-blue-900 focus:ring-blue-900"
                   />
                   <span>{section.label}</span>
                 </label>
@@ -116,10 +117,10 @@ export default function AssignSectionsModal({ isOpen, activity, onClose, onSaved
         )}
 
         <div className="flex items-center justify-end gap-3 pt-2">
-          <button type="button" onClick={onClose} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200">
+          <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900">
             Cancel
           </button>
-          <button type="button" onClick={handleSave} disabled={saving || loading} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
+          <button type="button" onClick={handleSave} disabled={saving || loading} className="min-h-11 rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60">
             {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>

@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
-import api from '../services/api.js'
 import NotificationDropdown from './NotificationDropdown'
 import TapTrackLogo from './TapTrackLogo.jsx'
 
 export default function Header() {
   const navigate = useNavigate()
-  const [unreadCount, setUnreadCount] = useState(0)
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -33,27 +31,6 @@ export default function Header() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-
-  useEffect(() => {
-    if (user.role === 'instructor') {
-      fetchUnreadNotifications()
-    }
-  }, [user.role])
-
-  const fetchUnreadNotifications = async () => {
-    try {
-      const response = await api.get('/notifications/unread_count/')
-      setUnreadCount(response.data.unread_count || 0)
-    } catch (error) {
-      console.error('Failed to fetch notification count:', error)
-    }
-  }
-
-  const handleNotificationClick = () => {
-    if (user.role === 'instructor') {
-      navigate('/instructor/notifications')
-    }
-  }
 
   const getHeaderText = () => {
     if (user.role === 'instructor') {

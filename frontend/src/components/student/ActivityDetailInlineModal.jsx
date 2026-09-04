@@ -3,7 +3,7 @@ import { Download, Upload, X, FileText, Image } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
 import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
-import ActivityDiscussion from '../ActivityDiscussion'
+import ActivityDiscussion from '../ActivityDiscussion.jsx'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -30,40 +30,33 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
   const [activity, setActivity] = useState(initialActivity || null)
   const [submission, setSubmission] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [loadingSubmission, setLoadingSubmission] = useState(false)
+  const [, setLoadingSubmission] = useState(false)
 
   // upload form
   const [files, setFiles] = useState([])
   const [uploadedFiles, setUploadedFiles] = useState([])
   const [comments, setComments] = useState('')
   const [errors, setErrors] = useState([])
-  const [uploadProgress, setUploadProgress] = useState(0)
+  const [, setUploadProgress] = useState(0)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
-    setActivity(initialActivity || null)
-    setSubmission(initialActivity?.submission || null)
-    if (!initialActivity) return
-
-    // if we only have id, fetch full activity
-    if (typeof initialActivity === 'number' || (initialActivity && !initialActivity.attachments)) {
-      (async () => {
+    const timeoutId = window.setTimeout(async () => {
+      setActivity(initialActivity || null)
+      setSubmission(initialActivity?.submission || null)
+      if (!initialActivity) return
+      if (typeof initialActivity === 'number' || !initialActivity.attachments) {
         try {
           const res = await api.get(`/activities/${initialActivity.id || initialActivity}/`)
           setActivity(res.data)
         } catch (err) {
           console.error('Failed to load activity', err)
         }
-      })()
-    }
-
-    // fetch submission for activity
-    const fetchSubmission = async () => {
-      if (!initialActivity) return
-      const aid = initialActivity.id || initialActivity
+      }
+      const activityId = initialActivity.id || initialActivity
       setLoadingSubmission(true)
       try {
-        const res = await api.get('/submissions/', { params: { activity: aid, page_size: 1 } })
+        const res = await api.get('/submissions/', { params: { activity: activityId, page_size: 1 } })
         const results = Array.isArray(res.data) ? res.data : res.data.results || []
         setSubmission(results[0] || null)
       } catch (err) {
@@ -71,8 +64,8 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       } finally {
         setLoadingSubmission(false)
       }
-    }
-    fetchSubmission()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [initialActivity, isOpen])
 
   const isOverdue = activity?.due_date && new Date(activity.due_date) < new Date()
@@ -96,7 +89,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       const ups = res.data.uploads || []
       setUploadedFiles((prev) => [...prev, ...ups])
       setFiles((prev) => [...prev, ...selectedFiles])
-    } catch (err) {
+    } catch {
       setErrors(['Failed to upload files.'])
     } finally {
       setLoading(false)
@@ -139,7 +132,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       window.alert('Submission created successfully.')
       onSuccess && onSuccess()
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
-    } catch (err) {
+    } catch {
       setErrors(['Failed to submit.'])
     } finally {
       setLoading(false)
@@ -148,7 +141,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
 
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details">
+    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details" dirty={Boolean(comments || files.length)} busy={loading}>
       {!activity ? (
         <p className="text-sm text-slate-600">Activity details are unavailable.</p>
       ) : (
@@ -208,9 +201,9 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
                 </div>
               ) : (
                 <div className="mt-3">
-                  <div onDrop={handleDrop} onDragOver={handleDragOver} className="rounded border-2 border-dashed p-6 text-center bg-slate-50">
+                  <div onDrop={handleDrop} onDragOver={handleDragOver} className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-[#F5B700]">
                     <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
-                    <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-white"> <Upload size={16} /> Choose Files</button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-5 py-2 font-bold text-[#0B1F3A] hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900"> <Upload size={16} /> Choose Files</button>
                     <div className="text-xs text-slate-500 mt-2">Supported: PDF, images, ZIP. Max 20 MB per file</div>
                   </div>
 
@@ -233,7 +226,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
 
                   <div className="mt-3">
                     <label className="text-sm font-medium">Submission Note (Optional)</label>
-                    <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} placeholder="Add a note to your submission (optional)" className="w-full rounded border p-2 mt-2" />
+                    <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} placeholder="Add a note to your submission (optional)" className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" />
                   </div>
 
                   {errors.length > 0 && (
@@ -247,11 +240,11 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
           </div>
 
           <div className="flex gap-3 justify-end">
-            <button onClick={onClose} className="rounded-full border px-4 py-2">Cancel</button>
+            <button onClick={onClose} className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700">Cancel</button>
             {submission ? (
-              <button onClick={handleSubmit} disabled={!activity?.allow_resubmission || loading || uploadedFiles.length === 0} className="rounded-full bg-blue-600 text-white px-4 py-2">{activity?.allow_resubmission ? 'Resubmit' : 'Submit Activity'}</button>
+              <button onClick={handleSubmit} disabled={!activity?.allow_resubmission || loading || uploadedFiles.length === 0} className="min-h-11 rounded-xl bg-[#F5B700] px-4 py-2 font-bold text-[#0B1F3A] disabled:opacity-50">{activity?.allow_resubmission ? 'Resubmit' : 'Submit Activity'}</button>
             ) : (
-              <button onClick={handleSubmit} disabled={!canSubmit || loading || uploadedFiles.length === 0} className="rounded-full bg-blue-600 text-white px-4 py-2">Submit Activity</button>
+              <button onClick={handleSubmit} disabled={!canSubmit || loading || uploadedFiles.length === 0} className="min-h-11 rounded-xl bg-[#F5B700] px-4 py-2 font-bold text-[#0B1F3A] disabled:opacity-50">Submit Activity</button>
             )}
           </div>
         </div>

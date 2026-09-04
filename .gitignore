@@ -8,15 +8,30 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.npm-cache/
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Python caches and local development databases
 __pycache__/
 *.py[cod]
 *.sqlite3
 *.db
+backend/media/
+
+# Local exports are generated from runtime data and may contain personal data.
+/excel/
+/cabinet/excel/
+*.xlsx
 
 # Generated/legacy frontend scratch files
 frontend/served_users.jsx

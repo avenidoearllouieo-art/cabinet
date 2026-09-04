@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Send, Pin, PencilLine, Trash2, CheckCircle2 } from 'lucide-react'
 import api from '../services/api.js'
 
@@ -42,12 +42,7 @@ export default function ActivityAnnouncements({ activityId }) {
     return role === 'instructor' || role === 'admin'
   }, [])
 
-  useEffect(() => {
-    if (!activityId) return
-    fetchAnnouncements()
-  }, [activityId])
-
-  const fetchAnnouncements = async () => {
+  const fetchAnnouncements = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -62,7 +57,13 @@ export default function ActivityAnnouncements({ activityId }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [activityId])
+
+  useEffect(() => {
+    if (!activityId) return
+    const timeoutId = window.setTimeout(fetchAnnouncements, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [activityId, fetchAnnouncements])
 
   const createAnnouncement = async () => {
     if (!message.trim()) {
@@ -193,31 +194,31 @@ export default function ActivityAnnouncements({ activityId }) {
       {canEdit && (
         <div className="mt-5 rounded-[18px] border border-slate-200 bg-slate-50 p-5">
           {error && <div className="mb-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-            <input
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <label className="text-sm font-semibold text-slate-700">Title <span className="text-xs font-medium text-slate-500">Optional</span><input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Optional title"
-              className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
-            />
+              className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
+            /></label>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setIsPinned((current) => !current)} className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${isPinned ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}>
+              <button type="button" onClick={() => setIsPinned((current) => !current)} className={`min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-blue-900 ${isPinned ? 'border-blue-900 bg-blue-50 text-blue-900' : 'border-slate-300 bg-white text-slate-700'}`}>
                 <Pin size={14} /> {isPinned ? 'Pinned' : 'Pin'}
               </button>
-              <button type="button" onClick={() => setIsUpdate((current) => !current)} className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${isUpdate ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}>
+              <button type="button" onClick={() => setIsUpdate((current) => !current)} className={`min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-blue-900 ${isUpdate ? 'border-blue-900 bg-blue-50 text-blue-900' : 'border-slate-300 bg-white text-slate-700'}`}>
                 {isUpdate ? 'Update' : 'Mark Update'}
               </button>
             </div>
           </div>
-          <textarea
+          <label className="mt-4 block text-sm font-semibold text-slate-700">Announcement <span className="text-rose-600">*</span><textarea
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             rows={4}
             placeholder="Write an announcement for students..."
-            className="mt-4 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
-          />
+            className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
+          /></label>
           <div className="mt-4 flex justify-end">
-            <button onClick={createAnnouncement} disabled={loading} className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+            <button onClick={createAnnouncement} disabled={loading} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-60">
               <Send size={15} /> Post Announcement
             </button>
           </div>
@@ -261,12 +262,12 @@ export default function ActivityAnnouncements({ activityId }) {
                 {isEditing && (
                   <div className="mt-4 rounded-[16px] border border-slate-200 bg-slate-50 p-4">
                     <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-                      <input
+                      <label className="text-sm font-semibold text-slate-700">Title <span className="text-xs font-medium text-slate-500">Optional</span><input
                         value={editTitle}
                         onChange={(event) => setEditTitle(event.target.value)}
                         placeholder="Edit title"
-                        className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
-                      />
+                        className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
+                      /></label>
                       <div className="flex flex-wrap items-center gap-2">
                         <button type="button" onClick={() => setEditPinned((current) => !current)} className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${editPinned ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}>
                           <Pin size={14} /> {editPinned ? 'Pinned' : 'Pin'}
@@ -276,12 +277,12 @@ export default function ActivityAnnouncements({ activityId }) {
                         </button>
                       </div>
                     </div>
-                    <textarea
+                    <label className="mt-4 block text-sm font-semibold text-slate-700">Announcement<textarea
                       value={editMessage}
                       onChange={(event) => setEditMessage(event.target.value)}
                       rows={4}
-                      className="mt-4 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
-                    />
+                      className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
+                    /></label>
                     <div className="mt-4 flex flex-wrap gap-2 justify-end">
                       <button type="button" onClick={saveEdit} className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">Save</button>
                       <button type="button" onClick={cancelEdit} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Cancel</button>

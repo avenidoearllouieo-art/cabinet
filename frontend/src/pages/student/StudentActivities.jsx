@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ClipboardList, Search, ArrowRight, Plus, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ClipboardList, Search, ArrowRight, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -110,13 +110,44 @@ export default function StudentActivities() {
   const [query, setQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
   const [page, setPage] = useState(1)
-  const [pageCount, setPageCount] = useState(0)
+  const [, setPageCount] = useState(0)
   const [activeActivity, setActiveActivity] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
 
+  const fetchStats = useCallback(async (sectionId) => {
+    try {
+      const params = {}
+      if (sectionId) params.section = sectionId
+      const response = await api.get('/activities/stats/', { params })
+      setStats(response.data)
+    } catch (err) {
+      console.error('Failed to load activity stats:', err)
+      setError('Failed to load activity stats.')
+    }
+  }, [])
+
+  const fetchActivities = useCallback(async (sectionId) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = { search: query || undefined, page }
+      if (sectionId) params.section = sectionId
+      const response = await api.get('/activities/', { params })
+      const fetchedActivities = response.data.results || []
+      setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
+      setActivities(fetchedActivities)
+    } catch (err) {
+      console.error('Failed to load activities:', err)
+      setError('Failed to load activities. Please try again.')
+      setActivities([])
+    } finally {
+      setLoading(false)
+    }
+  }, [page, query])
+
   useEffect(() => {
-    const init = async () => {
+    const timeoutId = window.setTimeout(async () => {
       setLoading(true)
       setError(null)
       try {
@@ -124,8 +155,12 @@ export default function StudentActivities() {
         try {
           const resp = await api.get('/users/profile/')
           profile = resp.data
-          try { localStorage.setItem('user', JSON.stringify(profile)) } catch {}
-        } catch (e) {
+          try {
+            localStorage.setItem('user', JSON.stringify(profile))
+          } catch (storageError) {
+            console.warn('Unable to cache the student profile:', storageError)
+          }
+        } catch {
           try { profile = JSON.parse(localStorage.getItem('user') || 'null') } catch { profile = null }
         }
         setStudent(profile)
@@ -149,18 +184,18 @@ export default function StudentActivities() {
       } finally {
         setLoading(false)
       }
-    }
-
-    init()
-  }, [query, page])
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchActivities, fetchStats])
 
   useEffect(() => {
-    setPage(1)
+    const timeoutId = window.setTimeout(() => setPage(1), 0)
+    return () => window.clearTimeout(timeoutId)
   }, [query, activeFilter])
 
   useEffect(() => {
     const handler = () => {
-      let profile = null
+      let profile
       try { profile = JSON.parse(localStorage.getItem('user') || 'null') } catch { profile = null }
       const sectionId = (profile && profile.section) || (student && student.section) || null
       fetchActivities(sectionId)
@@ -168,38 +203,7 @@ export default function StudentActivities() {
     }
     window.addEventListener('studentSubmissionSaved', handler)
     return () => window.removeEventListener('studentSubmissionSaved', handler)
-  }, [student])
-
-  const fetchStats = async (sectionId) => {
-    try {
-      const params = {}
-      if (sectionId) params.section = sectionId
-      const response = await api.get('/activities/stats/', { params })
-      setStats(response.data)
-    } catch (err) {
-      console.error('Failed to load activity stats:', err)
-      setError('Failed to load activity stats.')
-    }
-  }
-
-  const fetchActivities = async (sectionId) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const params = { search: query || undefined, page }
-      if (sectionId) params.section = sectionId
-      const response = await api.get('/activities/', { params })
-      const fetchedActivities = response.data.results || []
-      setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
-      setActivities(fetchedActivities)
-    } catch (err) {
-      console.error('Failed to load activities:', err)
-      setError('Failed to load activities. Please try again.')
-      setActivities([])
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [student, fetchActivities, fetchStats])
 
   const handleViewActivity = (activity) => {
     setActiveActivity(activity)

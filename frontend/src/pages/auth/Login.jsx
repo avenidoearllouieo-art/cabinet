@@ -3,6 +3,7 @@ import { Eye, EyeOff, LockKeyhole, UserRound } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import TapTrackLogo from '../../components/TapTrackLogo.jsx'
+import { FormField, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 
 export default function Login({ administratorOnly = false }) {
   const navigate = useNavigate()
@@ -78,53 +79,21 @@ export default function Login({ administratorOnly = false }) {
           </p>
         </div>
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <label className="login-field flex items-center gap-3 rounded-xl border border-[#dbe3ed] px-4 py-3 transition focus-within:border-[#2563eb] focus-within:ring-4 focus-within:ring-blue-100">
-            <UserRound size={18} className="shrink-0 text-[#8291a5]" aria-hidden="true" />
-            <input
-              type="text"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]"
-              placeholder="Username"
-              aria-label="Username"
-              autoComplete="username"
-              required
-            />
-          </label>
+        <form className="space-y-5" onSubmit={handleSubmit}>
+          <FormField label="Username" required>
+            {({ id }) => <div className="login-field flex min-h-12 items-center gap-3 rounded-xl border border-[#dbe3ed] px-4 py-2.5 transition focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900"><UserRound size={18} className="shrink-0 text-[#8291a5]" aria-hidden="true" /><input id={id} type="text" value={username} onChange={(event) => setUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]" placeholder="Enter your assigned username" autoComplete="username" required /></div>}
+          </FormField>
 
-          <label className="login-field flex items-center gap-3 rounded-xl border border-[#dbe3ed] px-4 py-3 transition focus-within:border-[#2563eb] focus-within:ring-4 focus-within:ring-blue-100">
-            <LockKeyhole size={18} className="shrink-0 text-[#8291a5]" aria-hidden="true" />
-            <input
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]"
-              placeholder="Password"
-              aria-label="Password"
-              autoComplete="current-password"
-              required
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((visible) => !visible)}
-              className="shrink-0 text-[#8291a5] transition hover:text-[#2563eb]"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
-          </label>
+          <FormField label="Password" required>
+            {({ id }) => <div className="login-field flex min-h-12 items-center gap-3 rounded-xl border border-[#dbe3ed] px-4 py-1 transition focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900"><LockKeyhole size={18} className="shrink-0 text-[#8291a5]" aria-hidden="true" /><input id={id} type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]" placeholder="Enter your password" autoComplete="current-password" required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8291a5] transition hover:bg-blue-50 hover:text-[#2563eb] focus:outline-none focus:ring-2 focus:ring-blue-900" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>}
+          </FormField>
 
-          {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">
-              {error}
-            </div>
-          )}
+          <InlineFeedback>{error}</InlineFeedback>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-2 w-full rounded-xl bg-[#2563eb] py-3.5 text-sm font-semibold text-white shadow-md shadow-blue-200 transition hover:bg-[#1d4ed8] focus:outline-none focus:ring-4 focus:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-2 min-h-12 w-full rounded-xl bg-[#F5B700] px-5 py-3 text-sm font-bold text-[#0B1F3A] shadow-sm transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isSubmitting ? 'Signing in...' : 'Log In'}
           </button>

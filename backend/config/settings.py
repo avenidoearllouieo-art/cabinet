@@ -10,7 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+from datetime import timedelta
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,14 +23,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-iu@_!^vi#qxyl@vm0+ru6x&*%ixl)o968y5k0q-3%btb+gfsz!'
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
+def env_list(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return list(default)
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
+# Development uses a clearly non-production key. Production must provide one.
+DEBUG = env_bool('DJANGO_DEBUG', True)
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured('DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.')
+    SECRET_KEY = 'django-insecure-taptrack-local-development-only'
+
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', ['localhost', '127.0.0.1', 'testserver'])
+CSRF_TRUSTED_ORIGINS = env_list(
+    'DJANGO_CSRF_TRUSTED_ORIGINS',
+    ['http://localhost:5176', 'http://127.0.0.1:5176'],
+)
 
 
 # Application definition
@@ -62,8 +85,6 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
 }
-
-from datetime import timedelta
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
@@ -152,7 +173,10 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = env_list(
+    'DJANGO_CORS_ALLOWED_ORIGINS',
+    ['http://localhost:5176', 'http://127.0.0.1:5176'],
+)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',

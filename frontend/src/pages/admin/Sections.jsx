@@ -5,15 +5,15 @@ import SummaryCard from '../../components/SummaryCard'
 import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
-import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, Archive, FileDown, Layers3, DoorOpen } from 'lucide-react'
+import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, Layers3 } from 'lucide-react'
 
 export default function Sections() {
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [programFilter, setProgramFilter] = useState('all')
-  const [yearLevelFilter, setYearLevelFilter] = useState('all')
+  const programFilter = 'all'
+  const yearLevelFilter = 'all'
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -165,11 +165,9 @@ export default function Sections() {
   }, [sections, query, programFilter, yearLevelFilter, instructorFilter, statusFilter, sortBy])
 
   const totalSections = sections.length
-  const activeSections = sections.filter((section) => String(section.status || '').toLowerCase() === 'active').length
   const totalStudents = sections.reduce((sum, section) => sum + (parseInt(section.student_count) || 0), 0)
   const totalInstructors = new Set(sections.map((section) => section.instructor_name || '').filter(Boolean)).size
   const averageStudentsPerSection = totalSections ? Math.round(totalStudents / totalSections) : 0
-  const assignedActivities = sections.reduce((sum, section) => sum + (Number(section.activity_count || section.activities_count || 0) || 0), 0)
 
   const instructorOptions = useMemo(() => {
     const options = Array.from(new Set(sections.map((section) => String(section.instructor_name || '').trim()).filter(Boolean)))

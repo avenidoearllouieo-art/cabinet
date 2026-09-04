@@ -1,8 +1,50 @@
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import serializers
 from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, SubmissionAttachment, ActivityDiscussion, ActivityAnnouncement
+
+
+def sync_section_owner(section, instructor):
+    """Keep the legacy Section owner and instructor M2M relationship consistent."""
+    through_model = User.assigned_sections.through
+    through_model.objects.filter(section_id=section.pk).exclude(
+        user_id=getattr(instructor, 'pk', None)
+    ).delete()
+    if instructor:
+        through_model.objects.get_or_create(user_id=instructor.pk, section_id=section.pk)
+
+
+def sync_instructor_sections(instructor, sections):
+    """Treat the supplied section list as the instructor's authoritative assignment."""
+    selected = list(sections)
+    selected_ids = [section.pk for section in selected]
+    through_model = User.assigned_sections.through
+
+    if selected_ids:
+        through_model.objects.filter(section_id__in=selected_ids).exclude(user_id=instructor.pk).delete()
+
+    instructor.assigned_sections.set(selected)
+    Section.objects.filter(instructor=instructor).exclude(pk__in=selected_ids).update(instructor=None)
+    if selected_ids:
+        Section.objects.filter(pk__in=selected_ids).update(instructor=instructor)
+
+
+def represent_assigned_section(section):
+    return {
+        'section_id': section.section_id,
+        'section_name': section.section_name,
+        'year_level': section.year_level,
+        'academic_year': section.academic_year,
+    }
+
+
+class AssignedSectionField(serializers.PrimaryKeyRelatedField):
+    """Accept section IDs on write and preserve the existing object shape on read."""
+
+    def to_representation(self, value):
+        return represent_assigned_section(value)
 
 
 class SectionSerializer(serializers.ModelSerializer):
@@ -41,6 +83,18 @@ class SectionSerializer(serializers.ModelSerializer):
             return int(obj.actual_student_count or 0)
         return obj.users.count()
 
+    @transaction.atomic
+    def create(self, validated_data):
+        section = super().create(validated_data)
+        sync_section_owner(section, section.instructor)
+        return section
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        section = super().update(instance, validated_data)
+        sync_section_owner(section, section.instructor)
+        return section
+
 
 class InstructorSectionSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='section_id', read_only=True)
@@ -72,7 +126,11 @@ class UserSerializer(serializers.ModelSerializer):
     attendance_absent_count = serializers.SerializerMethodField()
     attendance_percentage = serializers.SerializerMethodField()
     profile_image_url = serializers.SerializerMethodField()
-    assigned_sections = serializers.SerializerMethodField()
+    assigned_sections = AssignedSectionField(
+        queryset=Section.objects.all(),
+        many=True,
+        required=False,
+    )
     last_access_status = serializers.SerializerMethodField()
     last_access_time = serializers.SerializerMethodField()
 
@@ -142,40 +200,54 @@ class UserSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
-    def get_assigned_sections(self, obj):
-        if obj.role != User.RoleChoices.INSTRUCTOR:
-            return []
-        # prefer explicit assigned_sections (ManyToMany), fallback to
-        # sections where the instructor FK is set for backward compatibility
-        sections = obj.assigned_sections.all() if hasattr(obj, 'assigned_sections') and obj.assigned_sections.exists() else obj.instructor_sections.all()
-        return [
-            {
-                'section_id': section.section_id,
-                'section_name': section.section_name,
-                'year_level': section.year_level,
-                'academic_year': section.academic_year,
-            }
-            for section in sections
-        ]
-        read_only_fields = ['created_at', 'updated_at']
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': False}
-        }
+    def validate(self, attrs):
+        role = attrs.get('role', getattr(self.instance, 'role', User.RoleChoices.STUDENT))
+        assigned_sections = attrs.get('assigned_sections')
+        if role != User.RoleChoices.INSTRUCTOR and assigned_sections:
+            raise serializers.ValidationError({
+                'assigned_sections': 'Only instructors can be assigned to sections.'
+            })
+        return attrs
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.role != User.RoleChoices.INSTRUCTOR:
+            data['assigned_sections'] = []
+        elif not data['assigned_sections']:
+            # Older rows may only have the Section.instructor relationship.
+            # Preserve those assignments in responses until the next write
+            # synchronizes both sides of the relationship.
+            data['assigned_sections'] = [
+                represent_assigned_section(section)
+                for section in instance.instructor_sections.all()
+            ]
+        return data
+
+    @transaction.atomic
     def create(self, validated_data):
+        assigned_sections = validated_data.pop('assigned_sections', [])
         password = validated_data.pop('password', None)
         user = super().create(validated_data)
         if password:
             user.set_password(password)
             user.save()
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            sync_instructor_sections(user, assigned_sections)
         return user
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        assigned_sections = validated_data.pop('assigned_sections', serializers.empty)
         password = validated_data.pop('password', None)
         user = super().update(instance, validated_data)
         if password:
             user.set_password(password)
             user.save()
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            if assigned_sections is not serializers.empty:
+                sync_instructor_sections(user, assigned_sections)
+        else:
+            sync_instructor_sections(user, [])
         return user
 
     def get_attendance_present_count(self, obj):

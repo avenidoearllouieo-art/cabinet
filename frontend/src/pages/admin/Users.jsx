@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -9,7 +9,7 @@ import AddUserModal from '../../components/users/AddUserModal.jsx'
 import EditUserModal from '../../components/users/EditUserModal.jsx'
 import ActionsMenu from '../../components/users/ActionsMenu.jsx'
 import UserDrawer from '../../components/users/UserDrawer.jsx'
-import { Search, Plus, Users as UsersIcon, CheckCircle2, CircleOff, ChevronDown, FileText, FileSpreadsheet, Wifi, UserMinus, Trash2, ShieldCheck, Activity, UserCheck } from 'lucide-react'
+import { Search, Plus, CheckCircle2, CircleOff, ChevronDown, FileText, FileSpreadsheet, Wifi, UserMinus, Trash2, ShieldCheck, Activity, UserCheck } from 'lucide-react'
 
 export default function Users() {
   const navigate = useNavigate()
@@ -33,13 +33,6 @@ export default function Users() {
   const [drawerUser, setDrawerUser] = useState(null)
   const [filters, setFilters] = useState({ status: '', section: '' })
 
-  const handleOpenAddUserModal = () => {
-    setEditingUserId(null)
-    setSelectedUser(null)
-    setSelectedRole('student')
-    setIsAddUserOpen(true)
-  }
-
   const handleOpenAddForRole = (role) => {
     setEditingUserId(null)
     setSelectedUser(null)
@@ -47,14 +40,34 @@ export default function Users() {
     setIsAddUserOpen(true)
   }
 
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     setToastMessage(message)
     setToastType(type)
     window.setTimeout(() => {
       setToastMessage('')
       setToastType('success')
     }, 4000)
-  }
+  }, [])
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setLoading(true)
+      const response = await api.get('/users/')
+      const rawUsers = Array.isArray(response.data) ? response.data : response.data.results || []
+      const normalizedUsers = rawUsers.map((user) => ({
+        ...user,
+        id: user?.id ?? user?.pk ?? user?.user_id ?? user?.uuid,
+      }))
+      setUsers(normalizedUsers)
+      setError('')
+    } catch (err) {
+      console.error('Error fetching users:', err)
+      setError('Failed to load users.')
+      showToast('Failed to load users. Please try again.', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }, [showToast])
 
   const handleUserSaved = (savedUser) => {
     if (!savedUser || !savedUser.id) {
@@ -77,8 +90,9 @@ export default function Users() {
   }
 
   useEffect(() => {
-    fetchUsers()
-  }, [])
+    const timeoutId = window.setTimeout(fetchUsers, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchUsers])
 
   useEffect(() => {
     function onDocClick(e) {
@@ -100,32 +114,8 @@ export default function Users() {
       setSelectedUser(row || null)
       setIsEditModalOpen(true)
     }
-    return () => {
-      try {
-        delete window.openEditModal
-      } catch (err) {}
-    }
+    return () => { delete window.openEditModal }
   }, [])
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true)
-      const response = await api.get('/users/')
-      const rawUsers = Array.isArray(response.data) ? response.data : response.data.results || []
-      const normalizedUsers = rawUsers.map((user) => ({
-        ...user,
-        id: user?.id ?? user?.pk ?? user?.user_id ?? user?.uuid,
-      }))
-      setUsers(normalizedUsers)
-      setError('')
-    } catch (err) {
-      console.error('Error fetching users:', err)
-      setError('Failed to load users.')
-      showToast('Failed to load users. Please try again.', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const sectionOptions = Array.from(
     new Set(
@@ -142,7 +132,10 @@ export default function Users() {
   ).sort()
 
   useEffect(() => {
-    setFilters((current) => ({ ...current, section: '' }))
+    const timeoutId = window.setTimeout(() => {
+      setFilters((current) => ({ ...current, section: '' }))
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [activeRole])
 
   const filteredUsers = users.filter((user) => {
@@ -233,18 +226,6 @@ export default function Users() {
         {label}
       </span>
     )
-  }
-
-  const nfcBadge = (uid) => {
-    if (uid) {
-      return (
-        <div className="space-y-1">
-          <span className="inline-flex rounded-full bg-[#ECFDF5] px-3 py-1 text-xs font-semibold text-[#166534]">Registered</span>
-          <div className="max-w-[200px] truncate text-sm text-[#0F172A]" title={uid}>{uid}</div>
-        </div>
-      )
-    }
-    return <span className="inline-flex rounded-full bg-[#FEF3C7] px-3 py-1 text-xs font-semibold text-[#92400E]">Not Assigned</span>
   }
 
   const studentColumns = [

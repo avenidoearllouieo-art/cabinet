@@ -1,31 +1,43 @@
 import { useEffect } from 'react'
+import { X } from 'lucide-react'
 
-export default function Modal({ isOpen, onClose, title, children }) {
+export default function Modal({ isOpen, onClose, title, description, children, footer, dirty = false, busy = false }) {
+  const requestClose = () => {
+    if (busy) return
+    if (dirty && !window.confirm('Discard your unsaved changes?')) return
+    onClose?.()
+  }
+
   useEffect(() => {
     if (!isOpen) return
 
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !busy) {
+        if (!dirty || window.confirm('Discard your unsaved changes?')) onClose?.()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+
     return () => {
       document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isOpen])
+  }, [isOpen, busy, dirty, onClose])
 
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 py-6">
-      <div className="relative w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-[16px] border border-[#E5E7EB] bg-white p-8 shadow-sm" role="dialog" aria-modal="true">
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-[#111827]">{title}</h2>
-          <button type="button" onClick={onClose} className="rounded-full p-2 text-[#6B7280] hover:bg-[#F3F4F6]" aria-label="Close dialog">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div>{children}</div>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 px-3 py-4 sm:px-4" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
+      <div className="relative flex max-h-[94vh] w-full max-w-[700px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xl" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+          <div><h2 className="text-xl font-bold text-[#0B1F3A]">{title}</h2>{description && <p className="mt-1 text-sm text-slate-500">{description}</p>}</div>
+          <button type="button" onClick={requestClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50" aria-label="Close dialog"><X className="h-5 w-5" /></button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
+        {footer && <footer className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">{footer}</footer>}
       </div>
     </div>
   )

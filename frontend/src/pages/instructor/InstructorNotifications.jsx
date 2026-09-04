@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Bell, CheckCircle2, ArrowRight } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -8,7 +8,7 @@ export default function InstructorNotifications() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.get('/notifications/')
@@ -20,11 +20,12 @@ export default function InstructorNotifications() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    fetchNotifications()
-  }, [])
+    const timeoutId = window.setTimeout(fetchNotifications, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchNotifications])
 
   const markAllRead = async () => {
     try {

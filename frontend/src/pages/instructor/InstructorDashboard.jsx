@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -27,7 +27,7 @@ export default function InstructorDashboard() {
   const [recentSubmissions, setRecentSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     setLoading(true)
     try {
       // Get current user
@@ -78,11 +78,12 @@ export default function InstructorDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    fetchDashboardData()
-  }, [])
+    const timeoutId = window.setTimeout(fetchDashboardData, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchDashboardData])
 
   const formatDate = (value) => {
     if (!value) return '—'

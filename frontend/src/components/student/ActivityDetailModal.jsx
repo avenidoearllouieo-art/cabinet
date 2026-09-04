@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useState, useRef } from 'react'
-import { ArrowUpRight, Download, Upload, X, FileText, Image } from 'lucide-react'
+import { Download, Upload, X, FileText, Image } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
 
@@ -36,20 +36,6 @@ function getAttachmentUrl(attachment) {
   return attachment?.url || attachment?.download_url || attachment?.file || ''
 }
 
-function statusClass(status) {
-  switch ((status || '').toLowerCase()) {
-    case 'graded':
-      return 'bg-emerald-100 text-emerald-700'
-    case 'late submission':
-      return 'bg-rose-100 text-rose-700'
-    case 'submitted':
-      return 'bg-sky-100 text-sky-700'
-    case 'not submitted':
-    default:
-      return 'bg-amber-100 text-amber-700'
-  }
-}
-
 function humanRemaining(due) {
   if (!due) return '—'
   const diff = new Date(due).getTime() - Date.now()
@@ -84,23 +70,20 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
   const [uploadProgress, setUploadProgress] = useState(0)
   const [successMessage, setSuccessMessage] = useState('')
   const fileInputRef = useRef(null)
-  const [toastMessage, setToastMessage] = useState('')
+  const [, setToastMessage] = useState('')
 
   // Determine status from the authoritative backend field when available
   // Requirement: status must be 'Not Submitted' unless a Submission record exists.
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null || submission.graded_at ? 'Graded' : 'Submitted') : 'Not Submitted')
-  const isOpenForSubmission = !activity?.due_date || new Date(activity.due_date) >= new Date()
   const canResubmit = activity?.allow_resubmission && !!submission
 
   const attachmentRows = useMemo(() => activity?.attachments || [], [activity])
 
   useEffect(() => {
-    setSubmission(activity?.submission || null)
-    if (!activity) return
-    if (activity?.submission) return
-    // fetch submission for this activity for the current user
     let mounted = true
-    const fetchSubmission = async () => {
+    const timeoutId = window.setTimeout(async () => {
+      setSubmission(activity?.submission || null)
+      if (!activity || activity.submission) return
       setLoadingSubmission(true)
       try {
         const res = await api.get(`/submissions/`, { params: { activity: activity.id, page_size: 10 } })
@@ -110,11 +93,13 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       } catch (err) {
         console.error('Failed to load submission for activity:', err)
       } finally {
-        setLoadingSubmission(false)
+        if (mounted) setLoadingSubmission(false)
       }
+    }, 0)
+    return () => {
+      mounted = false
+      window.clearTimeout(timeoutId)
     }
-    fetchSubmission()
-    return () => { mounted = false }
   }, [activity])
 
   // Helpers for upload form
@@ -156,8 +141,12 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       setFiles((prev) => [...prev, ...validFiles])
       setSuccessMessage('Files uploaded as draft.')
       setToastMessage('Draft uploaded')
-      try { onSubmit && onSubmit() } catch (e) {}
-    } catch (err) {
+      try {
+        onSubmit?.()
+      } catch (callbackError) {
+        console.error('Submission refresh callback failed:', callbackError)
+      }
+    } catch {
       setErrors(['Failed to upload files. Please try again.'])
     } finally {
       setLoading(false)
@@ -182,7 +171,6 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
   }
 
   const handleRemoveFile = (index) => {
-    const removedLocal = files[index]
     setFiles((prev) => prev.filter((_, i) => i !== index))
     const removedUpload = uploadedFiles[index]
     if (removedUpload && removedUpload.id) {
@@ -207,7 +195,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       formData.append('remarks', comments)
       uploadedFiles.forEach((u) => formData.append('temp_upload_ids', u.id))
 
-      const res = await api.post('/submissions/', formData)
+      await api.post('/submissions/', formData)
       // Refresh submission state to show 'Your Work'
       const newSubmissionRes = await api.get(`/submissions/?activity=${activity.id}&page_size=1`)
       const results = Array.isArray(newSubmissionRes.data) ? newSubmissionRes.data : newSubmissionRes.data.results || []
@@ -217,9 +205,13 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       setComments('')
       setSuccessMessage('Submission created successfully.')
       setToastMessage('Submission created successfully.')
-      try { onSubmit && onSubmit() } catch (e) {}
+      try {
+        onSubmit?.()
+      } catch (callbackError) {
+        console.error('Submission refresh callback failed:', callbackError)
+      }
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
-    } catch (err) {
+    } catch {
       setErrors(['Failed to submit activity. Please try again.'])
     } finally {
       setLoading(false)
@@ -228,7 +220,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details">
+    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details" dirty={Boolean(comments || files.length)} busy={loading}>
       {!activity ? (
         <p className="text-sm text-slate-600">Activity details are unavailable.</p>
       ) : (
@@ -385,7 +377,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                   </div>
                 ) : (
                   <div>
-                    <div onDrop={handleDrop} onDragOver={handleDragOver} className="relative rounded-[12px] border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-blue-400">
+                    <div onDrop={handleDrop} onDragOver={handleDragOver} className="relative rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-[#F5B700]">
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -398,7 +390,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={loading || !canSubmit}
-                        className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-6 py-2 font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-400"
+                        className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-6 py-2 font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300"
                       >
                         <Upload size={18} /> Choose Files
                       </button>
@@ -433,7 +425,8 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveFile(index)}
-                                  className="rounded-full p-2 transition hover:bg-red-50"
+                                  className="flex h-11 w-11 items-center justify-center rounded-xl transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                                  aria-label={`Remove ${file.name}`}
                                 >
                                   <X size={18} className="text-red-600" />
                                 </button>
@@ -457,7 +450,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                           placeholder="Add any comments or notes about your submission..."
                           disabled={loading}
                           rows={4}
-                          className="w-full rounded-[12px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
+                          className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-transparent focus:ring-2 focus:ring-blue-900 disabled:bg-slate-50"
                         />
                       </label>
                     </div>
@@ -479,7 +472,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="flex-1 rounded-full border border-slate-200 bg-white px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100"
+              className="min-h-12 flex-1 rounded-xl border border-slate-300 bg-white px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100"
             >
               Cancel
             </button>
@@ -487,7 +480,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
               type="button"
               onClick={handleSubmit}
               disabled={loading || !canSubmit || uploadedFiles.length === 0}
-              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-400"
+              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300"
             >
               {loading ? 'Submitting...' : (
                 <>

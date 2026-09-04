@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Search, Send, CheckCircle2, AlertCircle, Clock, MoreHorizontal, Eye, Trash2 } from 'lucide-react'
 import api from '../../services/api.js'
@@ -39,7 +39,7 @@ const formatDate = (value) => {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
-  } catch (err) {
+  } catch {
     return String(value)
   }
 }
@@ -66,8 +66,8 @@ const resolveStatus = (submission) => {
   if (submittedAt && dueDate) {
     try {
       if (new Date(submittedAt) > new Date(dueDate)) return 'late'
-    } catch (err) {
-      // ignore invalid dates
+    } catch {
+      // Invalid dates fall through to the remaining status checks.
     }
   }
 
@@ -112,13 +112,12 @@ export default function Submissions() {
   const actionMenuRef = useRef(null)
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    setActivityIdFilter(params.get('activity') || '')
+    const timeoutId = window.setTimeout(() => {
+      const params = new URLSearchParams(location.search)
+      setActivityIdFilter(params.get('activity') || '')
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [location.search])
-
-  useEffect(() => {
-    fetchSubmissions()
-  }, [])
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -131,7 +130,7 @@ export default function Submissions() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const fetchSubmissions = async () => {
+  const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/submissions/')
@@ -144,7 +143,12 @@ export default function Submissions() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchSubmissions, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchSubmissions])
 
   const filteredSubmissions = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -172,7 +176,6 @@ export default function Submissions() {
   }, [submissions, query, activityFilter, activityIdFilter, statusFilter])
 
   const totalSubmissions = submissions.length
-  const submittedCount = submissions.filter((submission) => resolveStatus(submission) === 'submitted').length
   const lateCount = submissions.filter((submission) => resolveStatus(submission) === 'late').length
   const pendingCount = submissions.filter((submission) => resolveStatus(submission) === 'pending').length
   const gradedCount = submissions.filter((submission) => resolveStatus(submission) === 'graded').length

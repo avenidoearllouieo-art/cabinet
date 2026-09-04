@@ -12,17 +12,15 @@ import {
   Archive,
   Eye,
   MoreHorizontal,
-  CheckCircle2,
   Star,
   Paperclip,
-  BadgeCheck,
   BookOpen,
   PencilLine,
   Trash2,
 } from 'lucide-react'
 import api from '../../services/api.js'
 import ActivityAnnouncements from '../../components/ActivityAnnouncements.jsx'
-import ActivityDiscussion from '../../components/ActivityDiscussion'
+import ActivityDiscussion from '../../components/ActivityDiscussion.jsx'
 
 const formatDateTime = (value) => {
   if (!value) return '—'
@@ -211,13 +209,6 @@ const parseInstructionBlocks = (content = '') => {
 
   return blocks.length ? blocks : [<p key="instructions-fallback" className="text-[15px] leading-8 text-slate-700">No instructions provided.</p>]
 }
-
-const rubricRows = [
-  { label: 'Functionality', points: 40 },
-  { label: 'Documentation', points: 30 },
-  { label: 'UI Design', points: 20 },
-  { label: 'Submission', points: 10 },
-]
 
 const buildTimeline = (submissionsCount) => [
   { id: 1, label: 'Activity Created', timestamp: '2026-07-24T10:00:00Z', icon: '●' },

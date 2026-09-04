@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Download, Image, FileText } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Download } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
 import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
-import ActivityDiscussion from '../ActivityDiscussion'
+import ActivityDiscussion from '../ActivityDiscussion.jsx'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -46,32 +46,11 @@ function statusBadge(status) {
   return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Not Submitted</span>
 }
 
-export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose, onRefresh }) {
+export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose }) {
   const [activity, setActivity] = useState(initialActivity || null)
   const [submission, setSubmission] = useState(null)
 
-  useEffect(() => {
-    setActivity(initialActivity || null)
-    setSubmission(null)
-
-    if (!initialActivity) return
-
-    if (typeof initialActivity === 'number' || (initialActivity && !initialActivity.attachments)) {
-      ;(async () => {
-        try {
-          const res = await api.get(`/activities/${initialActivity.id || initialActivity}/`)
-          setActivity(res.data)
-        } catch (err) {
-          console.error('Failed to load activity', err)
-        }
-      })()
-    }
-
-    const aid = initialActivity.id || initialActivity
-    fetchSubmission(aid)
-  }, [initialActivity, isOpen])
-
-  const fetchSubmission = async (activityId) => {
+  const fetchSubmission = useCallback(async (activityId) => {
     if (!activityId) return
     try {
       const res = await api.get('/submissions/', { params: { activity: activityId, page_size: 1 } })
@@ -80,7 +59,25 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
     } catch (err) {
       console.error('Failed to load submission', err)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(async () => {
+      setActivity(initialActivity || null)
+      setSubmission(null)
+      if (!initialActivity) return
+      if (typeof initialActivity === 'number' || !initialActivity.attachments) {
+        try {
+          const res = await api.get(`/activities/${initialActivity.id || initialActivity}/`)
+          setActivity(res.data)
+        } catch (err) {
+          console.error('Failed to load activity', err)
+        }
+      }
+      fetchSubmission(initialActivity.id || initialActivity)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [initialActivity, isOpen, fetchSubmission])
 
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
 

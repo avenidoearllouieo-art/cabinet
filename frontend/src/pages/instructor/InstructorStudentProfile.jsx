@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
@@ -9,12 +9,12 @@ export default function InstructorStudentProfile() {
   const { studentId } = useParams()
   const navigate = useNavigate()
   const [student, setStudent] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [submissionsCount, setSubmissionsCount] = useState(0)
   const [activitiesCount, setActivitiesCount] = useState(0)
 
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       setLoading(true)
       const [studentResponse, submissionsResponse, activitiesResponse] = await Promise.all([
@@ -33,12 +33,13 @@ export default function InstructorStudentProfile() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [studentId])
 
   useEffect(() => {
     if (!studentId) return
-    fetchProfile()
-  }, [studentId])
+    const timeoutId = window.setTimeout(fetchProfile, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [studentId, fetchProfile])
 
   const missingActivities = Math.max(0, activitiesCount - submissionsCount)
   const fullName = student ? `${student.first_name || ''} ${student.last_name || ''}`.trim() : ''

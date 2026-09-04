@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Search, Clock, CheckCircle2, AlertCircle, ArrowUpRight, FilePlus, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Search, Clock, CheckCircle2, ArrowUpRight, FilePlus, RotateCcw } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
@@ -93,21 +93,8 @@ export default function StudentSubmissions() {
   const [pageCount, setPageCount] = useState(0)
   const [activeSubmission, setActiveSubmission] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
-  const [selectedActivity, setSelectedActivity] = useState(null)
 
-  useEffect(() => {
-    fetchSubmissions()
-  }, [query, statusFilter, sortBy, page])
-
-  useEffect(() => {
-    const handler = () => {
-      fetchSubmissions()
-    }
-    window.addEventListener('studentSubmissionSaved', handler)
-    return () => window.removeEventListener('studentSubmissionSaved', handler)
-  }, [])
-
-  const fetchSubmissions = async () => {
+  const fetchSubmissions = useCallback(async () => {
     setLoading(true)
     try {
       const params = {
@@ -128,7 +115,18 @@ export default function StudentSubmissions() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, query, sortBy, statusFilter])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchSubmissions, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchSubmissions])
+
+  useEffect(() => {
+    const handler = () => { fetchSubmissions() }
+    window.addEventListener('studentSubmissionSaved', handler)
+    return () => window.removeEventListener('studentSubmissionSaved', handler)
+  }, [fetchSubmissions])
 
   const handleViewSubmission = async (submission) => {
     // Open submission viewer modal

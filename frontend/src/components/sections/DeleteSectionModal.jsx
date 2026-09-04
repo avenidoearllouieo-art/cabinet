@@ -46,7 +46,7 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-[520px] rounded-2xl bg-white p-8 shadow-xl">
+      <div className="w-full max-w-[520px] rounded-xl border border-rose-200 bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-semibold text-[#0F172A]">Delete Section</h2>
@@ -89,7 +89,7 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-60"
+            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
           >
             Cancel
           </button>
@@ -97,7 +97,7 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
             type="button"
             onClick={handleDelete}
             disabled={saving}
-            className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60"
           >
             {saving && (
               <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">

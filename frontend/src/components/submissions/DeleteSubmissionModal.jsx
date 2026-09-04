@@ -66,7 +66,7 @@ export default function DeleteSubmissionModal({ isOpen, submission, onClose, onU
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="rounded-full bg-[#F3F4F6] px-4 py-2 text-sm font-semibold text-[#111827] transition hover:bg-[#E5E7EB] disabled:opacity-60"
+            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-[#111827] transition hover:bg-[#F3F4F6] disabled:opacity-60"
           >
             Cancel
           </button>
@@ -74,7 +74,7 @@ export default function DeleteSubmissionModal({ isOpen, submission, onClose, onU
             type="button"
             onClick={handleDelete}
             disabled={saving}
-            className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+            className="min-h-11 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-60"
           >
             Delete
           </button>

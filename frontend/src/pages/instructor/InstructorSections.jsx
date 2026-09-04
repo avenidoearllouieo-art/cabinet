@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
@@ -280,7 +280,7 @@ export default function InstructorSections() {
   const [selectedSection, setSelectedSection] = useState(null)
   const [selectedStudents, setSelectedStudents] = useState([])
 
-  const fetchSections = async () => {
+  const fetchSections = useCallback(async () => {
     try {
       setLoading(true)
       const [sectionsRes, activitiesRes, submissionsRes] = await Promise.all([
@@ -303,11 +303,12 @@ export default function InstructorSections() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    fetchSections()
-  }, [])
+    const timeoutId = window.setTimeout(fetchSections, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchSections])
 
   const sectionMetrics = useMemo(() => {
     const map = new Map()

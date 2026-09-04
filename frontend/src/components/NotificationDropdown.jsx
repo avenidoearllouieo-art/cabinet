@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Bell, CheckCheck, Sparkles, CircleAlert, ClipboardList, Send, GraduationCap, LockKeyhole, Settings, X, Inbox } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Bell, ClipboardList, Send, GraduationCap, LockKeyhole, Settings, X, Inbox } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api.js'
 
@@ -56,21 +56,7 @@ export default function NotificationDropdown() {
     return () => window.clearInterval(intervalId)
   }, [currentUser.role])
 
-  useEffect(() => {
-    if (!open) return
-    fetchNotifications()
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const handleKey = (event) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [open])
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.get('/notifications/')
@@ -81,7 +67,22 @@ export default function NotificationDropdown() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const timeoutId = window.setTimeout(fetchNotifications, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [open, fetchNotifications])
+
+  useEffect(() => {
+    if (!open) return
+    const handleKey = (event) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [open])
 
   const unreadCount = currentUser.role === 'student' && !open && studentUnreadCount !== null
     ? studentUnreadCount

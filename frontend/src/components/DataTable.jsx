@@ -85,7 +85,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
                       try {
                         const id = row?.id ?? row?.pk ?? row?.user_id ?? row?.uuid
                         if (window.openEditModal) window.openEditModal(id, row)
-                      } catch (err) {
+                      } catch {
                         /* ignore */
                       }
                     }}

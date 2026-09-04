@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 const getAttachmentName = (attachment) => attachment?.filename || attachment?.file_name || attachment?.file || 'Attachment'
 const getAttachmentSize = (attachment) => attachment?.size ?? attachment?.file_size ?? null
 const getAttachmentUrl = (attachment) => attachment?.url || attachment?.download_url || attachment?.file || ''
-import { X, FileText, Users, ClipboardList, CalendarDays, CircleCheckBig, Download } from 'lucide-react'
+import { X, FileText, Users, ClipboardList, CircleCheckBig, Download } from 'lucide-react'
 import api from '../../services/api.js'
 
 const formatDate = (value) => {
@@ -56,17 +56,23 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
 
   useEffect(() => {
     if (!activity?.id) return
-    setLoading(true)
-    setDetails(null)
-
-    api.get(`/activities/${activity.id}/`)
-      .then((res) => setDetails(res.data))
-      .catch((err) => {
-        console.error('Failed to load activity details', err)
-        setDetails(activity)
-      })
-      .finally(() => setLoading(false))
-  }, [activity?.id])
+    let active = true
+    const timeoutId = window.setTimeout(() => {
+      setLoading(true)
+      setDetails(null)
+      api.get(`/activities/${activity.id}/`)
+        .then((res) => { if (active) setDetails(res.data) })
+        .catch((err) => {
+          console.error('Failed to load activity details', err)
+          if (active) setDetails(activity)
+        })
+        .finally(() => { if (active) setLoading(false) })
+    }, 0)
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [activity])
 
   const displayActivity = details || activity
   const assignedSections = useMemo(() => {

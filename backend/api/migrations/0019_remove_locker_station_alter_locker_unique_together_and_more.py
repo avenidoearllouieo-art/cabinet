@@ -10,10 +10,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='locker',
-            name='station',
-        ),
         migrations.AlterUniqueTogether(
             name='locker',
             unique_together=None,
@@ -22,10 +18,14 @@ class Migration(migrations.Migration):
             model_name='locker',
             name='assigned_user',
         ),
-        migrations.DeleteModel(
-            name='CabinetStation',
+        migrations.RemoveField(
+            model_name='locker',
+            name='station',
         ),
         migrations.DeleteModel(
             name='Locker',
+        ),
+        migrations.DeleteModel(
+            name='CabinetStation',
         ),
     ]

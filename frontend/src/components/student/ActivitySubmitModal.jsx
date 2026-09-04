@@ -43,14 +43,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   }
 
   useEffect(() => {
-    if (!isOpen) {
-      resetState()
-      return
-    }
-
-    if (!activity?.id) return
-
-    const loadLatestSubmission = async () => {
+    const timeoutId = window.setTimeout(async () => {
+      if (!isOpen) {
+        resetState()
+        return
+      }
+      if (!activity?.id) return
       setLoading(true)
       setErrors([])
       try {
@@ -67,9 +65,8 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       } finally {
         setLoading(false)
       }
-    }
-
-    loadLatestSubmission()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [activity?.id, isOpen])
 
   const isDeadlinePassed = Boolean(activity?.due_date && new Date(activity.due_date) < new Date())
@@ -168,7 +165,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'}>
+    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length)} busy={loading}>
       {!activity ? (
         <p className="text-sm text-slate-600">Activity is unavailable.</p>
       ) : (
@@ -207,12 +204,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
               onChange={(event) => setRemarks(event.target.value)}
               rows={3}
               placeholder="Add any context or notes for your submission"
-              className="w-full rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
 
-            <div onDrop={handleDrop} onDragOver={(event) => event.preventDefault()} className="mt-4 rounded-[16px] border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-blue-400">
+            <div onDrop={handleDrop} onDragOver={(event) => event.preventDefault()} className="mt-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-[#F5B700]">
               <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
-              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={loading} className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-400">
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={loading} className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
                 <Upload size={18} /> Choose Files
               </button>
               <p className="mt-3 text-sm text-slate-500">Drag and drop files here or click to select.</p>
@@ -238,7 +235,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
                         <p className="text-xs text-slate-500">{formatBytes(file.size || file.file_size)}</p>
                       </div>
                     </div>
-                    <button type="button" onClick={() => handleRemoveFile(index)} className="rounded-full p-2 text-red-600 transition hover:bg-red-50">
+                    <button type="button" onClick={() => handleRemoveFile(index)} className="flex h-11 w-11 items-center justify-center rounded-xl text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600" aria-label={`Remove ${file.name || file.filename || 'file'}`}>
                       <X size={18} />
                     </button>
                   </div>
@@ -258,10 +255,10 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} disabled={loading} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100">
+            <button type="button" onClick={onClose} disabled={loading} className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100">
               Cancel
             </button>
-            <button type="button" onClick={handleSubmit} disabled={loading || !canEditSubmission || uploadedFiles.length === 0} className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-400">
+            <button type="button" onClick={handleSubmit} disabled={loading || !canEditSubmission || uploadedFiles.length === 0} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
               {loading ? (submission?.id ? 'Updating...' : 'Submitting...') : canEditSubmission ? (submission?.id ? 'Update Submission' : 'Submit Activity') : 'Submission Closed'}
             </button>
           </div>

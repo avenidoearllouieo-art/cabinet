@@ -5,6 +5,134 @@ from rest_framework.test import APIClient
 from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission
 
 
+class InstructorSectionAssignmentTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username='api-admin',
+            email='api-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.first_instructor = User.objects.create_user(
+            username='first-instructor',
+            email='first-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='INST-001',
+        )
+        self.second_instructor = User.objects.create_user(
+            username='second-instructor',
+            email='second-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='INST-002',
+        )
+        self.section_a = Section.objects.create(section_name='API Section A', section_code='API-A')
+        self.section_b = Section.objects.create(section_name='API Section B', section_code='API-B')
+        self.client.force_authenticate(user=self.admin)
+
+    def test_create_instructor_accepts_ids_and_returns_section_objects(self):
+        response = self.client.post('/api/users/', {
+            'username': 'created-instructor',
+            'email': 'created-instructor@example.com',
+            'password': 'secret1234',
+            'role': User.RoleChoices.INSTRUCTOR,
+            'instructor_id': 'INST-003',
+            'assigned_sections': [self.section_a.pk, self.section_b.pk],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        created = User.objects.get(pk=response.json()['id'])
+        self.assertEqual(
+            {item['section_id'] for item in response.json()['assigned_sections']},
+            {self.section_a.pk, self.section_b.pk},
+        )
+        self.assertEqual(set(created.assigned_sections.values_list('pk', flat=True)), {self.section_a.pk, self.section_b.pk})
+        self.assertFalse(created.check_password('created-instructor'))
+        self.assertTrue(created.check_password('secret1234'))
+        self.assertFalse(Section.objects.filter(pk__in=[self.section_a.pk, self.section_b.pk]).exclude(instructor=created).exists())
+
+    def test_assignment_transfer_removes_previous_owner(self):
+        self.first_instructor.assigned_sections.add(self.section_a)
+        self.section_a.instructor = self.first_instructor
+        self.section_a.save(update_fields=['instructor'])
+
+        response = self.client.patch(f'/api/users/{self.second_instructor.pk}/', {
+            'assigned_sections': [self.section_a.pk],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.section_a.refresh_from_db()
+        self.assertEqual(self.section_a.instructor, self.second_instructor)
+        self.assertFalse(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+        self.assertTrue(self.second_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+
+    def test_replacing_and_clearing_assignments_updates_both_relationships(self):
+        self.first_instructor.assigned_sections.add(self.section_a)
+        self.section_a.instructor = self.first_instructor
+        self.section_a.save(update_fields=['instructor'])
+
+        response = self.client.patch(f'/api/users/{self.first_instructor.pk}/', {
+            'assigned_sections': [self.section_b.pk],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+        self.section_a.refresh_from_db()
+        self.section_b.refresh_from_db()
+        self.assertIsNone(self.section_a.instructor)
+        self.assertEqual(self.section_b.instructor, self.first_instructor)
+
+        response = self.client.patch(f'/api/users/{self.first_instructor.pk}/', {
+            'assigned_sections': [],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+        self.section_b.refresh_from_db()
+        self.assertIsNone(self.section_b.instructor)
+        self.assertFalse(self.first_instructor.assigned_sections.exists())
+
+    def test_role_change_clears_instructor_assignments(self):
+        self.first_instructor.assigned_sections.add(self.section_a)
+        self.section_a.instructor = self.first_instructor
+        self.section_a.save(update_fields=['instructor'])
+
+        response = self.client.patch(f'/api/users/{self.first_instructor.pk}/', {
+            'role': User.RoleChoices.ADMIN,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.section_a.refresh_from_db()
+        self.first_instructor.refresh_from_db()
+        self.assertIsNone(self.section_a.instructor)
+        self.assertFalse(self.first_instructor.assigned_sections.exists())
+        self.assertEqual(response.json()['assigned_sections'], [])
+
+    def test_section_endpoint_keeps_assignment_relationships_in_sync(self):
+        response = self.client.patch(f'/api/sections/{self.section_a.pk}/', {
+            'instructor': self.first_instructor.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertTrue(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+
+        response = self.client.patch(f'/api/sections/{self.section_a.pk}/', {
+            'instructor': self.second_instructor.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertFalse(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+        self.assertTrue(self.second_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+
+    def test_legacy_section_owner_is_included_in_user_response(self):
+        self.section_a.instructor = self.first_instructor
+        self.section_a.save(update_fields=['instructor'])
+
+        response = self.client.get(f'/api/users/{self.first_instructor.pk}/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(
+            [item['section_id'] for item in response.json()['assigned_sections']],
+            [self.section_a.pk],
+        )
+
+
 class ActivityCreationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -332,10 +460,18 @@ class StudentNotificationTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.client.force_authenticate(user=self.student)
         notifications = self.client.get('/api/notifications/').json()['results']
-        self.assertEqual(len(notifications), 1)
-        self.assertEqual(notifications[0]['student'], self.student.id)
-        self.assertEqual(notifications[0]['notification_type'], 'feedback')
-        self.assertFalse(Notification.objects.filter(student=self.other_student).exists())
+        feedback_notifications = [
+            item for item in notifications
+            if item['notification_type'] == 'feedback'
+        ]
+        self.assertEqual(len(feedback_notifications), 1)
+        self.assertEqual(feedback_notifications[0]['student'], self.student.id)
+        self.assertFalse(
+            Notification.objects.filter(
+                student=self.other_student,
+                notification_type=Notification.TypeChoices.FEEDBACK,
+            ).exists()
+        )
 
 
 class StudentProfileTests(TestCase):
