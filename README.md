@@ -73,7 +73,7 @@ npm run build
 cd ..
 python backend/manage.py check
 python backend/manage.py makemigrations --check --dry-run
-python backend/manage.py test
+python backend/manage.py test api
 git diff --check
 ```
 
