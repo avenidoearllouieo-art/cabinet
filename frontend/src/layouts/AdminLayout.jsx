@@ -11,7 +11,7 @@ export default function AdminLayout() {
       <Header />
       <div className="flex min-h-screen items-stretch justify-start pt-[70px]">
         <Sidebar variant="admin" onCollapsedChange={setSidebarCollapsed} />
-        <main className={`${sidebarCollapsed ? 'ml-[76px]' : 'ml-[250px] max-sm:ml-[76px]'} flex-1 min-w-0 bg-[#F8FAFC] p-6 transition-[margin] duration-300 sm:p-8`}>
+        <main className={`${sidebarCollapsed ? 'ml-[76px]' : 'ml-[250px] max-sm:ml-[76px]'} flex-1 min-w-0 bg-white p-6 transition-[margin] duration-300 sm:p-8`}>
           <Outlet />
         </main>
       </div>

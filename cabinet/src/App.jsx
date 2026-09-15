@@ -470,7 +470,7 @@ export default function App() {
             <h2>Select a Station</h2>
             <p className="muted">Choose the cabinet station for this session.</p>
             <div className="station-grid">
-              {[1, 2, 3].map((station) => (
+              {[1, 2].map((station) => (
                 <button
                   key={station}
                   className="btn station-button"

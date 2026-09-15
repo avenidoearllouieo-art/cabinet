@@ -54,29 +54,29 @@ export default function Header() {
   const headerText = getHeaderText()
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 h-[70px] border-b border-[#E5E7EB] bg-white px-6 shadow-sm">
+    <header className="fixed inset-x-0 top-0 z-50 h-[70px] border-b border-[#FFC107] bg-[#002B5B] px-6 text-white shadow-sm">
       <div className="flex h-full items-center justify-between gap-5">
         <div className="flex items-center gap-4">
           <TapTrackLogo responsive />
           <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-[#111827]">{headerText.title}</p>
-            <p className="text-xs text-[#6B7280]">{headerText.subtitle}</p>
+            <p className="text-sm font-semibold text-white">{headerText.title}</p>
+            <p className="text-xs text-white/75">{headerText.subtitle}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           {(user.role === 'instructor' || user.role === 'student') && <NotificationDropdown />}
 
-          <div ref={profileRef} className="relative hidden items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-white px-3 py-2 shadow-sm sm:flex">
+          <div ref={profileRef} className="relative hidden items-center gap-3 rounded-2xl border border-[#FFC107] bg-[#002B5B] px-3 py-2 shadow-sm sm:flex">
             <button type="button" onClick={handleProfileClick} className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#2563EB] text-sm font-semibold text-white">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFC107] text-sm font-semibold text-[#002B5B]">
                 {user.username?.charAt(0).toUpperCase() || 'U'}
               </div>
               <div className="text-left">
-                <p className="text-sm font-medium text-[#111827]">{user.username || 'User'}</p>
-                <p className="text-xs text-[#6B7280] capitalize">{user.role || 'user'}</p>
+                <p className="text-sm font-medium text-white">{user.username || 'User'}</p>
+                <p className="text-xs text-white/75 capitalize">{user.role || 'user'}</p>
               </div>
-              <ChevronDown size={16} className="text-[#6B7280]" />
+              <ChevronDown size={16} className="text-[#FFC107]" />
             </button>
 
             {profileOpen && (

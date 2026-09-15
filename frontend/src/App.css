@@ -22,7 +22,7 @@ body {
 }
 
 .login-grid {
-  opacity: 0.55;
+  opacity: 0.24;
   background-image: linear-gradient(rgba(130, 154, 181, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(130, 154, 181, 0.12) 1px, transparent 1px);
   background-position: center;
   background-size: 48px 48px;
@@ -37,7 +37,7 @@ body {
   background-position: center;
   background-repeat: repeat;
   background-size: 380px auto;
-  opacity: 0.075;
+  opacity: 0.025;
   transform: rotate(-12deg) scale(1.12);
   pointer-events: none;
   user-select: none;
@@ -80,7 +80,25 @@ body {
 .login-cabinet-mark {
   display: flex;
   gap: 7px;
-  opacity: 0.45;
+  opacity: 0.28;
+}
+
+.login-card label,
+.login-card .login-field > svg {
+  color: #002B5B;
+}
+
+.login-card label {
+  font-weight: 700;
+}
+
+.login-card .login-field {
+  border-color: rgba(0, 43, 91, 0.2);
+}
+
+.login-card .login-field:focus-within {
+  border-color: #FFC107;
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.2);
 }
 
 .login-cabinet-mark span {

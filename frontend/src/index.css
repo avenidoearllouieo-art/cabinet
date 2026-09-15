@@ -14,3 +14,98 @@ body,
 html {
   scroll-behavior: smooth;
 }
+
+:root {
+  --ustp-navy: #002B5B;
+  --ustp-white: #FFFFFF;
+  --ustp-yellow: #FFC107;
+  --ustp-yellow-hover: #E0A800;
+  --ustp-border: rgba(0, 43, 91, 0.16);
+  --ustp-muted: rgba(0, 43, 91, 0.68);
+  color: var(--ustp-navy);
+  background: var(--ustp-white);
+}
+
+body {
+  background: var(--ustp-white);
+  color: var(--ustp-navy);
+}
+
+.notification-overlay {
+  background: rgba(0, 43, 91, 0.16) !important;
+}
+
+[class~="bg-slate-50"],
+[class~="bg-slate-100"],
+[class~="bg-gray-100"],
+[class~="bg-white"] {
+  background-color: var(--ustp-white) !important;
+}
+
+[class~="text-slate-900"],
+[class~="text-slate-800"],
+[class~="text-slate-700"],
+[class~="text-blue-900"] {
+  color: var(--ustp-navy) !important;
+}
+
+[class~="text-slate-600"],
+[class~="text-slate-500"],
+[class~="text-gray-500"] {
+  color: var(--ustp-muted) !important;
+}
+
+[class~="border-slate-200"],
+[class~="border-gray-200"] {
+  border-color: var(--ustp-border) !important;
+}
+
+[class~="bg-yellow-100"],
+[class~="bg-yellow-50"],
+[class~="bg-amber-100"],
+[class~="bg-blue-50"],
+[class~="bg-emerald-50"],
+[class~="bg-purple-50"],
+[class~="bg-orange-50"] {
+  background-color: rgba(255, 193, 7, 0.14) !important;
+}
+
+[class~="text-yellow-600"],
+[class~="text-yellow-700"],
+[class~="text-amber-800"],
+[class~="text-blue-600"],
+[class~="text-emerald-600"],
+[class~="text-purple-600"],
+[class~="text-orange-600"],
+[class~="text-taptrack-gold"] {
+  color: var(--ustp-yellow) !important;
+}
+
+button[class*="bg-"],
+a[class*="bg-blue-600"],
+a[class*="bg-yellow-"] {
+  background-color: var(--ustp-yellow) !important;
+  color: var(--ustp-navy) !important;
+}
+
+button[class*="bg-"]:hover,
+a[class*="bg-blue-600"]:hover,
+a[class*="bg-yellow-"]:hover {
+  background-color: var(--ustp-yellow-hover) !important;
+}
+
+input,
+select,
+textarea {
+  background-color: var(--ustp-white);
+  color: var(--ustp-navy);
+  border-color: var(--ustp-border);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--ustp-yellow);
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.22);
+  outline: none;
+}

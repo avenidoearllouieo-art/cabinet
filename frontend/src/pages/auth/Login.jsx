@@ -71,15 +71,16 @@ export default function Login({ administratorOnly = false }) {
         <span />
       </div>
 
-      <section className="login-card relative z-10 w-full max-w-[430px] rounded-[22px] bg-white px-6 py-8 shadow-[0_22px_70px_rgba(28,53,84,0.14)] sm:px-10 sm:py-10">
-        <div className="mb-8 text-center">
-          <TapTrackLogo compact className="mx-auto mb-5 h-20 w-20" />
-          <p className="mx-auto mt-2 max-w-[270px] text-sm leading-5 text-[#718096]">
+      <section className="login-card relative z-10 w-full max-w-[430px] rounded-[22px] bg-white px-7 py-11 shadow-[0_22px_70px_rgba(0,43,91,0.14)] sm:px-11 sm:py-12">
+        <div className="mb-10 text-center">
+          <TapTrackLogo compact className="mx-auto mb-6 h-24 w-24" />
+          <h1 className="text-2xl font-bold tracking-tight text-[#002B5B]">Welcome back</h1>
+          <p className="mx-auto mt-3 max-w-[270px] text-sm leading-5 text-[#718096]">
             {administratorOnly ? 'Administrator access' : 'Cabinet Activity and User Management System'}
           </p>
         </div>
 
-        <form className="space-y-5" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={handleSubmit}>
           <FormField label="Username" required>
             {({ id }) => <div className="login-field flex min-h-12 items-center gap-3 rounded-xl border border-[#dbe3ed] px-4 py-2.5 transition focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900"><UserRound size={18} className="shrink-0 text-[#8291a5]" aria-hidden="true" /><input id={id} type="text" value={username} onChange={(event) => setUsername(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]" placeholder="Enter your assigned username" autoComplete="username" required /></div>}
           </FormField>
@@ -93,7 +94,7 @@ export default function Login({ administratorOnly = false }) {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-2 min-h-12 w-full rounded-xl bg-[#F5B700] px-5 py-3 text-sm font-bold text-[#0B1F3A] shadow-sm transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-3 min-h-12 w-full rounded-xl bg-[#002B5B] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#001f42] focus:outline-none focus:ring-2 focus:ring-[#FFC107] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isSubmitting ? 'Signing in...' : 'Log In'}
           </button>

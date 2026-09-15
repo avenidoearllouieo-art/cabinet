@@ -51,24 +51,24 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
   }
 
   return (
-    <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-slate-200 bg-white text-taptrack-navy shadow-lg transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
-      <div className={`border-b border-slate-200 py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
+    <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-[#FFC107] bg-[#002B5B] text-white shadow-lg transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
+      <div className={`border-b border-[#FFC107] py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
         <div className={`mb-5 flex ${collapsed ? 'justify-center' : 'justify-start max-sm:justify-center'}`}>
           <TapTrackLogo compact={collapsed} mobileCompact className={collapsed ? 'h-10 w-10' : 'h-auto w-[165px]'} />
         </div>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-3 max-sm:justify-center'}`}>
-          {!collapsed && <p className="text-sm font-semibold text-taptrack-navy max-sm:hidden">{config.title}</p>}
+          {!collapsed && <p className="text-sm font-semibold text-white max-sm:hidden">{config.title}</p>}
           <button
             type="button"
             onClick={toggleSidebar}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-taptrack-navy transition hover:bg-yellow-100 hover:text-taptrack-navy focus:outline-none focus:ring-2 focus:ring-taptrack-gold"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-white transition hover:bg-[#FFC107] hover:text-[#002B5B] focus:outline-none focus:ring-2 focus:ring-[#FFC107]"
             aria-label={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
             title={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
           >
             {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
         </div>
-        {!collapsed && <p className="mt-1 text-xs text-slate-500 max-sm:hidden">{config.subtitle}</p>}
+        {!collapsed && <p className="mt-1 text-xs text-white/75 max-sm:hidden">{config.subtitle}</p>}
       </div>
       <nav className="px-2 py-4 space-y-1">
         {config.items.map((item) => {
@@ -82,12 +82,12 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
               title={item.label}
               className={`flex h-12 items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-4 max-sm:justify-center max-sm:px-0'} ${
                 active
-                  ? 'border-l-4 border-taptrack-gold bg-yellow-100 pl-3 font-bold text-taptrack-navy shadow-sm'
-                  : 'border-l-4 border-transparent text-slate-700 hover:bg-slate-100 hover:text-taptrack-navy'
+                  ? 'border-l-4 border-[#FFC107] bg-[#FFC107] pl-3 font-bold text-[#002B5B] shadow-sm'
+                  : 'border-l-4 border-transparent text-white/85 hover:bg-[#FFC107] hover:text-[#002B5B]'
               }`}
             >
               <Icon size={18} />
-              <span className={collapsed ? 'sr-only' : 'max-sm:sr-only'}>{item.label}</span>
+                <span className={collapsed ? 'sr-only' : 'max-sm:sr-only'}>{item.label}</span>
             </Link>
           )
         })}

@@ -139,7 +139,7 @@ export default function NotificationDropdown() {
 
       {open && (
         <div className="fixed inset-0 z-[60] flex justify-end">
-          <button type="button" aria-label="Close notifications" className="absolute inset-0 bg-slate-950/40" onClick={() => setOpen(false)} />
+          <button type="button" aria-label="Close notifications" className="notification-overlay absolute inset-0" onClick={() => setOpen(false)} />
           <aside className="relative flex h-full w-[400px] max-w-[92vw] flex-col border-l border-[#E5E7EB] bg-white shadow-2xl">
             <div className="flex items-start justify-between border-b border-[#E5E7EB] px-5 py-5">
               <div>

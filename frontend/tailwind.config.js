@@ -8,11 +8,11 @@ export default {
     extend: {
       colors: {
         taptrack: {
-          navy: '#0B1F3A',
-          gold: '#F5B700',
-          'gold-hover': '#D99E00',
-          surface: '#F8FAFC',
-          stripe: '#F9FAFB',
+          navy: '#002B5B',
+          gold: '#FFC107',
+          'gold-hover': '#E0A800',
+          surface: '#FFFFFF',
+          stripe: '#FFFFFF',
         },
       },
     },

@@ -19,14 +19,14 @@ export default function SummaryCard({
       : null
 
   return (
-    <div className="bg-white p-4 rounded-xl border-t-4 border-t-yellow-400 shadow-sm flex items-center justify-between transition-all duration-200 hover:-translate-y-1 hover:shadow-md cursor-default">
+    <div className="bg-white p-4 rounded-xl border border-[#FFC107] border-t-4 shadow-sm flex items-center justify-between transition-all duration-200 hover:-translate-y-1 hover:shadow-md cursor-default">
       <div className="flex min-w-0 items-center gap-3">
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg p-2.5 ${iconBg} ${iconColor}`}>
           {iconContent}
         </div>
 
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-slate-600">{title}</p>
+          <p className="truncate text-sm font-medium text-[#002B5B]">{title}</p>
           {trendText && (
             <p className={`mt-1 truncate text-xs font-medium ${trendColor || 'text-slate-500'}`}>
               {trendText}
@@ -35,7 +35,7 @@ export default function SummaryCard({
         </div>
       </div>
 
-      <p className="ml-3 shrink-0 text-2xl font-bold text-blue-900">{value}</p>
+      <p className="ml-3 shrink-0 text-2xl font-bold text-[#002B5B]">{value}</p>
     </div>
   )
 }
