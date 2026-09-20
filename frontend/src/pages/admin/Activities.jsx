@@ -143,6 +143,10 @@ export default function Activities() {
     setIsDeleteModalOpen(true)
   }
 
+  const handleCloseActivityDrawer = useCallback(() => {
+    setSelectedActivityForDrawer(null)
+  }, [])
+
   const handleDuplicateActivity = async (row) => {
     if (!row?.id) return
 
@@ -614,7 +618,7 @@ export default function Activities() {
 
       <ActivityDetailDrawer
         activity={selectedActivityForDrawer}
-        onClose={() => setSelectedActivityForDrawer(null)}
+        onClose={handleCloseActivityDrawer}
       />
     </div>
   )

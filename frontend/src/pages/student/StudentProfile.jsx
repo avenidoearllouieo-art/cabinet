@@ -6,10 +6,17 @@ import PageHeader from '../../components/PageHeader'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
 
+const publishProfileUpdate = (nextProfile) => {
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+  localStorage.setItem('user', JSON.stringify({ ...currentUser, ...nextProfile }))
+  window.dispatchEvent(new CustomEvent('taptrack-profile-updated', { detail: nextProfile }))
+}
+
 export default function StudentProfile() {
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [form, setForm] = useState({ email: '', contact_number: '' })
+  const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [imageSaving, setImageSaving] = useState(false)
@@ -25,6 +32,7 @@ export default function StudentProfile() {
       try {
         const response = await api.get('/users/profile/')
         setProfile(response.data)
+        publishProfileUpdate(response.data)
         setForm({
           email: response.data.email || '',
           contact_number: response.data.contact_number || '',
@@ -96,6 +104,12 @@ export default function StudentProfile() {
         contact_number: form.contact_number,
       })
       setProfile(response.data)
+      publishProfileUpdate(response.data)
+      setForm({
+        email: response.data.email || '',
+        contact_number: response.data.contact_number || '',
+      })
+      setIsEditing(false)
       setToastMessage('Profile details updated successfully.')
       localStorage.setItem('user', JSON.stringify({ ...JSON.parse(localStorage.getItem('user') || '{}'), email: response.data.email }))
       window.setTimeout(() => setToastMessage(''), 4000)
@@ -105,6 +119,21 @@ export default function StudentProfile() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleCancelEdit = () => {
+    setForm({
+      email: profile?.email || '',
+      contact_number: profile?.contact_number || '',
+    })
+    setSelectedImage(null)
+    setImageError('')
+    if (previewSrc) {
+      URL.revokeObjectURL(previewSrc)
+      setPreviewSrc(null)
+    }
+    setIsEditing(false)
+    setError('')
   }
 
   const handleUploadImage = async () => {
@@ -121,6 +150,7 @@ export default function StudentProfile() {
       formData.append('profile_image', selectedImage)
       const response = await api.post('/users/upload_profile_image/', formData)
       setProfile(response.data)
+      publishProfileUpdate(response.data)
       setToastMessage('Profile image uploaded successfully.')
       setSelectedImage(null)
       if (previewSrc) {
@@ -143,6 +173,7 @@ export default function StudentProfile() {
     try {
       const response = await api.post('/users/remove_profile_image/')
       setProfile(response.data)
+      publishProfileUpdate(response.data)
       setSelectedImage(null)
       if (previewSrc) {
         URL.revokeObjectURL(previewSrc)
@@ -167,7 +198,7 @@ export default function StudentProfile() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <PageHeader
           title="My Profile"
@@ -195,11 +226,18 @@ export default function StudentProfile() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
-        <div className="rounded-[20px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-6">
-            <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-              <div className="rounded-[20px] border border-slate-200 p-5 text-center">
+      <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+        <div className="rounded-[20px] border border-[#E5E7EB] bg-white p-5 shadow-sm sm:p-6">
+          <form onSubmit={handleSaveProfile} className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Profile Information</h2>
+                <p className="text-sm text-slate-500">Manage your student credentials and profile picture.</p>
+              </div>
+              {!isEditing && <button type="button" onClick={() => setIsEditing(true)} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900">Edit Profile</button>}
+            </div>
+            <div className="grid gap-5 lg:grid-cols-[220px_1fr]">
+              <div className="rounded-[20px] border border-slate-200 p-4 text-center sm:p-5">
                 <div className="relative mx-auto mb-5 h-28 w-28 overflow-hidden rounded-full bg-slate-100">
                   {profileImageUrl ? (
                     <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" />
@@ -212,30 +250,27 @@ export default function StudentProfile() {
                 <div className="space-y-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Profile Picture</p>
                   <p>Upload JPG, JPEG, or PNG. Max 5 MB.</p>
-                  <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus-within:ring-2 focus-within:ring-blue-900">
-                    <Camera size={16} />
-                    Choose Photo
-                    <input type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-                  </label>
-                  {selectedImage && <p className="break-all rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">{selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
-                  {selectedImage && (
-                    <button type="button" onClick={handleUploadImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100 disabled:opacity-60">
-                      <UploadCloud size={16} />
-                      {imageSaving ? 'Uploading...' : 'Upload Selected'}
-                    </button>
-                  )}
-                  {profile?.profile_image_url && (
-                    <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60">
-                      <Trash2 size={16} />
-                      {imageSaving ? 'Removing...' : 'Remove Photo'}
-                    </button>
+                  {isEditing && (
+                    <>
+                      <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus-within:ring-2 focus-within:ring-blue-900">
+                        <Camera size={16} />
+                        Choose Photo
+                        <input type="file" accept="image/jpeg,image/jpg,image/png" className="hidden" onChange={handleImageSelect} />
+                      </label>
+                      {selectedImage && <p className="break-all rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">{selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
+                      <button type="button" onClick={handleUploadImage} disabled={imageSaving || !selectedImage} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100 disabled:opacity-60">
+                        <UploadCloud size={16} />
+                        {imageSaving ? 'Uploading...' : 'Upload'}
+                      </button>
+                      {profile?.profile_image_url && <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"><Trash2 size={16} />{imageSaving ? 'Removing...' : 'Remove'}</button>}
+                    </>
                   )}
                 </div>
                 {imageError && <p className="mt-3 text-sm text-red-600">{imageError}</p>}
               </div>
 
-              <div className="space-y-6">
-                <div className="grid gap-5 sm:grid-cols-2">
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Full Name</label>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">
@@ -250,7 +285,7 @@ export default function StudentProfile() {
                   </div>
                 </div>
 
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Username</label>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">
@@ -264,73 +299,20 @@ export default function StudentProfile() {
                     </div>
                   </div>
                 </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Email Address</label>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={handleInputChange('email')}
-                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
-                    />
+                    {isEditing ? <input type="email" value={form.email} onChange={handleInputChange('email')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.email || '—'}</div>}
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Contact Number</label>
-                    <input
-                      type="text"
-                      value={form.contact_number}
-                      onChange={handleInputChange('contact_number')}
-                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
-                    />
+                    {isEditing ? <input type="text" value={form.contact_number} onChange={handleInputChange('contact_number')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.contact_number || '—'}</div>}
                   </div>
                 </div>
               </div>
             </div>
-
-            <form onSubmit={handleSaveProfile} className="space-y-6">
-              <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-6">
-                <div className="mb-4 flex items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">Edit Profile</h3>
-                    <p className="text-sm text-slate-500">Update your email address and contact number.</p>
-                  </div>
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Email Address</label>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={handleInputChange('email')}
-                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Contact Number</label>
-                    <input
-                      type="text"
-                      value={form.contact_number}
-                      onChange={handleInputChange('contact_number')}
-                      className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-60"
-                  >
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </button>
-                  <p className="text-sm text-slate-500">Your personal contact details stay private and are only used for account updates.</p>
-                </div>
-              </div>
-            </form>
-          </div>
+            {isEditing && <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end"><button type="button" onClick={handleCancelEdit} className="min-h-11 rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button><button type="submit" disabled={saving} className="min-h-11 rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] hover:bg-amber-400 disabled:opacity-60">{saving ? 'Saving...' : 'Save Changes'}</button></div>}
+          </form>
         </div>
 
         <div className="space-y-6">

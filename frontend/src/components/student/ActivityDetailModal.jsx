@@ -224,9 +224,9 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       {!activity ? (
         <p className="text-sm text-slate-600">Activity details are unavailable.</p>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-5">
           <section className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-3 rounded-[16px] border border-[#E5E7EB] bg-slate-50 p-6">
+            <div className="space-y-3 rounded-2xl border border-[#dbe5f0] bg-[#f7f9fc] p-5 shadow-sm">
               <div>
                 <p className="text-sm font-semibold text-slate-500">Title</p>
                 <p className="mt-2 text-lg font-semibold text-slate-900">{activity.title}</p>
@@ -244,7 +244,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                 <p className="mt-2 text-slate-900">{activity.max_score ?? '—'}</p>
               </div>
             </div>
-            <div className="space-y-3 rounded-[16px] border border-[#E5E7EB] bg-slate-50 p-6">
+            <div className="space-y-3 rounded-2xl border border-[#dbe5f0] bg-[#f7f9fc] p-5 shadow-sm">
               <div>
                 <p className="text-sm font-semibold text-slate-500">Posted Date</p>
                 <p className="mt-2 text-slate-900">{formatDate(activity.created_at)}</p>
@@ -267,17 +267,17 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
             </div>
           </section>
 
-          <section className="space-y-4 rounded-[16px] border border-[#E5E7EB] bg-white p-6">
+          <section className="space-y-4 rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm">
             <h3 className="text-base font-semibold text-slate-900">Description</h3>
             <p className="text-sm leading-7 text-slate-700">{activity.description || 'No description provided.'}</p>
           </section>
 
-          <section className="space-y-4 rounded-[16px] border border-[#E5E7EB] bg-white p-6">
+          <section className="space-y-4 rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm">
             <h3 className="text-base font-semibold text-slate-900">Instructions</h3>
             <p className="text-sm leading-7 text-slate-700">{activity.instructions || 'No instructions provided.'}</p>
           </section>
 
-          <section className="space-y-4 rounded-[16px] border border-[#E5E7EB] bg-white p-6">
+          <section className="space-y-4 rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Attachments</h3>

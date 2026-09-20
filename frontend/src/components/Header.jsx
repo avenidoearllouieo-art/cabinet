@@ -3,12 +3,48 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import NotificationDropdown from './NotificationDropdown'
 import TapTrackLogo from './TapTrackLogo.jsx'
+import api from '../services/api.js'
 
 export default function Header() {
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('user') || '{}'))
+
+  useEffect(() => {
+    const applyProfile = (profile) => {
+      if (!profile) return
+      setUser((current) => {
+        const nextUser = { ...current, ...profile }
+        localStorage.setItem('user', JSON.stringify(nextUser))
+        return nextUser
+      })
+    }
+
+    const handleProfileUpdated = (event) => applyProfile(event.detail)
+    const handleStorageChange = (event) => {
+      if (event.key !== 'user') return
+      try {
+        setUser(JSON.parse(event.newValue || '{}'))
+      } catch {
+        setUser({})
+      }
+    }
+
+    window.addEventListener('taptrack-profile-updated', handleProfileUpdated)
+    window.addEventListener('storage', handleStorageChange)
+
+    if (user.role === 'instructor' || user.role === 'student') {
+      api.get('/users/profile/')
+        .then((response) => applyProfile(response.data))
+        .catch(() => {})
+    }
+
+    return () => {
+      window.removeEventListener('taptrack-profile-updated', handleProfileUpdated)
+      window.removeEventListener('storage', handleStorageChange)
+    }
+  }, [user.role])
 
   const handleLogout = () => {
     localStorage.removeItem('access')
@@ -54,7 +90,7 @@ export default function Header() {
   const headerText = getHeaderText()
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 h-[70px] border-b border-[#FFC107] bg-[#002B5B] px-6 text-white shadow-sm">
+    <header className="app-header fixed inset-x-0 top-0 z-50 h-[70px] border-b border-white/10 bg-[#002B5B] px-5 text-white shadow-[0_4px_18px_rgba(0,43,91,0.12)] sm:px-6">
       <div className="flex h-full items-center justify-between gap-5">
         <div className="flex items-center gap-4">
           <TapTrackLogo responsive />
@@ -67,10 +103,10 @@ export default function Header() {
         <div className="flex items-center gap-3">
           {(user.role === 'instructor' || user.role === 'student') && <NotificationDropdown />}
 
-          <div ref={profileRef} className="relative hidden items-center gap-3 rounded-2xl border border-[#FFC107] bg-[#002B5B] px-3 py-2 shadow-sm sm:flex">
+          <div ref={profileRef} className="relative hidden items-center gap-3 rounded-xl border border-white/15 bg-white/5 px-3 py-2 sm:flex">
             <button type="button" onClick={handleProfileClick} className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFC107] text-sm font-semibold text-[#002B5B]">
-                {user.username?.charAt(0).toUpperCase() || 'U'}
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#FFC107] text-sm font-semibold text-[#002B5B]">
+                {user.profile_image_url ? <img src={user.profile_image_url} alt="Profile" className="h-full w-full object-cover" /> : (user.username?.charAt(0).toUpperCase() || 'U')}
               </div>
               <div className="text-left">
                 <p className="text-sm font-medium text-white">{user.username || 'User'}</p>
@@ -80,7 +116,7 @@ export default function Header() {
             </button>
 
             {profileOpen && (
-              <div className="absolute right-0 top-full z-20 mt-3 w-48 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-lg">
+              <div className="absolute right-0 top-full z-20 mt-3 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_18px_40px_rgba(0,43,91,0.16)]">
                 {user.role === 'instructor' && (
                   <>
                     <button

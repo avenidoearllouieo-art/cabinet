@@ -1,4 +1,5 @@
 from django.db import models
+from django.db import transaction
 from django.db.models import Q
 from datetime import timedelta
 from rest_framework import viewsets, status, serializers
@@ -6,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import (
     IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole,
-    IsStudentRole, HasDeviceAPIKey,
+    IsStudentRole, HasDeviceAPIKey, PasswordResetRateThrottle,
 )
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
@@ -21,6 +22,7 @@ from django.shortcuts import get_object_or_404
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
+from .models import PasswordResetRequest
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
@@ -33,7 +35,15 @@ from .serializers import (
     CustomTokenObtainPairSerializer,
     ActivityDiscussionSerializer,
     ActivityAnnouncementSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetNFCVerificationSerializer,
+    PasswordResetCabinetHandoffSerializer,
+    CabinetRegistrationSerializer,
+    PasswordResetConfirmationSerializer,
+    PasswordResetTokenValidationSerializer,
 )
+from django.contrib.auth.password_validation import validate_password
+import secrets
 
 
 class SectionViewSet(viewsets.ModelViewSet):
@@ -118,6 +128,8 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         allowed_fields = {'email', 'contact_number'}
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            allowed_fields.update({'first_name', 'last_name', 'instructor_id', 'username'})
         validated_data = {k: v for k, v in serializer.validated_data.items() if k in allowed_fields}
 
         if validated_data:
@@ -1170,6 +1182,356 @@ class VerifyNFCView(APIView):
         return Response(
             {'success': False, 'error': 'NFC card not registered.'},
             status=status.HTTP_404_NOT_FOUND,
+        )
+
+
+class CabinetRegistrationView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+
+    def post(self, request, *args, **kwargs):
+        serializer = CabinetRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        student_id = data['student_id'].strip()
+        nfc_uid = data['nfc_uid'].strip().upper()
+        email = data['email'].strip().lower()
+
+        if User.objects.filter(student_id=student_id).exists():
+            return Response({'error': 'Student ID is already registered.'}, status=status.HTTP_409_CONFLICT)
+        if User.objects.filter(nfc_uid=nfc_uid).exists():
+            return Response({'error': 'NFC card is already registered.'}, status=status.HTTP_409_CONFLICT)
+        if User.objects.filter(email__iexact=email).exists():
+            return Response({'error': 'Email is already registered.'}, status=status.HTTP_409_CONFLICT)
+
+        section_value = data.get('section', '').strip()
+        section = None
+        if section_value:
+            section = Section.objects.filter(
+                models.Q(section_code__iexact=section_value)
+                | models.Q(section_name__iexact=section_value)
+            ).first()
+            if not section:
+                return Response({'error': 'Section was not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        name_parts = data['full_name'].strip().split(None, 1)
+        user = User(
+            username=student_id,
+            student_id=student_id,
+            email=email,
+            first_name=name_parts[0],
+            last_name=name_parts[1] if len(name_parts) > 1 else '',
+            role=User.RoleChoices.STUDENT,
+            section=section,
+            nfc_uid=nfc_uid,
+        )
+        user.set_unusable_password()
+        try:
+            user.full_clean()
+            user.save()
+        except Exception as error:
+            if hasattr(error, 'message_dict'):
+                return Response(error.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Student registration could not be completed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'id': user.id,
+            'student_id': user.student_id,
+            'name': user.get_full_name().strip(),
+            'email': user.email,
+            'section': section.section_code or section.section_name if section else '',
+            'nfc_uid': user.nfc_uid,
+        }, status=status.HTTP_201_CREATED)
+
+
+class PasswordResetRequestView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        student_id = (request.data.get('student_id') or '').strip()
+        email = (request.data.get('email') or '').strip()
+
+        if not student_id or not email:
+            return Response(
+                {'error': 'Student ID and email are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(student_id=student_id, email__iexact=email).first()
+        if not user:
+            return Response(
+                {'error': 'No account matches that student ID and email.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        reset_request = PasswordResetRequest.objects.filter(user=user, status__in=[
+            PasswordResetRequest.StatusChoices.PENDING,
+            PasswordResetRequest.StatusChoices.VERIFIED,
+        ]).order_by('-requested_at').first()
+
+        if reset_request and not reset_request.is_expired and reset_request.status != PasswordResetRequest.StatusChoices.USED:
+            reset_request.status = PasswordResetRequest.StatusChoices.CANCELLED
+            reset_request.reason = 'Replaced by a newer reset request.'
+            reset_request.save(update_fields=['status', 'reason'])
+
+        reset_request = PasswordResetRequest.objects.create(
+            user=user,
+            student_id_snapshot=user.student_id or '',
+            email_snapshot=user.email or '',
+            status=PasswordResetRequest.StatusChoices.PENDING,
+        )
+        reset_request.expires_at = timezone.now() + timedelta(minutes=15)
+        reset_request.save(update_fields=['expires_at'])
+
+        return Response(
+            {
+                'message': 'Password reset request created.',
+                'request_id': reset_request.request_id,
+                'expires_at': reset_request.expires_at.isoformat(),
+                'user_id': user.id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetVerifyNFCView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetNFCVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        request_id = serializer.validated_data['request_id']
+        student_id = serializer.validated_data['student_id']
+        nfc_uid = serializer.validated_data['nfc_uid']
+
+        reset_request = PasswordResetRequest.objects.filter(request_id=request_id).select_related('user').first()
+        if not reset_request:
+            return Response({'error': 'Reset request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if reset_request.user_id is None:
+            return Response({'error': 'Reset request is invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if reset_request.is_expired:
+            reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+            reset_request.save(update_fields=['status'])
+            return Response({'error': 'This reset request has expired.'}, status=status.HTTP_410_GONE)
+
+        if reset_request.status == PasswordResetRequest.StatusChoices.USED:
+            return Response({'error': 'This reset request has already been used.'}, status=status.HTTP_409_CONFLICT)
+
+        if not reset_request.cabinet_handoff_claimed_at or reset_request.cabinet_handoff_used_at:
+            return Response({'error': 'This reset request is not ready for cabinet verification.'}, status=status.HTTP_409_CONFLICT)
+
+        if not reset_request.cabinet_handoff_expires_at or timezone.now() > reset_request.cabinet_handoff_expires_at:
+            reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+            reset_request.save(update_fields=['status'])
+            return Response({'error': 'This cabinet handoff has expired.'}, status=status.HTTP_410_GONE)
+
+        user = reset_request.user
+        if user.student_id != student_id:
+            return Response({'error': 'Student ID does not match the reset request.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if user.nfc_uid != nfc_uid:
+            return Response({'error': 'NFC UID does not match the account for this reset request.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not user.is_active:
+            return Response({'error': 'This account is inactive and cannot reset its password.'}, status=status.HTTP_403_FORBIDDEN)
+
+        reset_token = secrets.token_urlsafe(32)
+        reset_request.set_reset_token(reset_token)
+        reset_request.status = PasswordResetRequest.StatusChoices.VERIFIED
+        reset_request.nfc_uid_verified = True
+        reset_request.verified_at = timezone.now()
+        reset_request.save(update_fields=['reset_token_hash', 'status', 'nfc_uid_verified', 'verified_at'])
+
+        reset_request.cabinet_handoff_used_at = timezone.now()
+        reset_request.save(update_fields=['cabinet_handoff_used_at'])
+
+        return Response(
+            {
+                'message': 'Identity verified by cabinet NFC.',
+                'request_id': reset_request.request_id,
+                'reset_token': reset_token,
+                'expires_at': reset_request.expires_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetCabinetHandoffView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetCabinetHandoffSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request_id = serializer.validated_data['request_id']
+
+        with transaction.atomic():
+            reset_request = PasswordResetRequest.objects.select_for_update().filter(
+                request_id=request_id,
+            ).first()
+
+            if not reset_request:
+                return Response({'error': 'Reset request is unavailable.'}, status=status.HTTP_404_NOT_FOUND)
+
+            if reset_request.is_expired:
+                reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+                reset_request.save(update_fields=['status'])
+                return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
+
+            if reset_request.status != PasswordResetRequest.StatusChoices.PENDING:
+                return Response({'error': 'Reset request is no longer available.'}, status=status.HTTP_409_CONFLICT)
+
+            if reset_request.cabinet_handoff_claimed_at:
+                if reset_request.cabinet_handoff_used_at:
+                    return Response({'error': 'Reset request is no longer available.'}, status=status.HTTP_409_CONFLICT)
+                if reset_request.cabinet_handoff_expires_at and timezone.now() <= reset_request.cabinet_handoff_expires_at:
+                    return Response({'error': 'Reset request is already active at the cabinet.'}, status=status.HTTP_409_CONFLICT)
+                reset_request.cabinet_handoff_claimed_at = None
+                reset_request.cabinet_handoff_expires_at = None
+
+            handoff_expires_at = min(
+                reset_request.expires_at,
+                timezone.now() + timedelta(minutes=2),
+            )
+            reset_request.cabinet_handoff_claimed_at = timezone.now()
+            reset_request.cabinet_handoff_expires_at = handoff_expires_at
+            reset_request.cabinet_handoff_used_at = None
+            reset_request.save(update_fields=[
+                'cabinet_handoff_claimed_at',
+                'cabinet_handoff_expires_at',
+                'cabinet_handoff_used_at',
+            ])
+
+        return Response(
+            {
+                'request_id': reset_request.request_id,
+                'student_id': reset_request.student_id_snapshot,
+                'expires_at': reset_request.cabinet_handoff_expires_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetValidateTokenView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetTokenValidationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        request_id = serializer.validated_data['request_id']
+        reset_token = serializer.validated_data['reset_token']
+        reset_request = PasswordResetRequest.objects.filter(request_id=request_id).first()
+
+        if not reset_request:
+            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if reset_request.is_expired:
+            reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+            reset_request.save(update_fields=['status'])
+            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_410_GONE)
+
+        if reset_request.status == PasswordResetRequest.StatusChoices.USED:
+            return Response({'error': 'This reset request has already been used.'}, status=status.HTTP_409_CONFLICT)
+
+        if reset_request.status != PasswordResetRequest.StatusChoices.VERIFIED or not reset_request.verify_reset_token(reset_token):
+            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        authorization = secrets.token_urlsafe(32)
+        authorization_expires_at = min(
+            reset_request.expires_at,
+            timezone.now() + timedelta(minutes=5),
+        )
+        reset_request.set_reset_authorization(authorization)
+        reset_request.reset_authorization_expires_at = authorization_expires_at
+        reset_request.reset_authorization_used_at = None
+        reset_request.save(update_fields=[
+            'reset_authorization_hash',
+            'reset_authorization_expires_at',
+            'reset_authorization_used_at',
+        ])
+
+        return Response(
+            {
+                'valid': True,
+                'reset_authorization': authorization,
+                'expires_at': authorization_expires_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetConfirmationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        request_id = serializer.validated_data['request_id']
+        reset_authorization = serializer.validated_data['reset_authorization']
+        new_password = serializer.validated_data['new_password']
+
+        with transaction.atomic():
+            reset_request = PasswordResetRequest.objects.select_for_update().filter(
+                status=PasswordResetRequest.StatusChoices.VERIFIED,
+                request_id=request_id,
+            ).select_related('user').first()
+
+            if not reset_request:
+                return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if reset_request.is_expired or not reset_request.reset_authorization_expires_at:
+                reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+                reset_request.save(update_fields=['status'])
+                return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_410_GONE)
+
+            if reset_request.reset_authorization_used_at:
+                return Response({'error': 'Reset authorization has already been used.'}, status=status.HTTP_409_CONFLICT)
+
+            if not reset_request.verify_reset_authorization(reset_authorization):
+                return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                validate_password(new_password, user=reset_request.user)
+            except Exception as error:
+                messages = getattr(error, 'messages', [str(error)])
+                return Response({'new_password': messages}, status=status.HTTP_400_BAD_REQUEST)
+
+            reset_request.user.set_password(new_password)
+            reset_request.user.save(update_fields=['password'])
+
+            reset_request.status = PasswordResetRequest.StatusChoices.USED
+            reset_request.used_at = timezone.now()
+            reset_request.reset_authorization_used_at = timezone.now()
+            reset_request.reset_authorization_hash = ''
+            reset_request.reset_token_hash = ''
+            reset_request.reason = 'Password successfully reset.'
+            reset_request.save(update_fields=[
+                'status',
+                'used_at',
+                'reset_authorization_used_at',
+                'reset_authorization_hash',
+                'reset_token_hash',
+                'reason',
+            ])
+
+        return Response(
+            {
+                'message': 'Password reset completed successfully.',
+                'user_id': reset_request.user.id,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

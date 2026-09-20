@@ -278,6 +278,8 @@ export default function StudentSubmissions() {
             columns={tableColumns}
             data={submissions}
             loading={loading}
+            mobileCards
+            emptyMessage="No submissions yet"
             showActions={false}
             pagination={{
               current: page,

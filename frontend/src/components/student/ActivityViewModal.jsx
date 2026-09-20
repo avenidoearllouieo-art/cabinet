@@ -82,38 +82,38 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="View Activity" containerClassName="border-0 bg-white !shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1)] before:content-none after:content-none">
+    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details" containerClassName="max-w-[900px]">
       {!activity ? (
         <p className="text-sm text-slate-600">Activity details are unavailable.</p>
       ) : (
-        <div className="space-y-6">
-          <section className="rounded-[16px] border border-[#E5E7EB] bg-slate-50 p-6">
+        <div className="space-y-5">
+          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)] sm:p-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-[#002B5B]">{activity.title}</h2>
-                <p className="text-sm font-medium text-[#334155]">{activity.activity_type || 'Assignment'}</p>
+                <h2 className="text-2xl font-bold tracking-tight text-[#102a4c]">{activity.title}</h2>
+                <p className="mt-1 text-sm font-medium text-[#64748b]">{activity.activity_type || 'Assignment'}</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{activity.section_name || 'Section unknown'}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{formatDate(activity.due_date)}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{activity.max_score != null ? `${activity.max_score} pts` : 'Points N/A'}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{statusBadge(submissionStatus)}</span>
+              <div className="grid gap-x-6 gap-y-2 border-t border-[#e7edf4] pt-4 text-sm sm:grid-cols-2 md:min-w-[320px] md:border-l md:border-t-0 md:pl-5 md:pt-0">
+                <span className="text-[#64748b]">Instructor: <strong className="text-[#28415f]">{activity.instructor_name || 'Unassigned'}</strong></span>
+                <span className="text-[#64748b]">Due: <strong className="text-[#28415f]">{formatDate(activity.due_date)}</strong></span>
+                <span className="text-[#64748b]">Max Score: <strong className="text-[#28415f]">{activity.max_score != null ? `${activity.max_score} pts` : '—'}</strong></span>
+                <span className="flex items-center gap-2 text-[#64748b]">Status: {statusBadge(submissionStatus)}</span>
               </div>
             </div>
           </section>
 
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-7">
-              <h3 className="text-base font-semibold text-[#002B5B]">Description</h3>
+          <section className="grid gap-5 lg:grid-cols-2">
+            <div className="min-h-[150px] rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
+              <h3 className="text-base font-bold text-[#102a4c]">Description</h3>
               <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.description || 'No description provided.'}</p>
             </div>
-            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-7">
-              <h3 className="text-base font-semibold text-[#002B5B]">Instructions</h3>
+            <div className="min-h-[150px] rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
+              <h3 className="text-base font-bold text-[#102a4c]">Instructions</h3>
               <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.instructions || 'No instructions provided.'}</p>
             </div>
           </section>
 
-          <section className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
+          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Attachments</h3>
@@ -125,21 +125,21 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
                 {activity.attachments.map((attachment) => (
                   <div key={attachment.id} className="flex flex-col gap-3 rounded-[12px] border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="font-medium text-slate-900">{getAttachmentName(attachment)}</p>
+                      <p className="break-words font-medium text-slate-900">{getAttachmentName(attachment)}</p>
                       <p className="text-sm text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p>
                     </div>
-                    <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
+                    <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#002B5B] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#123f73]">
                       <Download size={16} /> Download
                     </a>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="mt-4 text-sm text-[#334155]">No attachments available.</p>
+              <p className="mt-4 rounded-xl border border-dashed border-[#cbd8e6] bg-[#f7f9fc] px-4 py-3 text-sm text-[#64748b]">No attachments for this activity.</p>
             )}
           </section>
 
-          <section className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
+          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Your Submission</h3>

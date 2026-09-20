@@ -1,8 +1,12 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission
+import os
+from datetime import timedelta
+
+from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest
 
 
 class InstructorSectionAssignmentTests(TestCase):
@@ -509,6 +513,44 @@ class StudentProfileTests(TestCase):
         self.assertEqual(response.json()['contact_number'], '09171234567')
 
 
+class InstructorProfileTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='instructor5',
+            email='instructor5@example.com',
+            password='secret123',
+            role='instructor',
+            first_name='Instructor',
+            last_name='Five',
+            instructor_id='I005',
+            nfc_uid='NFC-I005',
+        )
+
+    def test_instructor_can_update_editable_profile_fields(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.patch('/api/users/update_profile/', {
+            'first_name': 'Updated',
+            'last_name': 'Instructor',
+            'instructor_id': 'I005-UPDATED',
+            'username': 'updated-instructor5',
+            'email': 'updated-instructor5@example.com',
+            'contact_number': '09171234567',
+            'role': 'admin',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.instructor.refresh_from_db()
+        self.assertEqual(self.instructor.first_name, 'Updated')
+        self.assertEqual(self.instructor.last_name, 'Instructor')
+        self.assertEqual(self.instructor.instructor_id, 'I005-UPDATED')
+        self.assertEqual(self.instructor.username, 'updated-instructor5')
+        self.assertEqual(self.instructor.email, 'updated-instructor5@example.com')
+        self.assertEqual(self.instructor.contact_number, '09171234567')
+        self.assertEqual(self.instructor.role, 'instructor')
+
+
 class ProfileAdminFormTests(TestCase):
     def test_instructor_creation_form_does_not_require_student_id(self):
         from .admin import InstructorCreationForm
@@ -716,3 +758,382 @@ class StudentAccessLogsTests(TestCase):
         self.assertEqual(data['total_accesses_today'], 1)
         self.assertEqual(data['successful_accesses_today'], 1)
         self.assertEqual(data['failed_accesses_today'], 0)
+
+
+class PasswordResetFlowTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.device_api_key = 'test-device-key'
+        os.environ['DEVICE_API_KEY'] = self.device_api_key
+
+        self.student_a = User.objects.create_user(
+            username='student-a',
+            email='student-a@example.com',
+            password='old-password-1',
+            role=User.RoleChoices.STUDENT,
+            first_name='Student',
+            last_name='A',
+            student_id='STU-001',
+            nfc_uid='NFC-USER-001',
+        )
+        self.student_b = User.objects.create_user(
+            username='student-b',
+            email='student-b@example.com',
+            password='old-password-2',
+            role=User.RoleChoices.STUDENT,
+            first_name='Student',
+            last_name='B',
+            student_id='STU-002',
+            nfc_uid='NFC-USER-002',
+        )
+
+    def test_password_reset_request_is_bound_to_existing_user_and_requires_nfc_verification(self):
+        response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-001',
+            'email': 'student-a@example.com',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()
+        self.assertIn('request_id', payload)
+
+        reset_request = PasswordResetRequest.objects.get(request_id=payload['request_id'])
+        self.assertEqual(reset_request.user_id, self.student_a.pk)
+
+        handoff_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(handoff_response.status_code, 200, handoff_response.json())
+
+        verify_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'student_id': 'STU-001',
+            'nfc_uid': 'NFC-USER-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(verify_response.status_code, 200, verify_response.json())
+        verify_payload = verify_response.json()
+        self.assertIn('reset_token', verify_payload)
+
+        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': verify_payload['reset_token'],
+        }, format='json')
+
+        self.assertEqual(validation_response.status_code, 200, validation_response.json())
+        validation_payload = validation_response.json()
+        self.assertTrue(validation_payload['valid'])
+        self.assertIn('reset_authorization', validation_payload)
+        self.assertNotIn('reset_token', validation_payload)
+
+        confirm_response = self.client.post('/api/auth/password-reset/confirm/', {
+            'request_id': reset_request.request_id,
+            'reset_authorization': validation_payload['reset_authorization'],
+            'new_password': 'NewPassword123!',
+            'confirm_password': 'NewPassword123!',
+        }, format='json')
+
+        self.assertEqual(confirm_response.status_code, 200, confirm_response.json())
+        self.student_a.refresh_from_db()
+        self.assertTrue(self.student_a.check_password('NewPassword123!'))
+
+    def test_reset_request_rejects_mismatched_student_id_or_nfc_uid(self):
+        response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-002',
+            'email': 'student-b@example.com',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        reset_request = PasswordResetRequest.objects.get(request_id=response.json()['request_id'])
+
+        handoff_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(handoff_response.status_code, 200, handoff_response.json())
+
+        mismatched_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'student_id': 'STU-001',
+            'nfc_uid': 'NFC-USER-002',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(mismatched_response.status_code, 403, mismatched_response.json())
+        self.assertIn('does not match', mismatched_response.json()['error'])
+
+    def _create_verified_reset_request(self, user=None):
+        target = user or self.student_a
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': target.student_id,
+            'email': target.email,
+        }, format='json')
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+        handoff_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        if handoff_response.status_code != 200:
+            raise AssertionError(handoff_response.json())
+        verify_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'student_id': target.student_id,
+            'nfc_uid': target.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        return reset_request, verify_response.json()['reset_token']
+
+    def test_invalid_token_is_rejected_without_authorization(self):
+        reset_request, _ = self._create_verified_reset_request()
+
+        response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': 'invalid-token',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn('reset_authorization', response.json())
+
+    def test_expired_token_is_rejected(self):
+        reset_request, reset_token = self._create_verified_reset_request()
+        reset_request.expires_at = timezone.now() - timedelta(minutes=1)
+        reset_request.save(update_fields=['expires_at'])
+
+        response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': reset_token,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 410)
+
+    def test_token_cannot_validate_against_another_request(self):
+        first_request, reset_token = self._create_verified_reset_request(self.student_a)
+        second_request, _ = self._create_verified_reset_request(self.student_b)
+
+        response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': second_request.request_id,
+            'reset_token': reset_token,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        first_request.refresh_from_db()
+        self.assertEqual(first_request.status, PasswordResetRequest.StatusChoices.VERIFIED)
+
+    def test_used_token_is_rejected(self):
+        reset_request, reset_token = self._create_verified_reset_request()
+        reset_request.status = PasswordResetRequest.StatusChoices.USED
+        reset_request.used_at = timezone.now()
+        reset_request.save(update_fields=['status', 'used_at'])
+
+        response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': reset_token,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_expired_authorization_cannot_confirm_password(self):
+        reset_request, reset_token = self._create_verified_reset_request()
+        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': reset_token,
+        }, format='json')
+        reset_request.refresh_from_db()
+        reset_request.reset_authorization_expires_at = timezone.now() - timedelta(minutes=1)
+        reset_request.save(update_fields=['reset_authorization_expires_at'])
+
+        response = self.client.post('/api/auth/password-reset/confirm/', {
+            'request_id': reset_request.request_id,
+            'reset_authorization': validation_response.json()['reset_authorization'],
+            'new_password': 'NewPassword123!',
+            'confirm_password': 'NewPassword123!',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_reset_authorization_is_single_use(self):
+        reset_request, reset_token = self._create_verified_reset_request()
+        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+            'request_id': reset_request.request_id,
+            'reset_token': reset_token,
+        }, format='json')
+        authorization = validation_response.json()['reset_authorization']
+
+        response = self.client.post('/api/auth/password-reset/confirm/', {
+            'request_id': reset_request.request_id,
+            'reset_authorization': authorization,
+            'new_password': 'NewPassword123!',
+            'confirm_password': 'NewPassword123!',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.json())
+
+        replay_response = self.client.post('/api/auth/password-reset/confirm/', {
+            'request_id': reset_request.request_id,
+            'reset_authorization': authorization,
+            'new_password': 'AnotherPassword123!',
+            'confirm_password': 'AnotherPassword123!',
+        }, format='json')
+        self.assertEqual(replay_response.status_code, 400)
+
+    def test_nfc_endpoint_requires_device_api_key(self):
+        reset_request, _ = self._create_verified_reset_request()
+
+        response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'student_id': self.student_a.student_id,
+            'nfc_uid': self.student_a.nfc_uid,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_password_reset_verify_requires_claimed_cabinet_handoff(self):
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        request_id = request_response.json()['request_id']
+
+        response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': request_id,
+            'student_id': self.student_a.student_id,
+            'nfc_uid': self.student_a.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 409, response.json())
+
+    def test_cabinet_handoff_requires_device_api_key_and_valid_request(self):
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        request_id = request_response.json()['request_id']
+
+        missing_key_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': request_id,
+        }, format='json')
+        self.assertEqual(missing_key_response.status_code, 403)
+
+        invalid_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': 'not-a-real-request',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(invalid_response.status_code, 404)
+
+    def test_cabinet_handoff_is_single_active_claim_and_expires(self):
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+
+        first_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(first_response.status_code, 200, first_response.json())
+
+        second_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(second_response.status_code, 409, second_response.json())
+
+        reset_request.refresh_from_db()
+        reset_request.cabinet_handoff_expires_at = timezone.now() - timedelta(seconds=1)
+        reset_request.save(update_fields=['cabinet_handoff_expires_at'])
+        retry_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(retry_response.status_code, 200, retry_response.json())
+
+    def test_normal_login_and_existing_nfc_access_still_work(self):
+        login_response = self.client.post('/api/auth/login/', {
+            'username': self.student_a.username,
+            'password': 'old-password-1',
+            'expected_role': 'student',
+        }, format='json')
+        self.assertEqual(login_response.status_code, 200, login_response.json())
+
+        nfc_response = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': self.student_a.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(nfc_response.status_code, 200, nfc_response.json())
+
+    def test_password_reset_request_still_works(self):
+        response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_b.student_id,
+            'email': self.student_b.email,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertIn('request_id', response.json())
+
+
+class CabinetDeviceIntegrationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.device_api_key = 'cabinet-device-test-key'
+        os.environ['DEVICE_API_KEY'] = self.device_api_key
+        self.section = Section.objects.create(section_name='Cabinet Section', section_code='CAB-101')
+
+    def test_cabinet_registration_persists_student_and_card_in_django(self):
+        response = self.client.post('/api/cabinet/register/', {
+            'full_name': 'Cabinet Student',
+            'student_id': 'CAB-001',
+            'email': 'cabinet.student@example.com',
+            'section': 'CAB-101',
+            'nfc_uid': 'card-cabinet-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        user = User.objects.get(student_id='CAB-001')
+        self.assertEqual(user.nfc_uid, 'CARD-CABINET-001')
+        self.assertEqual(user.section, self.section)
+        self.assertFalse(user.has_usable_password())
+
+    def test_cabinet_registration_requires_device_api_key(self):
+        response = self.client.post('/api/cabinet/register/', {
+            'full_name': 'Cabinet Student',
+            'student_id': 'CAB-002',
+            'email': 'cabinet.student2@example.com',
+            'nfc_uid': 'CARD-CABINET-002',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_valid_cabinet_nfc_scan_creates_successful_access_log(self):
+        student = User.objects.create_user(
+            username='cabinet-access-student',
+            email='cabinet-access@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='CAB-ACCESS-001',
+            nfc_uid='CARD-CABINET-ACCESS-001',
+        )
+
+        response = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': student.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(student.access_logs.filter(status='success').count(), 1)
+
+    def test_multiple_valid_cabinet_scans_create_multiple_access_logs(self):
+        student = User.objects.create_user(
+            username='cabinet-repeat-student',
+            email='cabinet-repeat@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='CAB-ACCESS-002',
+            nfc_uid='CARD-CABINET-ACCESS-002',
+        )
+
+        for _ in range(2):
+            response = self.client.post('/api/verify-nfc/', {
+                'nfc_uid': student.nfc_uid,
+            }, HTTP_X_API_KEY=self.device_api_key, format='json')
+            self.assertEqual(response.status_code, 200, response.json())
+
+        self.assertEqual(student.access_logs.filter(status='success').count(), 2)
+
+    def test_invalid_cabinet_nfc_scan_creates_no_success_log(self):
+        response = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': 'CARD-UNKNOWN-999',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 404, response.json())
+        self.assertFalse(AccessLog.objects.filter(status='success').exists())
+        self.assertEqual(AccessLog.objects.filter(status='failed').count(), 1)

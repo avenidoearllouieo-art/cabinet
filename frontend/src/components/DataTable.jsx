@@ -1,4 +1,4 @@
-export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName, variant = 'default' }) {
+export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName, variant = 'default', mobileCards = false }) {
   const tableData = Array.isArray(data) ? data : Array.isArray(rows) ? rows : []
   const hasData = tableData.length > 0
   const addActionsColumn = showActions && !columns.some((c) => c.key === 'actions')
@@ -9,7 +9,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
     if (typeof cellValue === 'string' || typeof cellValue === 'number') {
       const text = String(cellValue)
       return (
-        <span title={text} className="block max-w-full truncate">
+        <span title={text} className="block max-w-full whitespace-normal break-words">
           {text}
         </span>
       )
@@ -19,20 +19,37 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
   }
 
   return (
-    <div className="relative max-h-[600px] overflow-auto rounded-[12px] border border-[#E5E7EB] bg-white shadow-sm">
+    <div className="admin-data-table relative rounded-2xl border border-[#dbe5f0] bg-white shadow-[0_8px_24px_rgba(25,55,89,0.06)]">
+      {mobileCards && (
+        <div className="divide-y divide-[#e7edf4] md:hidden">
+          {loading && <div className="px-6 py-12 text-center text-[#64748b]">Loading…</div>}
+          {!loading && !hasData && <div className="px-6 py-12 text-center text-[#64748b]">{emptyMessage}</div>}
+          {!loading && hasData && tableData.map((row, index) => (
+            <article key={row.id || index} onClick={() => onRowClick?.(row)} className="space-y-3 px-4 py-4">
+              {columns.map((col) => (
+                <div key={`${index}-${col.key}`} className="flex items-start justify-between gap-4">
+                  <span className="shrink-0 text-xs font-bold uppercase tracking-[0.06em] text-[#64748b]">{col.label}</span>
+                  <span className="min-w-0 text-right text-sm text-[#39506c]">{renderCell(col, row)}</span>
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
+      )}
+      <div className={mobileCards ? 'hidden overflow-auto md:block' : 'relative max-h-[600px] overflow-auto'}>
       <table className="min-w-full table-fixed text-sm">
-        <thead className="bg-[#F9FAFB]">
+        <thead className="bg-[#f7f9fc]">
           <tr>
             {columns.map((col) => (
               <th
                 key={col.key}
-                className={`sticky top-0 z-20 bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#6B7280]'} ${col.className || 'whitespace-nowrap'}`}
+                className={`sticky top-0 z-20 bg-[#f7f9fc] px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.08em] shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#64748b]'} ${col.className || 'whitespace-nowrap'}`}
               >
                 {col.label}
               </th>
             ))}
             {addActionsColumn && (
-              <th className={`sticky top-0 z-20 whitespace-nowrap bg-[#F9FAFB] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#6B7280]'}`}>
+                <th className={`sticky top-0 z-20 whitespace-nowrap bg-[#f7f9fc] px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.08em] shadow-sm ${variant === 'monitoring' ? 'text-taptrack-navy' : 'text-[#64748b]'}`}>
                 Actions
               </th>
             )}
@@ -41,7 +58,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
         <tbody className="divide-y divide-[#E5E7EB]">
           {loading && (
             <tr>
-              <td colSpan={columns.length + (addActionsColumn ? 1 : 0)} className="px-6 py-10 text-center text-[#6B7280]">
+              <td colSpan={columns.length + (addActionsColumn ? 1 : 0)} className="px-6 py-12 text-center text-[#64748b]">
                 <div className="flex flex-col items-center justify-center gap-3">
                   <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-500" />
                   <span>Loading users…</span>
@@ -52,13 +69,13 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
 
           {!loading && !hasData && (
             <tr>
-              <td colSpan={columns.length + (addActionsColumn ? 1 : 0)} className="px-6 py-16 text-center text-[#6B7280]">
-                <div className="mx-auto flex max-w-md flex-col items-center gap-4 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10">
+              <td colSpan={columns.length + (addActionsColumn ? 1 : 0)} className="px-6 py-16 text-center text-[#64748b]">
+                <div className="mx-auto flex max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed border-[#cbd8e6] bg-[#f7f9fc] px-6 py-10">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
                     <span className="text-2xl">📭</span>
                   </div>
-                  <p className="text-lg font-semibold text-slate-900">{emptyMessage}</p>
-                  <p className="text-sm text-slate-500">Try adjusting your filters or add a new user.</p>
+                  <p className="text-lg font-semibold text-[#28415f]">{emptyMessage}</p>
+                  <p className="text-sm text-slate-500">Try adjusting your filters or search terms.</p>
                 </div>
               </td>
             </tr>
@@ -68,10 +85,10 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
             <tr
               key={idx}
               onClick={() => onRowClick?.(row)}
-              className={`min-h-14 h-14 transition-colors duration-200 ${onRowClick ? 'cursor-pointer hover:bg-slate-100' : variant === 'monitoring' ? 'hover:bg-slate-100' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'} ${typeof rowClassName === 'function' ? (rowClassName(row, idx) || '') : (rowClassName || '')}`}
+              className={`min-h-14 h-14 transition-colors duration-200 ${onRowClick ? 'cursor-pointer hover:bg-[#f4f8fc]' : variant === 'monitoring' ? 'hover:bg-[#f4f8fc]' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-[#fbfcfe]'} ${typeof rowClassName === 'function' ? (rowClassName(row, idx) || '') : (rowClassName || '')}`}
             >
               {columns.map((col) => (
-                <td key={`${idx}-${col.key}`} className={`px-6 py-4 align-middle text-[#374151] ${col.className || 'whitespace-nowrap'}`}>
+                <td key={`${idx}-${col.key}`} className={`px-5 py-4 align-middle text-[#39506c] ${col.className || 'whitespace-nowrap'}`}>
                   {renderCell(col, row)}
                 </td>
               ))}
@@ -100,6 +117,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

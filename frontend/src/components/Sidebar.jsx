@@ -51,8 +51,8 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
   }
 
   return (
-    <aside className={`fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto border-r border-[#FFC107] bg-[#002B5B] text-white shadow-lg transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
-      <div className={`border-b border-[#FFC107] py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
+    <aside className={`app-sidebar fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto bg-[#071f41] text-white shadow-[8px_0_28px_rgba(0,43,91,0.08)] transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
+      <div className={`border-b border-white/10 py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
         <div className={`mb-5 flex ${collapsed ? 'justify-center' : 'justify-start max-sm:justify-center'}`}>
           <TapTrackLogo compact={collapsed} mobileCompact className={collapsed ? 'h-10 w-10' : 'h-auto w-[165px]'} />
         </div>
@@ -61,7 +61,7 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
           <button
             type="button"
             onClick={toggleSidebar}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-white transition hover:bg-[#FFC107] hover:text-[#002B5B] focus:outline-none focus:ring-2 focus:ring-[#FFC107]"
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#FFC107]"
             aria-label={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
             title={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
           >
@@ -70,7 +70,7 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
         </div>
         {!collapsed && <p className="mt-1 text-xs text-white/75 max-sm:hidden">{config.subtitle}</p>}
       </div>
-      <nav className="px-2 py-4 space-y-1">
+      <nav className="space-y-1 px-3 py-5">
         {config.items.map((item) => {
           const Icon = item.icon
           const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
@@ -80,13 +80,13 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
               key={item.path}
               to={item.path}
               title={item.label}
-              className={`flex h-12 items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-4 max-sm:justify-center max-sm:px-0'} ${
+              className={`flex h-11 items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-4 max-sm:justify-center max-sm:px-0'} ${
                 active
-                  ? 'border-l-4 border-[#FFC107] bg-[#FFC107] pl-3 font-bold text-[#002B5B] shadow-sm'
-                  : 'border-l-4 border-transparent text-white/85 hover:bg-[#FFC107] hover:text-[#002B5B]'
+                  ? 'bg-[#FFC107] font-bold text-[#071f41] shadow-[0_6px_16px_rgba(255,193,7,0.16)]'
+                  : 'text-white/70 hover:bg-white/10 hover:text-white'
               }`}
             >
-              <Icon size={18} />
+              <Icon size={18} strokeWidth={active ? 2.4 : 2} />
                 <span className={collapsed ? 'sr-only' : 'max-sm:sr-only'}>{item.label}</span>
             </Link>
           )

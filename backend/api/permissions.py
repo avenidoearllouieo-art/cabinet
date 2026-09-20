@@ -1,4 +1,5 @@
 from rest_framework.permissions import BasePermission
+from rest_framework.throttling import AnonRateThrottle
 import os
 
 
@@ -49,13 +50,13 @@ class HasDeviceAPIKey(BasePermission):
             or request.META.get('HTTP_X_API_KEY', '')
         ).strip()
 
-        # TEMP DEBUG - remove after diagnosing
-        print("=" * 60)
-        print("[DEBUG] expected key    :", repr(expected))
-        print("[DEBUG] provided key    :", repr(provided))
-        print("[DEBUG] request.headers :", dict(request.headers))
-        print("=" * 60)
-
         if not expected:
             return False
         return provided == expected
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    rate = '60/hour'
+
+    def get_rate(self):
+        return self.rate

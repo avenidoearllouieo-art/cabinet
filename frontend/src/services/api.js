@@ -38,8 +38,6 @@ api.interceptors.request.use(
       method: config.method?.toUpperCase(),
       url: `${config.baseURL || ''}${config.url}`,
       accessToken: normalizedToken ? 'present' : 'missing',
-      headers: config.headers,
-      data: config.data,
     })
 
     return config
@@ -55,7 +53,6 @@ api.interceptors.response.use(
     console.debug('[API Response]', {
       url: response.config.url,
       status: response.status,
-      data: response.data,
     })
     return response
   },
@@ -63,7 +60,6 @@ api.interceptors.response.use(
     console.error('[API Response Error]', {
       url: error.config?.url,
       status: error.response?.status,
-      data: error.response?.data,
       message: error.message,
     })
 

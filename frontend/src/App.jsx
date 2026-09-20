@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/auth/Login.jsx'
+import ForgotPassword from './pages/auth/ForgotPassword.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
 import InstructorLayout from './layouts/InstructorLayout.jsx'
 import StudentLayout from './layouts/StudentLayout.jsx'
@@ -53,6 +54,7 @@ function App() {
       <Suspense fallback={<div className="grid min-h-screen place-items-center bg-slate-50 text-sm font-medium text-slate-600">Loading TapTrack…</div>}>
         <Routes>
         <Route path='/' element={<Login />} />
+        <Route path='/forgot-password' element={<ForgotPassword />} />
         <Route path='/admin/login' element={<Login administratorOnly />} />
         <Route path='/instructor/login' element={<Login />} />
         <Route path='/student/login' element={<Login />} />

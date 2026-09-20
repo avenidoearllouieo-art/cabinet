@@ -122,7 +122,7 @@ export default function StudentAccessLogs() {
     },
     {
       key: 'rfid_tag',
-      label: 'RFID',
+      label: 'NFC',
       render: (value) => value || '—',
     },
     {
@@ -180,7 +180,7 @@ export default function StudentAccessLogs() {
                 setPage(1)
                 setQuery(event.target.value)
               }}
-              placeholder="Search cabinet or RFID"
+              placeholder="Search cabinet or NFC"
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
@@ -225,6 +225,7 @@ export default function StudentAccessLogs() {
           columns={columns}
           data={logs}
           loading={loading}
+          emptyMessage="No cabinet access records yet"
           showActions={false}
           pagination={{
             current: page,

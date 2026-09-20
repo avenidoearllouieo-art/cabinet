@@ -3,7 +3,21 @@ from django.db import transaction
 from rest_framework import serializers
 from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, SubmissionAttachment, ActivityDiscussion, ActivityAnnouncement
+from .models import (
+    Section,
+    User,
+    Activity,
+    ActivityAttachment,
+    Submission,
+    AccessLog,
+    CabinetEvent,
+    Notification,
+    TemporaryUpload,
+    SubmissionAttachment,
+    ActivityDiscussion,
+    ActivityAnnouncement,
+    PasswordResetRequest,
+)
 
 
 def sync_section_owner(section, instructor):
@@ -278,6 +292,58 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         self.expected_role = expected_role
         return data
+
+
+class PasswordResetRequestSerializer(serializers.ModelSerializer):
+    student_id = serializers.CharField(required=True, allow_blank=False)
+    email = serializers.EmailField(required=True)
+
+    class Meta:
+        model = PasswordResetRequest
+        fields = ['request_id', 'user', 'student_id_snapshot', 'email_snapshot', 'status', 'requested_at', 'expires_at']
+        read_only_fields = ['request_id', 'user', 'student_id_snapshot', 'email_snapshot', 'status', 'requested_at', 'expires_at']
+
+
+class PasswordResetNFCVerificationSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+    student_id = serializers.CharField(required=True, allow_blank=False)
+    nfc_uid = serializers.CharField(required=True, allow_blank=False)
+
+
+class PasswordResetCabinetHandoffSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+
+
+class CabinetRegistrationSerializer(serializers.Serializer):
+    full_name = serializers.CharField(required=True, allow_blank=False, max_length=150)
+    student_id = serializers.CharField(required=True, allow_blank=False, max_length=50)
+    email = serializers.EmailField(required=True)
+    section = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    nfc_uid = serializers.CharField(required=True, allow_blank=False, max_length=100)
+
+
+class PasswordResetConfirmationSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+    reset_authorization = serializers.CharField(required=True, allow_blank=False)
+    new_password = serializers.CharField(required=True, write_only=True)
+    confirm_password = serializers.CharField(required=True, write_only=True)
+
+    def validate(self, attrs):
+        new_password = attrs.get('new_password')
+        confirm_password = attrs.get('confirm_password')
+
+        if new_password != confirm_password:
+            raise serializers.ValidationError({'confirm_password': 'New password and confirmation do not match.'})
+
+        if not new_password or len(new_password) < 8:
+            raise serializers.ValidationError({'new_password': 'New password must be at least 8 characters.'})
+
+        return attrs
+
+
+class PasswordResetTokenValidationSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+    reset_token = serializers.CharField(required=True, allow_blank=False, write_only=True)
 
 
 class ActivityAttachmentSerializer(serializers.ModelSerializer):

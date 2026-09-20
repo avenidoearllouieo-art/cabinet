@@ -1,6 +1,10 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.utils import timezone
+import secrets
+from datetime import timedelta
 
 
 class Section(models.Model):
@@ -414,6 +418,81 @@ class Notification(models.Model):
     class Meta:
         ordering = ['-created_at']
         unique_together = [['instructor', 'notification_key']]
+
+
+class PasswordResetRequest(models.Model):
+    class StatusChoices(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        VERIFIED = 'verified', 'Verified'
+        USED = 'used', 'Used'
+        EXPIRED = 'expired', 'Expired'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='password_reset_requests'
+    )
+    request_id = models.CharField(max_length=64, unique=True, blank=True, default='')
+    student_id_snapshot = models.CharField(max_length=50, blank=True, default='')
+    email_snapshot = models.EmailField(blank=True, default='')
+    reset_token_hash = models.CharField(max_length=255, blank=True, default='')
+    reset_authorization_hash = models.CharField(max_length=255, blank=True, default='')
+    reset_authorization_expires_at = models.DateTimeField(null=True, blank=True)
+    reset_authorization_used_at = models.DateTimeField(null=True, blank=True)
+    cabinet_handoff_claimed_at = models.DateTimeField(null=True, blank=True)
+    cabinet_handoff_expires_at = models.DateTimeField(null=True, blank=True)
+    cabinet_handoff_used_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.PENDING)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(default=timezone.now)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    nfc_uid_verified = models.BooleanField(default=False)
+    reason = models.TextField(blank=True, default='')
+
+    def save(self, *args, **kwargs):
+        if not self.request_id:
+            self.request_id = secrets.token_urlsafe(18)[:32]
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(minutes=15)
+        if self.user_id and not self.student_id_snapshot:
+            self.student_id_snapshot = self.user.student_id or ''
+        if self.user_id and not self.email_snapshot:
+            self.email_snapshot = self.user.email or ''
+        super().save(*args, **kwargs)
+
+    def set_reset_token(self, token):
+        self.reset_token_hash = make_password(token)
+
+    def verify_reset_token(self, token):
+        if not self.reset_token_hash:
+            return False
+        return check_password(token, self.reset_token_hash)
+
+    def set_reset_authorization(self, authorization):
+        self.reset_authorization_hash = make_password(authorization)
+
+    def verify_reset_authorization(self, authorization):
+        if not self.reset_authorization_hash:
+            return False
+        if not self.reset_authorization_expires_at:
+            return False
+        if self.reset_authorization_used_at:
+            return False
+        if timezone.now() > self.reset_authorization_expires_at:
+            return False
+        return check_password(authorization, self.reset_authorization_hash)
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        return f"Password reset for {self.user_id} ({self.status})"
+
+    class Meta:
+        ordering = ['-requested_at']
 
 
 class CabinetEvent(models.Model):

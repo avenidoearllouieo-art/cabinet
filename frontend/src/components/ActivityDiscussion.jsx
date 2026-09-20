@@ -183,10 +183,10 @@ export default function ActivityDiscussion({ activityId }) {
       const isCurrentUser = user && message.sender === user.id
       const isInstructor = String(message.sender_role).toLowerCase() === 'instructor'
       const bubbleClass = isCurrentUser
-        ? 'bg-blue-600 text-white rounded-[18px] rounded-br-[2px] rounded-tl-[18px] rounded-tr-[18px]'
+        ? 'bg-[#002B5B] text-white rounded-2xl rounded-br-sm'
         : isInstructor
-        ? 'bg-sky-50 text-slate-900 rounded-[18px] rounded-bl-[2px] rounded-tl-[18px] rounded-tr-[18px] border border-slate-200'
-        : 'bg-white text-slate-900 rounded-[18px] rounded-bl-[2px] rounded-tl-[18px] rounded-tr-[18px] border border-slate-200'
+        ? 'bg-[#f3f7fb] text-slate-900 rounded-2xl rounded-bl-sm border border-[#dbe5f0]'
+        : 'bg-white text-slate-900 rounded-2xl rounded-bl-sm border border-[#dbe5f0]'
       const containerClass = isCurrentUser ? 'justify-end' : 'justify-start'
       const badgeClass = isInstructor ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'
 
@@ -198,15 +198,15 @@ export default function ActivityDiscussion({ activityId }) {
             </div>
           )}
           <div className="w-fit max-w-[84%]">
-            <div className={bubbleClass + ' p-4 shadow-sm'}>
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold">
+            <div className={bubbleClass + ' p-3.5 shadow-sm sm:p-4'}>
+              <div className={`mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold ${isCurrentUser ? 'text-white' : 'text-[#28415f]'}`}>
                 <span>{senderName}</span>
-                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] ${badgeClass}`}>
+                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${isCurrentUser ? 'bg-white/15 text-white' : badgeClass}`}>
                   {isInstructor ? 'Instructor' : isCurrentUser ? 'You' : 'Student'}
                 </span>
               </div>
               <div className="whitespace-pre-wrap break-words text-sm leading-7">{message.message}</div>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.16em] text-slate-400">
+              <div className={`mt-3 flex flex-wrap items-center gap-3 text-[11px] ${isCurrentUser ? 'text-white/70' : 'text-slate-400'}`}>
                 <span className="inline-flex items-center gap-1">
                   <Clock3 size={12} /> {formatDateTime(message.created_at)}
                 </span>
@@ -233,30 +233,30 @@ export default function ActivityDiscussion({ activityId }) {
     })
 
   return (
-    <section className="relative flex h-[85vh] max-h-[85vh] min-h-[520px] flex-col overflow-hidden rounded-[24px] border border-slate-200/80 bg-white/95 shadow-[0_20px_60px_-24px_rgba(15,23,42,0.2)]">
-      <div className="flex-shrink-0 flex items-center justify-between gap-4 border-b border-slate-200/80 px-6 py-5">
+    <section className="relative flex h-[min(620px,72vh)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[#dbe5f0] bg-white shadow-[0_12px_34px_rgba(25,55,89,0.08)]">
+      <div className="flex-shrink-0 flex items-center justify-between gap-4 border-b border-[#e7edf4] px-5 py-4 sm:px-6">
         <div>
           <h3 className="text-lg font-semibold text-slate-900">Discussion</h3>
           <p className="text-sm text-slate-500">Shared activity chat for students and instructors.</p>
         </div>
-        <button onClick={fetchMessages} className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100">
+        <button onClick={fetchMessages} className="rounded-xl border border-[#dbe5f0] bg-white px-3 py-2 text-sm font-semibold text-[#28415f] transition hover:bg-[#f7f9fc]">
           Refresh
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 px-6">
+      <div className="flex-1 min-h-0 px-4 sm:px-6">
         <div ref={discussionRef} className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-2 pb-3 pt-5">
           {loading ? (
-            <div className="mt-8 flex h-full items-center justify-center text-sm text-slate-500">Loading messages…</div>
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">Loading messages…</div>
           ) : messages.length === 0 ? (
-            <div className="mt-8 flex h-full items-center justify-center text-sm text-slate-500">No messages yet. Start the conversation.</div>
+            <div className="flex h-full items-center justify-center text-center"><div><p className="font-semibold text-[#28415f]">No messages yet.</p><p className="mt-1 text-sm text-slate-500">Start a discussion about this activity.</p></div></div>
           ) : (
             <div className="space-y-4">{messageRows}</div>
           )}
         </div>
       </div>
 
-      <div className="flex-shrink-0 border-t border-slate-200/80 bg-white px-6 py-4">
+      <div className="flex-shrink-0 border-t border-[#e7edf4] bg-white px-4 py-4 sm:px-6">
         {error && <div className="mb-3 rounded-[16px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1"><label className="mb-1.5 block text-sm font-semibold text-slate-700" htmlFor="discussion-message">Message</label><textarea

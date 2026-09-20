@@ -109,3 +109,71 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.22);
   outline: none;
 }
+
+/* Admin workspace visual language. Page behavior remains owned by each route. */
+:is(.admin-shell, .instructor-shell, .student-shell) {
+  --admin-navy: #002b5b;
+  --admin-ink: #102a4c;
+  --admin-muted: #64748b;
+  --admin-line: #dbe5f0;
+  --admin-surface: #ffffff;
+  --admin-canvas: #f4f7fb;
+  background: var(--admin-canvas) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) .admin-main {
+  background: var(--admin-canvas) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) .rounded-xl.border,
+:is(.admin-shell, .instructor-shell, .student-shell) .rounded-\[12px\].border {
+  border-color: var(--admin-line) !important;
+  box-shadow: 0 8px 24px rgba(25, 55, 89, 0.06);
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-white"] {
+  background-color: var(--admin-surface) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-slate-50"] {
+  background-color: #f7f9fc !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-slate-900"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-taptrack-navy"] {
+  color: var(--admin-ink) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-slate-500"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-slate-600"] {
+  color: var(--admin-muted) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-blue-600"] {
+  background-color: var(--admin-navy) !important;
+  color: white !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-blue-600"]:hover {
+  background-color: #123f73 !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-red-600"] {
+  background-color: #dc2626 !important;
+  color: white !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) .admin-page-header + .grid {
+  margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-page-header h1 {
+    font-size: 25px;
+  }
+}

@@ -72,6 +72,25 @@
   font-size: 1.06rem;
 }
 
+.recovery-panel {
+  width: 100%;
+  text-align: center;
+}
+
+.recovery-token {
+  margin: 18px auto;
+  width: min(100%, 520px);
+  overflow-wrap: anywhere;
+  border: 1px solid var(--accent-border);
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--heading);
+  font-size: clamp(1.2rem, 4vw, 1.8rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 18px 16px;
+}
+
 .nfc-ring {
   display: flex;
   align-items: center;

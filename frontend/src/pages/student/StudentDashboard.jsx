@@ -174,7 +174,10 @@ export default function StudentDashboard() {
 
               {upcomingActivities.length === 0 ? (
                 <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-16 text-center">
-                  <p className="text-[#6B7280]">No upcoming activities — enjoy your free time!</p>
+                  <div className="mx-auto max-w-md">
+                    <p className="font-semibold text-[#28415f]">No upcoming activities</p>
+                    <p className="mt-2 text-sm text-[#64748b]">You&apos;re all caught up. New activities will appear here when assigned.</p>
+                  </div>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -225,11 +228,11 @@ export default function StudentDashboard() {
                     <div className="font-medium">
                       {(() => {
                         const last = recentAccessLogs[0]
-                        if (!last) return 'Unknown'
+                        if (!last) return 'Hardware not connected'
                         const s = String(last.status || '').toLowerCase()
                         if (s.includes('unlock') || s.includes('open')) return 'Unlocked'
                         if (s.includes('lock') || s.includes('locked')) return 'Locked'
-                        return 'Unknown'
+                        return 'Hardware not connected'
                       })()}
                     </div>
                   </div>

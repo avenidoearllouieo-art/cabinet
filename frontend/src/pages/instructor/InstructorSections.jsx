@@ -83,77 +83,77 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
   }, [onClose])
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex bg-slate-950/50">
+    <div className="fixed inset-0 z-[9999] flex bg-[#071f41]/55 backdrop-blur-[2px]">
       <button type="button" className="flex-1" onClick={onClose} aria-label="Close section drawer" />
-      <aside className="relative flex w-full max-w-[640px] flex-col overflow-y-auto bg-white p-6 shadow-2xl">
+      <aside className="relative flex w-full max-w-[600px] flex-col overflow-y-auto border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-[-18px_0_50px_rgba(0,43,91,0.18)] sm:p-0">
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-full border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-100"
+          className="sticky right-4 top-4 z-20 ml-auto mr-4 mt-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#cbd8e6] bg-white text-[#28415f] shadow-sm transition hover:border-[#002B5B] hover:bg-[#f4f8fc]"
           aria-label="Close section drawer"
           title="Close details"
         >
           <X size={18} />
         </button>
 
-        <div className="space-y-6 pt-2">
-          <div>
+        <div className="space-y-4 px-4 pb-6 pt-2 sm:px-6">
+          <div className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)]">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+              <span className="rounded-full bg-[#eef4fa] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[#1d5b91]">
                 Section overview
               </span>
               {getStatusBadge(section.status)}
             </div>
-            <h2 className="mt-3 text-2xl font-semibold text-slate-900">{section.section_name || 'Unnamed Section'}</h2>
-            <p className="mt-2 text-sm text-slate-600">{section.section_code || 'Section code not available'}</p>
+            <h2 className="mt-3 text-2xl font-bold tracking-tight text-[#102a4c]">{section.section_name || 'Unnamed Section'}</h2>
+            <p className="mt-1 text-sm font-medium text-[#64748b]">{section.section_code || 'Section code not available'}</p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Section information</p>
-              <div className="mt-3 space-y-2 text-sm text-slate-600">
-                <div className="flex items-center justify-between gap-2"><span>Program</span><span className="font-medium text-slate-900">{section.program || '—'}</span></div>
-                <div className="flex items-center justify-between gap-2"><span>Year level</span><span className="font-medium text-slate-900">{section.year_level || '—'}</span></div>
-                <div className="flex items-center justify-between gap-2"><span>Academic year</span><span className="font-medium text-slate-900">{section.academic_year || '—'}</span></div>
-                <div className="flex items-center justify-between gap-2"><span>Instructor</span><span className="font-medium text-slate-900">{section.instructor_name || '—'}</span></div>
+            <div className="rounded-2xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+              <p className="text-sm font-bold text-[#28415f]">Section information</p>
+              <div className="mt-3 space-y-2.5 text-sm text-[#64748b]">
+                <div className="flex items-center justify-between gap-2"><span>Program</span><span className="text-right font-semibold text-[#28415f]">{section.program || 'Not assigned'}</span></div>
+                <div className="flex items-center justify-between gap-2"><span>Year level</span><span className="text-right font-semibold text-[#28415f]">{section.year_level || 'Not assigned'}</span></div>
+                <div className="flex items-center justify-between gap-2"><span>Academic year</span><span className="text-right font-semibold text-[#28415f]">{section.academic_year || 'Not assigned'}</span></div>
+                <div className="flex items-center justify-between gap-2"><span>Instructor</span><span className="text-right font-semibold text-[#28415f]">{section.instructor_name || 'Not assigned'}</span></div>
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Section analytics</p>
+            <div className="rounded-2xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+              <p className="text-sm font-bold text-[#28415f]">Section analytics</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl bg-white p-3 shadow-sm">
-                  <div className="flex items-center gap-2 text-slate-500"><Users size={16} /> <span className="text-xs">Students</span></div>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{studentCount}</p>
+                <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
+                  <div className="flex items-center gap-2 text-[#64748b]"><Users size={15} /> <span className="text-xs">Students</span></div>
+                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{studentCount}</p>
                 </div>
-                <div className="rounded-xl bg-white p-3 shadow-sm">
-                  <div className="flex items-center gap-2 text-slate-500"><BookOpen size={16} /> <span className="text-xs">Activities</span></div>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{sectionActivities.length}</p>
+                <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
+                  <div className="flex items-center gap-2 text-[#64748b]"><BookOpen size={15} /> <span className="text-xs">Activities</span></div>
+                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{sectionActivities.length}</p>
                 </div>
-                <div className="rounded-xl bg-white p-3 shadow-sm">
-                  <div className="flex items-center gap-2 text-slate-500"><BadgeCheck size={16} /> <span className="text-xs">Completed</span></div>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{completedActivities}</p>
+                <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
+                  <div className="flex items-center gap-2 text-[#64748b]"><BadgeCheck size={15} /> <span className="text-xs">Completed</span></div>
+                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{completedActivities}</p>
                 </div>
-                <div className="rounded-xl bg-white p-3 shadow-sm">
-                  <div className="flex items-center gap-2 text-slate-500"><Clock3 size={16} /> <span className="text-xs">Pending</span></div>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{pendingActivities}</p>
+                <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
+                  <div className="flex items-center gap-2 text-[#64748b]"><Clock3 size={15} /> <span className="text-xs">Pending</span></div>
+                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{pendingActivities}</p>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+          <div className="rounded-2xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Student preview</p>
+                <p className="text-sm font-bold text-[#28415f]">Student preview</p>
                 <p className="text-xs text-slate-500">A quick look at enrolled learners</p>
               </div>
-              <button type="button" onClick={onViewStudents} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50" title="View all students">View All Students</button>
+              <button type="button" onClick={onViewStudents} className="shrink-0 rounded-lg border border-[#002B5B] px-3 py-2 text-xs font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="View all students">View All Students</button>
             </div>
             <div className="mt-4 space-y-2">
               {students.slice(0, 4).map((student) => (
-                <div key={student.id || student.student_id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                <div key={student.id || student.student_id} className="flex items-center justify-between rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2.5">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-sm font-semibold text-blue-700">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#dcecf9] text-sm font-bold text-[#1d5b91]">
                       {(student.first_name?.[0] || student.last_name?.[0] || 'S').toUpperCase()}
                     </div>
                     <div>
@@ -168,17 +168,17 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+          <div className="rounded-2xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Latest activities</p>
+                <p className="text-sm font-bold text-[#28415f]">Latest activities</p>
                 <p className="text-xs text-slate-500">Most recent class work for this section</p>
               </div>
-              <button type="button" onClick={onViewActivities} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50" title="View all activities">View All Activities</button>
+              <button type="button" onClick={onViewActivities} className="shrink-0 rounded-lg border border-[#002B5B] px-3 py-2 text-xs font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="View all activities">View All Activities</button>
             </div>
             <div className="mt-4 space-y-2">
               {sectionActivities.slice(0, 3).map((activity) => (
-                <div key={activity.id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+                <div key={activity.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-3">
                   <div>
                     <p className="text-sm font-medium text-slate-900">{activity.title || 'Untitled activity'}</p>
                     <p className="text-xs text-slate-500">{activity.due_date ? `Due ${new Date(activity.due_date).toLocaleDateString()}` : 'No due date'}</p>
@@ -192,39 +192,39 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+          <div className="rounded-2xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Submission overview</p>
+                <p className="text-sm font-bold text-[#28415f]">Submission overview</p>
                 <p className="text-xs text-slate-500">Monitor assignment completion at a glance</p>
               </div>
-              <button type="button" onClick={onViewSubmissions} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50" title="View submissions">View Submissions</button>
+              <button type="button" onClick={onViewSubmissions} className="shrink-0 rounded-lg border border-[#002B5B] px-3 py-2 text-xs font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="View submissions">View Submissions</button>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-4">
-              <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3 text-center">
                 <p className="text-xs text-slate-500">Submitted</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{submittedCount}</p>
               </div>
-              <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3 text-center">
                 <p className="text-xs text-slate-500">Missing</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{missingCount}</p>
               </div>
-              <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3 text-center">
                 <p className="text-xs text-slate-500">Late</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{lateCount}</p>
               </div>
-              <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3 text-center">
                 <p className="text-xs text-slate-500">Rate</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{completionRate}%</p>
               </div>
             </div>
             <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200">
-              <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${Math.min(100, completionRate)}%` }} />
+              <div className="h-full rounded-full bg-[#FFC107] transition-all" style={{ width: `${Math.min(100, completionRate)}%` }} />
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-900">Cabinet information</p>
+          <div className="rounded-2xl border border-[#dbe5f0] bg-[#f7f9fc] p-4">
+            <p className="text-sm font-bold text-[#28415f]">Cabinet information</p>
             {cabinetName ? (
               <div className="mt-3 space-y-2 text-sm text-slate-600">
                 <div className="flex items-center justify-between gap-2"><span>Cabinet number</span><span className="font-medium text-slate-900">{cabinetName}</span></div>
@@ -241,20 +241,20 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <button type="button" onClick={onViewStudents} className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50" title="View students">
+            <button type="button" onClick={onViewStudents} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-4 py-3 text-sm font-bold text-[#102a4c] transition hover:bg-[#E0A800]" title="View students">
               <UserRound size={16} /> View Students
             </button>
-            <button type="button" onClick={onViewActivities} className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50" title="View activities">
+            <button type="button" onClick={onViewActivities} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#002B5B] bg-white px-4 py-3 text-sm font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="View activities">
               <BookOpen size={16} /> View Activities
             </button>
-            <button type="button" onClick={onViewSubmissions} className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50" title="View submissions">
+            <button type="button" onClick={onViewSubmissions} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#002B5B] bg-white px-4 py-3 text-sm font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="View submissions">
               <ClipboardCheck size={16} /> View Submissions
             </button>
-            <button type="button" onClick={onExportStudentList} className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50" title="Export student list">
+            <button type="button" onClick={onExportStudentList} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#002B5B] bg-white px-4 py-3 text-sm font-semibold text-[#002B5B] transition hover:bg-[#eef4fa]" title="Export student list">
               <FileText size={16} /> Export Student List
             </button>
           </div>
-          <button type="button" onClick={onRefresh} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700" title="Refresh section data">
+          <button type="button" onClick={onRefresh} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#cbd8e6] bg-white px-4 py-3 text-sm font-semibold text-[#28415f] transition hover:bg-[#eef4fa]" title="Refresh section data">
             <RefreshCcw size={16} /> Refresh Data
           </button>
         </div>

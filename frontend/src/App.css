@@ -97,8 +97,12 @@ body {
 }
 
 .login-card .login-field:focus-within {
-  border-color: #FFC107;
-  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.2);
+  border-color: #F3CA4D;
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.12);
+}
+
+.login-card .login-field input::placeholder {
+  color: #9aa8b8;
 }
 
 .login-cabinet-mark span {
