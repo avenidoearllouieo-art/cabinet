@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Download } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
 
@@ -85,15 +86,15 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
         </div>
       ) : (
         <div className="space-y-6">
-          <div className="rounded-[12px] border p-4 bg-white">
+          <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold">{details?.activity_title || details?.activity?.title || 'Activity'}</h3>
                 <div className="mt-2 text-sm text-slate-700">{details?.activity_description || details?.activity?.description || 'No description provided.'}</div>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">Read-only</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">Read-only</span>
             </div>
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-slate-600">
+            <div className="mt-5 grid grid-cols-1 gap-4 text-sm text-[#334155] md:grid-cols-3">
               <div><strong>Instructor:</strong> {details?.instructor_name || details?.activity?.created_by_name || '—'}</div>
               <div><strong>Submission Status:</strong> {resolveStatus(details)}</div>
               <div><strong>Submitted:</strong> {formatDate(details?.submitted_at)}</div>
@@ -102,54 +103,53 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
 
           {/* Activity Attachments */}
           { (details?.activity && details.activity.attachments && details.activity.attachments.length) || (details?.activity_attachments && details.activity_attachments.length) ? (
-            <div className="rounded-[12px] border p-4 bg-white">
-              <h4 className="font-semibold">Activity Attachments</h4>
-              <div className="mt-3 space-y-2">
+            <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
+              <h4 className="font-semibold text-[#002B5B]">Activity Attachments</h4>
+              <div className="mt-4 space-y-3">
                 {(details.activity?.attachments || details.activity_attachments || []).map((att) => (
-                  <div key={att.id || att.file} className="flex items-center justify-between rounded bg-slate-50 p-2">
+                  <div key={att.id || att.file} className="flex items-center justify-between rounded border border-[#002B5B]/15 bg-slate-50 p-3">
                     <div>
                       <div className="font-medium">{att.filename || att.file_name || att.name}</div>
                       <div className="text-xs text-slate-500">{att.file_size ? `${(att.file_size/1024).toFixed(1)} KB` : ''}</div>
                     </div>
-                    <a href={att.url || att.download_url || att.file} target="_blank" rel="noreferrer" className="rounded-full bg-slate-900 px-3 py-1 text-white text-sm">Download</a>
+                    <a href={att.url || att.download_url || att.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full !bg-[#002B5B] px-3 py-2 text-sm font-semibold !text-white transition hover:!bg-[#001F42]"><Download size={14} />Download</a>
                   </div>
                 ))}
               </div>
             </div>
           ) : null}
 
-          <div className="rounded-[12px] border p-4 bg-white">
-            <h4 className="font-semibold">Submitted Files</h4>
+          <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
+            <h4 className="font-semibold text-[#002B5B]">Submitted Files</h4>
             { !details?.submitted_at && !(details?.files && details.files.length) ? (
               <div className="mt-4 text-center">
                 <p className="text-sm text-slate-600">No submission yet.</p>
               </div>
             ) : (
               <div className="mt-3 space-y-3">
-                <div className="text-sm text-slate-700">Submitted: {formatDate(details?.submitted_at)}</div>
                 {details?.remarks && (
                   <div>
                     <p className="text-sm font-medium text-slate-700">Comments</p>
-                    <p className="text-sm text-slate-600 whitespace-pre-wrap">{details.remarks}</p>
+                    <p className="text-sm leading-6 text-[#334155] whitespace-pre-wrap">{details.remarks}</p>
                   </div>
                 )}
 
                 <div>
                   <p className="text-sm font-medium text-slate-700">Files</p>
                   { (details.files && details.files.length) ? (
-                    <div className="mt-2 space-y-2">
+                    <div className="mt-3 space-y-3">
                       {details.files.map((f) => (
-                        <div key={f.id || f.url} className="flex items-center justify-between rounded-md bg-white p-3 border">
+                        <div key={f.id || f.url} className="flex items-center justify-between rounded-md border border-[#002B5B]/15 bg-white p-4">
                           <div>
                             <div className="font-medium text-slate-900">{f.name || f.file_name}</div>
                             <div className="text-xs text-slate-500">{f.size ? `${(f.size/1024).toFixed(1)} KB` : ''} • Uploaded {formatDate(f.uploaded_at || details.submitted_at)}</div>
                           </div>
-                          <a href={f.url || f.download_url || f.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white">Download</a>
+                          <a href={f.url || f.download_url || f.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full !bg-[#002B5B] px-3 py-2 text-sm font-semibold !text-white transition hover:!bg-[#001F42]"><Download size={14} />Download</a>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-2 text-sm text-slate-500">No submitted files available.</p>
+                    <p className="mt-2 text-sm text-[#334155]">No submitted files available.</p>
                   )}
                 </div>
               </div>
@@ -157,11 +157,11 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
           </div>
 
           {details?.previous_attempts?.length ? (
-            <div className="rounded-[12px] border p-4 bg-white">
-              <h4 className="font-semibold">Submission History</h4>
-              <div className="mt-3 space-y-2">
+            <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
+              <h4 className="font-semibold text-[#002B5B]">Submission History</h4>
+              <div className="mt-4 space-y-3">
                 {details.previous_attempts.map((attempt) => (
-                  <div key={attempt.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <div key={attempt.id} className="flex items-center justify-between rounded-md border border-[#002B5B]/15 bg-slate-50 px-4 py-3 text-sm text-[#334155]">
                     <span>Attempt {attempt.attempt || 1}</span>
                     <span>{formatDate(attempt.submitted_at)}</span>
                   </div>
@@ -170,26 +170,26 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             </div>
           ) : null}
 
-          <div className="rounded-[12px] border p-4 bg-white">
-            <h4 className="font-semibold">Instructor Feedback & Grade</h4>
+          <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
+            <h4 className="font-semibold text-[#002B5B]">Instructor Feedback & Grade</h4>
             { details?.score != null ? (
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-slate-600">Score</p>
+                  <p className="text-sm text-[#334155]">Score</p>
                   <p className="text-lg font-semibold">{details.score} / {details.activity_max_score ?? details.activity?.max_score ?? '—'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-600">Percentage</p>
+                  <p className="text-sm text-[#334155]">Percentage</p>
                   <p className="text-lg font-semibold">{details.activity_max_score ? `${Math.round((details.score / details.activity_max_score) * 100)}%` : '—'}</p>
                 </div>
                 <div className="md:col-span-2">
-                  <p className="text-sm text-slate-600">Instructor Feedback</p>
-                  <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">{details.feedback || 'No feedback provided.'}</p>
-                  <p className="mt-2 text-xs text-slate-500">Graded: {formatDate(details.graded_at)}</p>
+                  <p className="text-sm text-[#334155]">Instructor Feedback</p>
+                  <p className="mt-1 text-sm leading-6 text-[#334155] whitespace-pre-wrap">{details.feedback || 'No feedback provided.'}</p>
+                  <p className="mt-2 text-xs text-[#475569]">Graded: {formatDate(details.graded_at)}</p>
                 </div>
               </div>
             ) : (
-              <div className="mt-3 text-sm text-slate-600">Waiting for instructor grading.</div>
+              <div className="mt-3 text-sm text-[#334155]">Waiting for instructor grading.</div>
             )}
           </div>
 
@@ -197,7 +197,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full bg-[#F3F4F6] px-4 py-2 text-sm font-semibold text-[#111827] transition hover:bg-[#E5E7EB]"
+              className="rounded-full border border-[#002B5B] bg-white px-4 py-2 text-sm font-semibold text-[#002B5B] transition hover:bg-[#002B5B]/5"
             >
               Close
             </button>

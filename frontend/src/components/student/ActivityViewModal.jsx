@@ -82,7 +82,7 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="View Activity">
+    <Modal isOpen={isOpen} onClose={onClose} title="View Activity" containerClassName="border-0 bg-white !shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1)] before:content-none after:content-none">
       {!activity ? (
         <p className="text-sm text-slate-600">Activity details are unavailable.</p>
       ) : (
@@ -90,26 +90,26 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
           <section className="rounded-[16px] border border-[#E5E7EB] bg-slate-50 p-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-slate-900">{activity.title}</h2>
-                <p className="text-sm text-slate-500">{activity.activity_type || 'Assignment'}</p>
+                <h2 className="text-2xl font-bold text-[#002B5B]">{activity.title}</h2>
+                <p className="text-sm font-medium text-[#334155]">{activity.activity_type || 'Assignment'}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{activity.section_name || 'Section unknown'}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{formatDate(activity.due_date)}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{activity.max_score != null ? `${activity.max_score} pts` : 'Points N/A'}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{statusBadge(submissionStatus)}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{activity.section_name || 'Section unknown'}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{formatDate(activity.due_date)}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{activity.max_score != null ? `${activity.max_score} pts` : 'Points N/A'}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">{statusBadge(submissionStatus)}</span>
               </div>
             </div>
           </section>
 
           <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
-              <h3 className="text-base font-semibold text-slate-900">Description</h3>
-              <p className="mt-3 text-sm leading-7 text-slate-700 whitespace-pre-wrap">{activity.description || 'No description provided.'}</p>
+            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-7">
+              <h3 className="text-base font-semibold text-[#002B5B]">Description</h3>
+              <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.description || 'No description provided.'}</p>
             </div>
-            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
-              <h3 className="text-base font-semibold text-slate-900">Instructions</h3>
-              <p className="mt-3 text-sm leading-7 text-slate-700 whitespace-pre-wrap">{activity.instructions || 'No instructions provided.'}</p>
+            <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-7">
+              <h3 className="text-base font-semibold text-[#002B5B]">Instructions</h3>
+              <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.instructions || 'No instructions provided.'}</p>
             </div>
           </section>
 
@@ -135,7 +135,7 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
                 ))}
               </div>
             ) : (
-              <div className="mt-4 rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-6 text-sm text-slate-600">No attachments available.</div>
+              <p className="mt-4 text-sm text-[#334155]">No attachments available.</p>
             )}
           </section>
 

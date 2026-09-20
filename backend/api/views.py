@@ -4,7 +4,10 @@ from datetime import timedelta
 from rest_framework import viewsets, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .permissions import IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole, IsStudentRole
+from .permissions import (
+    IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole,
+    IsStudentRole, HasDeviceAPIKey,
+)
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -1122,11 +1125,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             )
 
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
-
-
 class VerifyNFCView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []                    # No JWT — ESP32 can't do JWT
+    permission_classes = [HasDeviceAPIKey]         # API key instead
 
     def post(self, request, *args, **kwargs):
         nfc_uid = request.data.get('nfc_uid')

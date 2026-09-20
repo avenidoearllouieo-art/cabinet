@@ -165,7 +165,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length)} busy={loading}>
+    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length)} busy={loading} containerClassName="border-0 bg-white">
       {!activity ? (
         <p className="text-sm text-slate-600">Activity is unavailable.</p>
       ) : (

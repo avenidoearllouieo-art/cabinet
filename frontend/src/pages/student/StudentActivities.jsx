@@ -335,10 +335,10 @@ export default function StudentActivities() {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => handleViewActivity(activity)} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                      <button type="button" onClick={() => handleViewActivity(activity)} className="inline-flex items-center gap-2 rounded-full border border-[#002B5B] bg-white px-4 py-2 text-sm font-semibold text-[#002B5B] transition hover:bg-[#002B5B]/5">
                         <ArrowRight size={14} /> View Details
                       </button>
-                      <button type="button" onClick={() => handleSubmitActivity(activity)} className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">
+                      <button type="button" onClick={() => handleSubmitActivity(activity)} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${actionLabel === 'View Submission' ? 'border border-[#002B5B] bg-white text-[#002B5B] hover:bg-[#002B5B]/5' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                         {actionLabel}
                       </button>
                     </div>

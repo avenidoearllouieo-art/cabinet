@@ -11,6 +11,12 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 from datetime import timedelta
 from pathlib import Path
 
@@ -196,4 +202,5 @@ CORS_ALLOW_METHODS = [
     'PATCH',
     'POST',
     'PUT',
+    'DEVICE_API_KEY', ''
 ]
