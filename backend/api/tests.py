@@ -5,8 +5,9 @@ from rest_framework.test import APIClient
 
 import os
 from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 
-from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest
+from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession
 
 
 class InstructorSectionAssignmentTests(TestCase):
@@ -1137,3 +1138,204 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(response.status_code, 404, response.json())
         self.assertFalse(AccessLog.objects.filter(status='success').exists())
         self.assertEqual(AccessLog.objects.filter(status='failed').count(), 1)
+
+    def test_unknown_nfc_scan_creates_temporary_enrollment_session(self):
+        response = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': 'card-enrollment-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 404, response.json())
+        payload = response.json()
+        self.assertFalse(payload['registered'])
+        self.assertTrue(payload['registration_required'])
+        self.assertNotIn('card-enrollment-001', payload['registration_url'])
+
+        enrollment = NFCEnrollmentSession.objects.get(nfc_uid='CARD-ENROLLMENT-001')
+        token = parse_qs(urlparse(payload['registration_url']).query)['token'][0]
+        validation = self.client.get('/api/cabinet/enrollment/validate/', {'token': token})
+
+        self.assertEqual(validation.status_code, 200, validation.json())
+        self.assertTrue(validation.json()['valid'])
+        self.assertTrue(enrollment.verify_token(token))
+
+    def test_repeated_unknown_nfc_scans_reuse_one_pending_session(self):
+        first = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': 'CARD-REUSE-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        second = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': 'CARD-REUSE-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(first.status_code, 404, first.json())
+        self.assertEqual(second.status_code, 404, second.json())
+        self.assertEqual(
+            NFCEnrollmentSession.objects.filter(
+                nfc_uid='CARD-REUSE-001',
+                status=NFCEnrollmentSession.StatusChoices.PENDING,
+            ).count(),
+            1,
+        )
+        first_token = parse_qs(urlparse(first.json()['registration_url']).query)['token'][0]
+        second_token = parse_qs(urlparse(second.json()['registration_url']).query)['token'][0]
+        self.assertNotEqual(first_token, second_token)
+        self.assertEqual(self.client.get('/api/cabinet/enrollment/validate/', {'token': first_token}).status_code, 410)
+        self.assertEqual(self.client.get('/api/cabinet/enrollment/validate/', {'token': second_token}).status_code, 200)
+
+    def test_invalid_expired_and_completed_enrollment_tokens_are_rejected(self):
+        invalid = self.client.get('/api/cabinet/enrollment/validate/', {'token': 'invalid-token'})
+        self.assertEqual(invalid.status_code, 410)
+
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-ENROLLMENT-002',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        enrollment.set_token('expired-token')
+        enrollment.save()
+        expired = self.client.get('/api/cabinet/enrollment/validate/', {'token': 'expired-token'})
+        self.assertEqual(expired.status_code, 410)
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.EXPIRED)
+
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-ENROLLMENT-003',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+            status=NFCEnrollmentSession.StatusChoices.COMPLETED,
+        )
+        enrollment.set_token('completed-token')
+        enrollment.save()
+        completed = self.client.get('/api/cabinet/enrollment/validate/', {'token': 'completed-token'})
+        self.assertEqual(completed.status_code, 410)
+
+    def test_pending_student_registration_links_nfc_and_consumes_token(self):
+        student = User.objects.create_user(
+            username='pending-registration-student',
+            email='pending-registration@example.com',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='PENDING-001',
+            nfc_uid=None,
+            is_active=True,
+        )
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-ENROLLMENT-READY',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('registration-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'registration-token',
+            'student_id': 'PENDING-001',
+            'full_name': 'Pending Student',
+            'email': 'pending.registration@example.com',
+            'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        student.refresh_from_db()
+        enrollment.refresh_from_db()
+        self.assertEqual(student.nfc_uid, 'CARD-ENROLLMENT-READY')
+        self.assertTrue(student.has_usable_password())
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
+
+        reused = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'registration-token',
+            'student_id': 'PENDING-001',
+            'full_name': 'Pending Student',
+            'email': 'pending.registration@example.com',
+            'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
+        }, format='json')
+        self.assertEqual(reused.status_code, 410, reused.json())
+
+    def test_enrollment_registration_rejects_unknown_student_id(self):
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-ENROLLMENT-UNKNOWN-STUDENT',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('unknown-student-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'unknown-student-token',
+            'student_id': 'DOES-NOT-EXIST',
+            'full_name': 'Unknown Student',
+            'email': 'unknown.student@example.com',
+            'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 404, response.json())
+
+    def test_enrollment_registration_rejects_existing_nfc_owner(self):
+        User.objects.create_user(
+            username='other-nfc-owner',
+            email='other-nfc-owner@example.com',
+            password='existing-password',
+            role=User.RoleChoices.STUDENT,
+            student_id='OWNER-001',
+            nfc_uid='CARD-ALREADY-ASSIGNED',
+        )
+        User.objects.create_user(
+            username='pending-nfc-student',
+            email='pending-nfc-student@example.com',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='PENDING-002',
+            nfc_uid=None,
+        )
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-ALREADY-ASSIGNED',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('assigned-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'assigned-token',
+            'student_id': 'PENDING-002',
+            'full_name': 'Pending NFC Student',
+            'email': 'pending.nfc@example.com',
+            'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
+        }, format='json')
+        self.assertEqual(response.status_code, 409, response.json())
+
+    def test_enrollment_registration_rejects_existing_account(self):
+        User.objects.create_user(
+            username='existing-account-student',
+            email='existing-account@example.com',
+            password='existing-password',
+            role=User.RoleChoices.STUDENT,
+            student_id='EXISTING-001',
+            nfc_uid=None,
+        )
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-EXISTING-ACCOUNT',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('existing-account-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'existing-account-token',
+            'student_id': 'EXISTING-001',
+            'full_name': 'Existing Account Student',
+            'email': 'existing.account@example.com',
+            'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
+        }, format='json')
+        self.assertEqual(response.status_code, 409, response.json())

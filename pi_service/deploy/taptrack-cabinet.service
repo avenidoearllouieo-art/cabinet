@@ -1,0 +1,16 @@
+[Unit]
+Description=TapTrack Cabinet UI
+After=network-online.target taptrack-nfc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/apps/taptrack-cabinet/cabinet
+EnvironmentFile=-/etc/taptrack/cabinet.env
+ExecStart=/usr/bin/npm run preview -- --host 127.0.0.1 --port 5173
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

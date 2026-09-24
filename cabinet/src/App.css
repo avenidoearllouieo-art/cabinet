@@ -134,6 +134,59 @@
 .icon-md { width: 56px; height: 56px; }
 
 .title-block { margin-bottom: 16px; }
+.registration-qr {
+  display: inline-flex;
+  padding: 14px;
+  margin: 8px auto 18px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.mock-nfc-form {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 520px);
+  margin: 0 auto 18px;
+  text-align: left;
+}
+.mock-nfc-form label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.mock-nfc-controls {
+  display: flex;
+  gap: 10px;
+}
+.mock-nfc-controls input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--accent-border);
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: var(--surface);
+  color: var(--text);
+}
+.mock-nfc-controls input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.student-readout {
+  display: grid;
+  gap: 4px;
+  width: min(100%, 420px);
+  margin: 0 auto 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(40, 203, 128, 0.35);
+  border-radius: 16px;
+  background: rgba(40, 203, 128, 0.08);
+  text-align: left;
+}
+.student-readout strong { color: var(--heading); font-size: 1.1rem; }
+.student-readout span { color: var(--muted); }
 .title {
   margin: 0 0 8px;
   font-size: clamp(2rem, 4vw, 2.7rem);

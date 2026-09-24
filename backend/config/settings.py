@@ -56,6 +56,10 @@ CSRF_TRUSTED_ORIGINS = env_list(
     'DJANGO_CSRF_TRUSTED_ORIGINS',
     ['http://localhost:5176', 'http://127.0.0.1:5176'],
 )
+NFC_REGISTRATION_URL_BASE = os.environ.get(
+    'TAPTRACK_NFC_REGISTRATION_URL_BASE',
+    'http://localhost:5176/register',
+).rstrip('/')
 
 
 # Application definition
@@ -181,7 +185,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 CORS_ALLOWED_ORIGINS = env_list(
     'DJANGO_CORS_ALLOWED_ORIGINS',
-    ['http://localhost:5176', 'http://127.0.0.1:5176'],
+    ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176'],
 )
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
@@ -194,6 +198,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-api-key',
 ]
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -202,5 +207,4 @@ CORS_ALLOW_METHODS = [
     'PATCH',
     'POST',
     'PUT',
-    'DEVICE_API_KEY', ''
 ]

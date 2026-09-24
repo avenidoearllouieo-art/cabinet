@@ -4,6 +4,7 @@ from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import secrets
+import hashlib
 from datetime import timedelta
 
 
@@ -493,6 +494,47 @@ class PasswordResetRequest(models.Model):
 
     class Meta:
         ordering = ['-requested_at']
+
+
+class NFCEnrollmentSession(models.Model):
+    class StatusChoices(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        COMPLETED = 'completed', 'Completed'
+        EXPIRED = 'expired', 'Expired'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    nfc_uid = models.CharField(max_length=100)
+    token_digest = models.CharField(max_length=64, unique=True)
+    token_hash = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.PENDING)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nfc_enrollment_sessions',
+    )
+
+    def set_token(self, token):
+        self.token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        self.token_hash = make_password(token)
+
+    def verify_token(self, token):
+        return bool(self.token_hash) and check_password(token, self.token_hash)
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['nfc_uid', 'status']),
+            models.Index(fields=['expires_at']),
+        ]
 
 
 class CabinetEvent(models.Model):

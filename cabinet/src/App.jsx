@@ -1,7 +1,72 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
+import { createNfcProvider } from './services/nfc/nfcProvider'
 import './App.css'
 
 const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
+const NFC_SERVICE_URL = (import.meta.env.VITE_NFC_SERVICE_URL || '').replace(/\/$/, '')
+const NFC_MODE = (import.meta.env.VITE_NFC_MODE || 'mock').toLowerCase()
+const NFC_COOLDOWN_MS = Number(import.meta.env.VITE_NFC_COOLDOWN_MS || 2500)
+const DJANGO_API_BASE_URL = (import.meta.env.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')
+const DJANGO_API_KEY = import.meta.env.VITE_DJANGO_API_KEY || ''
+const WEB_APP_BASE_URL = (import.meta.env.VITE_WEB_APP_BASE_URL || '').replace(/\/$/, '')
+const USE_DJANGO_DEV_PROXY = DJANGO_API_BASE_URL === '/api'
+const REQUEST_TIMEOUT_MS = 15000
+
+function buildRegistrationUrl(serverUrl) {
+  if (!WEB_APP_BASE_URL) return serverUrl
+  try {
+    const token = new URL(serverUrl).searchParams.get('token')
+    if (!token) return serverUrl
+    return `${WEB_APP_BASE_URL}/register?token=${encodeURIComponent(token)}`
+  } catch {
+    return serverUrl
+  }
+}
+
+console.info('[Cabinet API diagnostics]', {
+  baseUrl: DJANGO_API_BASE_URL,
+  keyConfigured: Boolean(DJANGO_API_KEY),
+  keyLength: DJANGO_API_KEY.length,
+  proxyMode: USE_DJANGO_DEV_PROXY,
+  nfcMode: NFC_MODE,
+})
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('NFC request timed out. Please try again.', { cause: error })
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
+async function readApiResponse(response) {
+  const body = await response.text()
+  if (!body.trim()) {
+    return { data: {}, body: '' }
+  }
+
+  try {
+    return { data: JSON.parse(body), body }
+  } catch {
+    return { data: {}, body }
+  }
+}
+
+function getApiErrorMessage(response, data, body) {
+  const detail = data.error || data.detail || data.message
+  if (detail) return `${detail} (HTTP ${response.status})`
+  if (response.status === 401 || response.status === 403) {
+    return `Django rejected the API request. Check VITE_DJANGO_API_KEY. (HTTP ${response.status})`
+  }
+  if (!body) return `Django returned an empty response. (HTTP ${response.status})`
+  return `Django returned an invalid response. (HTTP ${response.status})`
+}
 
 function IconNFC({ className = 'icon-lg', pulse = false }) {
   return (
@@ -58,11 +123,131 @@ export default function App() {
   const [nfcUid, setNfcUid] = useState('')
   const [serviceStatus, setServiceStatus] = useState(null)
   const [passwordRecovery, setPasswordRecovery] = useState({ display: null, error: '', busy: false })
+  const [accessState, setAccessState] = useState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
+  const [mockNfcUid, setMockNfcUid] = useState('')
+  const lastNfcEventRef = useRef(0)
+  const verificationInFlightRef = useRef(false)
+  const lastProcessedUidRef = useRef('')
+  const lastProcessedAtRef = useRef(0)
+  const nfcProvider = useMemo(() => {
+    try {
+      return createNfcProvider({ mode: NFC_MODE, serviceUrl: NFC_SERVICE_URL, fetcher: fetch })
+    } catch (error) {
+      return { mode: NFC_MODE, poll: async () => { throw error }, submit: async () => { throw error } }
+    }
+  }, [])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setClock(new Date()), 1000)
     return () => window.clearInterval(intervalId)
   }, [])
+
+  const verifyNfcUid = useCallback(async (uid) => {
+    if (!uid) {
+      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: 'Enter an NFC UID to check.' })
+      return
+    }
+
+    if (!DJANGO_API_KEY && !USE_DJANGO_DEV_PROXY) {
+      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: 'Django API key is not configured. Set VITE_DJANGO_API_KEY and restart Vite.' })
+      return
+    }
+
+    setAccessState({ status: 'checking', name: '', studentId: '', role: '', message: '' })
+    try {
+      const headers = { Accept: 'application/json', 'Content-Type': 'application/json' }
+      if (DJANGO_API_KEY) headers['X-API-Key'] = DJANGO_API_KEY
+      console.info('[Cabinet NFC request diagnostics]', {
+        endpoint: `${DJANGO_API_BASE_URL}/verify-nfc/`,
+        keyConfigured: Boolean(DJANGO_API_KEY),
+        keyLength: DJANGO_API_KEY.length,
+        xApiKeyHeaderSent: Boolean(headers['X-API-Key']),
+      })
+      const response = await fetchWithTimeout(`${DJANGO_API_BASE_URL}/verify-nfc/`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ nfc_uid: uid }),
+      })
+      const { data, body } = await readApiResponse(response)
+      if (response.ok && data.success) {
+        setAccessState({ status: 'success', name: data.name || 'Student', studentId: data.student_id || '', role: data.role || '', message: '' })
+        return
+      }
+      if (response.status === 404) {
+        if (data.registration_required && data.registration_url) {
+          setAccessState({ status: 'registration', name: '', studentId: '', role: '', message: 'Please scan this QR code to register your card.', registrationUrl: buildRegistrationUrl(data.registration_url) })
+        } else {
+          setAccessState({ status: 'unregistered', name: '', studentId: '', role: '', message: 'NFC card is not registered yet.', registrationUrl: '' })
+        }
+        return
+      }
+      throw new Error(getApiErrorMessage(response, data, body))
+    } catch (error) {
+      const message = error instanceof TypeError
+        ? 'Unable to connect to the Django API. Check that Django is running and VITE_DJANGO_API_BASE_URL is correct.'
+        : error.message || 'Django API is unavailable.'
+      setAccessState({ status: 'error', name: '', studentId: '', role: '', message })
+    }
+  }, [])
+
+  async function handleMockNfcSubmit(event) {
+    event.preventDefault()
+    try {
+      const uid = await nfcProvider.submit(mockNfcUid)
+      await verifyNfcUid(uid)
+    } catch (error) {
+      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: error.message || 'Mock NFC input failed.' })
+    }
+  }
+
+  useEffect(() => {
+    if (view !== 'home' || NFC_MODE !== 'hardware') return undefined
+
+    let cancelled = false
+    const pollNfcService = async () => {
+      try {
+        const data = await nfcProvider.poll()
+        if (cancelled) return
+
+        if (data.state === 'error') {
+          setAccessState((current) => current.status === 'checking'
+            ? current
+            : { status: 'error', name: '', studentId: '', role: '', message: `NFC reader unavailable. ${data.error || 'Check the NFC service.'}` })
+          return
+        }
+
+        if (data.state === 'waiting') {
+          setAccessState((current) => current.status === 'error'
+            ? { status: 'idle', name: '', studentId: '', role: '', message: '' }
+            : current)
+        }
+
+        const now = Date.now()
+        const isCoolingDown = data.uid === lastProcessedUidRef.current && now - lastProcessedAtRef.current < NFC_COOLDOWN_MS
+        if (data.state === 'detected' && data.uid && data.event_id !== lastNfcEventRef.current && !isCoolingDown && !verificationInFlightRef.current) {
+          lastNfcEventRef.current = data.event_id
+          lastProcessedUidRef.current = data.uid
+          lastProcessedAtRef.current = now
+          verificationInFlightRef.current = true
+          setAccessState({ status: 'detected', name: '', studentId: '', role: '', message: 'NFC card detected.' })
+          try {
+            await verifyNfcUid(data.uid)
+          } finally {
+            verificationInFlightRef.current = false
+          }
+        }
+      } catch (error) {
+        if (!cancelled) setAccessState({ status: 'error', name: '', studentId: '', role: '', message: 'NFC reader unavailable. Check that the NFC service is running.' })
+      }
+    }
+
+    pollNfcService()
+    const intervalId = window.setInterval(pollNfcService, 500)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [nfcProvider, view, verifyNfcUid])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined
@@ -94,22 +279,6 @@ export default function App() {
     setErrorMessage('')
     setStatusMessage('Ready for the next cabinet session.')
     setNfcUid('')
-  }
-
-  function beginSession(action) {
-    setPendingAction(action)
-    setParticipants([])
-    setSelectedStation(null)
-    setScanFeedback(null)
-    setErrorMessage('')
-    setStatusMessage(action === 'open'
-      ? 'Choose a station and begin scanning participants.'
-      : 'Choose the station and scan the returning participants.')
-    setView('station-select')
-  }
-
-  function startOpenSession() {
-    beginSession('open')
   }
 
   function startCloseSession() {
@@ -284,12 +453,6 @@ export default function App() {
     }
   }
 
-  function goToRegistration() {
-    setForm({ fullName: '', studentId: '', email: '', section: '' })
-    setErrorMessage('')
-    setView('register-card')
-  }
-
   async function captureMockCard() {
     try {
       const response = await fetch(`${PI_SERVICE_URL}/cabinet/mock-capture`, {
@@ -378,26 +541,55 @@ export default function App() {
           <div className="home-shell">
             <div className="hero-card">
               <div className="nfc-ring">
-                <IconNFC pulse />
+                <IconNFC pulse={accessState.status === 'idle'} />
               </div>
               <div className="title-block">
-                <h1 className="title">Cabinet Access</h1>
-                <p className="subtitle">A touch-friendly workflow for open-ended NFC participant scanning.</p>
+                <h1 className="title">
+                  {accessState.status === 'registration' ? 'NFC card not registered.' : accessState.status === 'detected' ? 'NFC detected' : accessState.status === 'checking' ? 'Checking NFC...' : accessState.status === 'success' ? `Welcome, ${accessState.name}` : accessState.status === 'unregistered' ? 'NFC card not registered' : accessState.status === 'error' ? 'NFC API error' : 'Waiting for NFC'}
+                </h1>
+                <p className="subtitle">
+                  {accessState.status === 'success' ? 'Your card was recognized.' : accessState.status === 'registration' ? accessState.message : accessState.status === 'detected' ? accessState.message : accessState.status === 'unregistered' || accessState.status === 'error' ? accessState.message : accessState.status === 'checking' ? 'Please wait while Django checks the card.' : 'Enter a mock UID below to check a card.'}
+                </p>
+                {accessState.status === 'registration' && accessState.registrationUrl && (
+                  <div className="registration-qr">
+                    <QRCodeSVG value={accessState.registrationUrl} size={240} bgColor="#ffffff" fgColor="#071826" level="M" />
+                  </div>
+                )}
+                {accessState.status === 'success' && (
+                  <div className="student-readout">
+                    <strong>{accessState.name}</strong>
+                    {accessState.studentId && <span>Student ID: {accessState.studentId}</span>}
+                    {accessState.role && <span>Role: {accessState.role}</span>}
+                  </div>
+                )}
               </div>
-              <div className="status-chip">
-                <span className="status-dot good" />
-                <span>{statusMessage}</span>
-              </div>
+              {accessState.status === 'success' && <div className="status-chip"><span className="status-dot good" /><span>Access verified</span></div>}
               <div className="clock-card">
                 <span className="clock-label">Cabinet Status</span>
-                <strong>Development Mock · Ready</strong>
+                <strong>{accessState.status === 'detected' || accessState.status === 'checking' ? 'Checking card' : 'Ready for NFC'}</strong>
                 <span className="clock-time">{formatDateTime(clock)}</span>
               </div>
             </div>
 
+            {NFC_MODE === 'mock' && (
+              <form className="mock-nfc-form" onSubmit={handleMockNfcSubmit}>
+                <label htmlFor="mock-nfc-uid">Mock NFC UID</label>
+                <div className="mock-nfc-controls">
+                  <input
+                    id="mock-nfc-uid"
+                    value={mockNfcUid}
+                    onChange={(event) => setMockNfcUid(event.target.value)}
+                    placeholder="Enter NFC UID"
+                    autoComplete="off"
+                  />
+                  <button className="btn primary" type="submit" disabled={accessState.status === 'checking'}>
+                    Check NFC
+                  </button>
+                </div>
+              </form>
+            )}
+
             <div className="home-actions">
-              <button className="btn primary home-action" onClick={startOpenSession}>Tap NFC Card</button>
-              <button className="btn secondary home-action" onClick={goToRegistration}>Register Card</button>
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
               <button className="btn ghost home-action" onClick={startPasswordRecovery}>Password Recovery</button>
             </div>

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=TapTrack Cabinet
+Exec=/usr/bin/chromium --kiosk --disable-infobars --noerrdialogs --disable-session-crashed-bubble --disable-features=TranslateUI --user-data-dir=/home/pi/.config/taptrack-chromium http://127.0.0.1:5173
+Terminal=false
+X-GNOME-Autostart-enabled=true

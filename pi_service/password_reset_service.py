@@ -71,7 +71,11 @@ class DjangoClient:
             with self.opener(request, timeout=10) as response:
                 return json.loads(response.read().decode('utf-8'))
         except HTTPError as error:
-            raise DjangoAPIError(error.code) from error
+            try:
+                error_payload = json.loads(error.read().decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error_payload = {}
+            raise DjangoAPIError(error.code, error_payload) from error
 
     def claim_handoff(self, request_id: str) -> Handoff:
         data = self._post('/auth/password-reset/cabinet-handoff/', {'request_id': request_id})
@@ -103,8 +107,9 @@ class DjangoClient:
 
 
 class DjangoAPIError(RuntimeError):
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int, payload: dict | None = None):
         self.status_code = status_code
+        self.payload = payload or {}
         super().__init__(f'Django request failed with status {status_code}.')
 
 
@@ -245,6 +250,14 @@ class PasswordResetController:
         nfc_uid = self.scanner.scan_uid()
         return self.django.verify_access(nfc_uid)
 
+    def scan_access_card(self) -> str:
+        return self.scanner.scan_uid()
+
+    def verify_access_card(self, nfc_uid: str) -> dict:
+        if not nfc_uid:
+            raise ValueError('NFC UID is required.')
+        return self.django.verify_access(nfc_uid)
+
     def display_snapshot(self) -> dict:
         if not isinstance(self.display, MockDisplay):
             raise RuntimeError('Mock display state is unavailable in production mode.')
@@ -301,6 +314,7 @@ class HandoffHandler(BaseHTTPRequestHandler):
             '/cabinet/mock-capture',
             '/cabinet/register',
             '/cabinet/mock-access',
+            '/cabinet/verify',
         ):
             self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found.'})
             return
@@ -346,6 +360,18 @@ class HandoffHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, result)
                 return
 
+            if self.path == '/cabinet/verify':
+                length = int(self.headers.get('Content-Length', '0'))
+                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                try:
+                    result = self.controller.verify_access_card(str(payload.get('nfc_uid', '')).strip())
+                    self._send_json(HTTPStatus.OK, result)
+                except DjangoAPIError as error:
+                    fallback = 'NFC card not registered.' if error.status_code == 404 else 'Django verification failed.'
+                    response = error.payload or {'success': False, 'error': fallback}
+                    self._send_json(HTTPStatus(error.status_code), response)
+                return
+
             if self.path == '/password-reset/retry':
                 with self.controller._lock:
                     if self.controller._active_handoff is None:
@@ -366,7 +392,7 @@ class HandoffHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Password-reset handoff could not be accepted.'})
 
     def do_GET(self) -> None:
-        if self.controller is None or self.path not in ('/password-reset/display', '/status'):
+        if self.controller is None or self.path not in ('/password-reset/display', '/status', '/cabinet/scan'):
             self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found.'})
             return
 
@@ -382,6 +408,10 @@ class HandoffHandler(BaseHTTPRequestHandler):
                     'physical_hardware': 'not connected',
                     'cabinet_actions': 'mock only',
                 })
+                return
+            if self.path == '/cabinet/scan':
+                nfc_uid = self.controller.scan_access_card()
+                self._send_json(HTTPStatus.OK, {'success': True, 'nfc_uid': nfc_uid})
                 return
             self._send_json(HTTPStatus.OK, self.controller.display_snapshot())
         except RuntimeError:

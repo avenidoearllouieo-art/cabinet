@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/auth/Login.jsx'
 import ForgotPassword from './pages/auth/ForgotPassword.jsx'
+import NfcRegistration from './pages/auth/NfcRegistration.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
 import InstructorLayout from './layouts/InstructorLayout.jsx'
 import StudentLayout from './layouts/StudentLayout.jsx'
@@ -55,6 +56,7 @@ function App() {
         <Routes>
         <Route path='/' element={<Login />} />
         <Route path='/forgot-password' element={<ForgotPassword />} />
+        <Route path='/register' element={<NfcRegistration />} />
         <Route path='/admin/login' element={<Login administratorOnly />} />
         <Route path='/instructor/login' element={<Login />} />
         <Route path='/student/login' element={<Login />} />

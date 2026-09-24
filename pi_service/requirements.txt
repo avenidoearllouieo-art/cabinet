@@ -1,0 +1,2 @@
+# The NFC service currently uses only Python's standard library.
+# Add the confirmed reader library here when the Raspberry Pi reader model is known.

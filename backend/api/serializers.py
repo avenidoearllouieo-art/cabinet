@@ -346,6 +346,20 @@ class PasswordResetTokenValidationSerializer(serializers.Serializer):
     reset_token = serializers.CharField(required=True, allow_blank=False, write_only=True)
 
 
+class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
+    token = serializers.CharField(required=True, allow_blank=False, write_only=True)
+    student_id = serializers.CharField(required=True, allow_blank=False, max_length=50)
+    full_name = serializers.CharField(required=True, allow_blank=False, max_length=150)
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(required=True, write_only=True, min_length=8)
+    confirm_password = serializers.CharField(required=True, write_only=True)
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
+
+
 class ActivityAttachmentSerializer(serializers.ModelSerializer):
     filename = serializers.SerializerMethodField()
     url = serializers.SerializerMethodField()

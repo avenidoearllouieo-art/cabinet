@@ -1,6 +1,9 @@
 from rest_framework.permissions import BasePermission
 from rest_framework.throttling import AnonRateThrottle
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class IsAdminRole(BasePermission):
@@ -49,6 +52,14 @@ class HasDeviceAPIKey(BasePermission):
             request.headers.get('X-API-Key')
             or request.META.get('HTTP_X_API_KEY', '')
         ).strip()
+
+        logger.info(
+            'Device API key diagnostics: django_key_configured=%s django_key_length=%d x_api_key_header_received=%s keys_match=%s',
+            bool(expected),
+            len(expected),
+            bool(provided),
+            bool(expected) and bool(provided) and provided == expected,
+        )
 
         if not expected:
             return False

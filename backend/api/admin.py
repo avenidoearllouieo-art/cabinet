@@ -13,6 +13,7 @@ from .models import (
     Submission,
     AccessLog,
     CabinetEvent,
+    NFCEnrollmentSession,
 )
 
 
@@ -372,3 +373,12 @@ class CabinetEventAdmin(admin.ModelAdmin):
     ordering = ('-timestamp',)
     readonly_fields = ('timestamp',)
     date_hierarchy = 'timestamp'
+
+
+@admin.register(NFCEnrollmentSession)
+class NFCEnrollmentSessionAdmin(admin.ModelAdmin):
+    list_display = ('nfc_uid', 'status', 'expires_at', 'created_at', 'completed_at', 'completed_by')
+    list_filter = ('status',)
+    search_fields = ('nfc_uid', 'completed_by__username', 'completed_by__student_id')
+    readonly_fields = ('nfc_uid', 'token_digest', 'token_hash', 'created_at', 'completed_at', 'completed_by')
+    ordering = ('-created_at',)

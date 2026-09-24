@@ -104,6 +104,16 @@ class PasswordResetServiceTests(unittest.TestCase):
         self.assertEqual(result['student_id'], 'STU-001')
         self.assertEqual(django.registered_students[-1][-1], 'NFC-MOCK-001')
 
+    def test_real_access_scan_reads_from_scanner_then_verifies_uid(self):
+        django = FakeDjangoClient()
+        controller = PasswordResetController(django, FakeScanner(), FakeDisplay())
+
+        uid = controller.scan_access_card()
+        result = controller.verify_access_card(uid)
+
+        self.assertEqual(uid, 'NFC-001')
+        self.assertTrue(result['success'])
+
 
 if __name__ == '__main__':
     unittest.main()

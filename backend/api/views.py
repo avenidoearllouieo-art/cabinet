@@ -19,10 +19,13 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.conf import settings
+from urllib.parse import quote
+import hashlib
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
-from .models import PasswordResetRequest
+from .models import PasswordResetRequest, NFCEnrollmentSession
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
@@ -41,9 +44,13 @@ from .serializers import (
     CabinetRegistrationSerializer,
     PasswordResetConfirmationSerializer,
     PasswordResetTokenValidationSerializer,
+    NFCEnrollmentRegistrationSerializer,
 )
 from django.contrib.auth.password_validation import validate_password
 import secrets
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SectionViewSet(viewsets.ModelViewSet):
@@ -1141,8 +1148,46 @@ class VerifyNFCView(APIView):
     authentication_classes = []                    # No JWT — ESP32 can't do JWT
     permission_classes = [HasDeviceAPIKey]         # API key instead
 
+    def _unregistered_response(self, nfc_uid):
+        token = secrets.token_urlsafe(32)
+        expires_at = timezone.now() + timedelta(minutes=15)
+        with transaction.atomic():
+            enrollment = NFCEnrollmentSession.objects.select_for_update().filter(
+                nfc_uid=nfc_uid,
+                status=NFCEnrollmentSession.StatusChoices.PENDING,
+            ).order_by('-created_at').first()
+            if enrollment and enrollment.is_expired:
+                enrollment.status = NFCEnrollmentSession.StatusChoices.EXPIRED
+                enrollment.save(update_fields=['status'])
+                enrollment = None
+            if enrollment is None:
+                enrollment = NFCEnrollmentSession(
+                    nfc_uid=nfc_uid,
+                    token_digest='',
+                    token_hash='',
+                    expires_at=expires_at,
+                )
+            else:
+                enrollment.expires_at = expires_at
+            enrollment.set_token(token)
+            enrollment.save()
+        registration_url = f'{settings.NFC_REGISTRATION_URL_BASE}?token={quote(token, safe="")}'
+        return Response(
+            {
+                'success': False,
+                'registered': False,
+                'registration_required': True,
+                'registration_url': registration_url,
+                'expires_at': enrollment.expires_at.isoformat(),
+                'error': 'NFC card not registered.',
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
     def post(self, request, *args, **kwargs):
-        nfc_uid = request.data.get('nfc_uid')
+        received_nfc_uid = str(request.data.get('nfc_uid') or '')
+        nfc_uid = received_nfc_uid.strip().upper()
+        logger.info('NFC verification request received: raw_uid=%r normalized_uid=%r', received_nfc_uid, nfc_uid)
         if not nfc_uid:
             return Response(
                 {'success': False, 'error': 'NFC UID is required.'},
@@ -1150,6 +1195,14 @@ class VerifyNFCView(APIView):
             )
 
         user = User.objects.filter(nfc_uid=nfc_uid).first()
+        logger.info(
+            'NFC verification lookup: model=%s field=User.nfc_uid match=%s username=%r student_id=%r active=%s',
+            User._meta.label,
+            bool(user),
+            user.username if user else None,
+            user.student_id if user else None,
+            user.is_active if user else None,
+        )
 
         if user and user.is_active:
             access_log = AccessLog.objects.create(user=user, status=AccessLog.AccessStatusChoices.SUCCESS)
@@ -1179,9 +1232,120 @@ class VerifyNFCView(APIView):
             )
 
         AccessLog.objects.create(user=None, status=AccessLog.AccessStatusChoices.FAILED)
+        return self._unregistered_response(nfc_uid)
+
+
+class NFCEnrollmentValidationView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        token = (request.query_params.get('token') or '').strip()
+        if not token:
+            return Response(
+                {'valid': False, 'error': 'This NFC registration session is invalid or expired.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        enrollment = NFCEnrollmentSession.objects.filter(token_digest=token_digest).first()
+        if not enrollment or enrollment.status != NFCEnrollmentSession.StatusChoices.PENDING:
+            return Response(
+                {'valid': False, 'error': 'This NFC registration session is invalid or expired.'},
+                status=status.HTTP_410_GONE,
+            )
+
+        if enrollment.is_expired:
+            enrollment.status = NFCEnrollmentSession.StatusChoices.EXPIRED
+            enrollment.save(update_fields=['status'])
+            return Response(
+                {'valid': False, 'error': 'This NFC registration session is invalid or expired.'},
+                status=status.HTTP_410_GONE,
+            )
+
         return Response(
-            {'success': False, 'error': 'NFC card not registered.'},
-            status=status.HTTP_404_NOT_FOUND,
+            {'valid': True, 'expires_at': enrollment.expires_at.isoformat()},
+            status=status.HTTP_200_OK,
+        )
+
+
+class NFCEnrollmentRegistrationView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = NFCEnrollmentRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        token = data['token'].strip()
+        token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+        with transaction.atomic():
+            enrollment = NFCEnrollmentSession.objects.select_for_update().filter(
+                token_digest=token_digest,
+            ).first()
+            if not enrollment or enrollment.status != NFCEnrollmentSession.StatusChoices.PENDING:
+                return Response(
+                    {'error': 'This NFC registration session is invalid or expired.'},
+                    status=status.HTTP_410_GONE,
+                )
+            if enrollment.is_expired:
+                enrollment.status = NFCEnrollmentSession.StatusChoices.EXPIRED
+                enrollment.save(update_fields=['status'])
+                return Response(
+                    {'error': 'This NFC registration session is invalid or expired.'},
+                    status=status.HTTP_410_GONE,
+                )
+
+            user = User.objects.select_for_update().filter(
+                student_id=data['student_id'].strip(),
+                role=User.RoleChoices.STUDENT,
+            ).first()
+            if not user:
+                return Response(
+                    {'error': 'Student ID was not found in the existing student records.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if user.has_usable_password() or user.nfc_uid:
+                return Response(
+                    {'error': 'A TapTrack account already exists for this Student ID.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if User.objects.filter(nfc_uid=enrollment.nfc_uid).exclude(pk=user.pk).exists():
+                return Response(
+                    {'error': 'This NFC card is already assigned to another student.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            email = data['email'].strip().lower()
+            if User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
+                return Response(
+                    {'error': 'That email address is already in use.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            name_parts = data['full_name'].strip().split(None, 1)
+            user.first_name = name_parts[0]
+            user.last_name = name_parts[1] if len(name_parts) > 1 else ''
+            user.email = email
+            user.nfc_uid = enrollment.nfc_uid
+            user.is_active = True
+            user.set_password(data['password'])
+            user.full_clean()
+            user.save()
+
+            enrollment.status = NFCEnrollmentSession.StatusChoices.COMPLETED
+            enrollment.completed_at = timezone.now()
+            enrollment.completed_by = user
+            enrollment.save(update_fields=['status', 'completed_at', 'completed_by'])
+
+        return Response(
+            {
+                'success': True,
+                'message': 'Registration successful.',
+                'student_id': user.student_id,
+                'name': user.get_full_name().strip(),
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 
