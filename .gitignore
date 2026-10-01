@@ -32,6 +32,7 @@ backend/media/
 /excel/
 /cabinet/excel/
 *.xlsx
+!backend/api/static/api/student_import_template.xlsx
 
 # Generated/legacy frontend scratch files
 frontend/served_users.jsx

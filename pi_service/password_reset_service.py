@@ -283,6 +283,8 @@ class HandoffHandler(BaseHTTPRequestHandler):
             'http://localhost:5176',
             'http://127.0.0.1:5173',
             'http://localhost:5173',
+            'http://127.0.0.1:4000',
+            'http://localhost:4000',
         }
 
     def _request_origin_is_allowed(self) -> bool:

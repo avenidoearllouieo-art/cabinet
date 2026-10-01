@@ -14,20 +14,27 @@
 }
 
 .app-root {
-  min-height: 100vh;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--app-bg);
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
-  padding: 18px;
+  padding: clamp(8px, 1.5dvh, 18px);
+  overflow: hidden;
 }
 
 .screen {
-  width: min(100%, 760px);
-  min-height: min(94vh, 860px);
-  padding: 26px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
+  padding: clamp(12px, 2dvh, 26px);
   border-radius: 28px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -35,6 +42,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: fadeIn 0.28s ease;
 }
 
@@ -311,6 +320,18 @@
   min-height: 72px;
   font-size: 1.08rem;
 }
+.scan-prompt {
+  width: min(100%, 400px);
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border: 1px solid var(--accent-border);
+  border-radius: 16px;
+  color: var(--text);
+  background: var(--surface-subtle);
+}
 
 .station-grid {
   display: grid;
@@ -533,9 +554,8 @@
 @media (max-width: 760px) {
   .screen {
     width: 100%;
-    min-height: 100vh;
     border-radius: 0;
-    padding: 18px;
+    padding: clamp(10px, 2dvh, 18px);
   }
 
   .station-grid {
@@ -544,6 +564,200 @@
 
   .button-row.inline {
     flex-direction: column;
+  }
+}
+
+@media (max-height: 600px) {
+  .screen {
+    padding: 12px;
+  }
+
+  .hero-card {
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+
+  .nfc-ring {
+    width: 132px;
+    height: 132px;
+    margin-bottom: 12px;
+  }
+
+  .small-ring {
+    width: 88px;
+    height: 88px;
+  }
+
+  .clock-card {
+    padding: 10px 12px;
+  }
+
+  .home-action {
+    min-height: 48px;
+  }
+}
+
+@media (max-height: 600px) and (min-width: 761px) {
+  .home-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+    align-items: center;
+    gap: 14px;
+  }
+
+  .hero-card {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    grid-template-areas:
+      'ring title'
+      'ring status'
+      'clock clock';
+    align-items: center;
+    gap: 8px 12px;
+    margin: 0;
+    text-align: left;
+  }
+
+  .hero-card .nfc-ring {
+    grid-area: ring;
+    width: 80px;
+    height: 80px;
+    margin: 0;
+  }
+
+  .hero-card .title-block {
+    grid-area: title;
+    margin: 0;
+  }
+
+  .hero-card .status-chip {
+    grid-area: status;
+    justify-self: start;
+    margin: 0;
+    padding: 8px 10px;
+  }
+
+  .hero-card .clock-card {
+    grid-area: clock;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    margin: 0;
+  }
+
+  .home-actions {
+    width: 100%;
+  }
+
+  .participant-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'hero participants'
+      'status participants'
+      'feedback participants'
+      'actions actions';
+    align-items: stretch;
+    gap: 8px 14px;
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .scan-hero {
+    grid-area: hero;
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 10px;
+    text-align: left;
+  }
+
+  .scan-hero .small-ring {
+    grid-row: 1 / span 2;
+    width: 72px;
+    height: 72px;
+    margin: 0;
+  }
+
+  .scan-hero h2,
+  .scan-hero .muted {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .scan-hero h2 {
+    align-self: end;
+    font-size: 1.35rem;
+    margin: 0;
+  }
+
+  .scan-hero .muted {
+    align-self: start;
+    line-height: 1.3;
+  }
+
+  .participant-shell > .status-chip {
+    grid-area: status;
+    justify-self: start;
+    margin: 0;
+    padding: 8px 10px;
+  }
+
+  .feedback-card {
+    grid-area: feedback;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  .feedback-banner {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .feedback-check {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+  }
+
+  .panel-card {
+    grid-area: participants;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .participant-list {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .button-row.stacked {
+    grid-area: actions;
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0;
+  }
+
+  .button-row.inline {
+    width: auto;
+    margin: 0;
+  }
+
+  .scan-prompt {
+    flex: 1;
+    min-height: 48px;
+    width: auto;
+    padding: 8px 12px;
   }
 }
 

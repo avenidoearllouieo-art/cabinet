@@ -1,14 +1,14 @@
 [Unit]
-Description=TapTrack NFC reader service
+Description=TapTrack NFC reader and scan bridge
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/apps/taptrack-cabinet/pi_service
-EnvironmentFile=-/etc/taptrack/cabinet.env
-ExecStart=/home/pi/apps/taptrack-cabinet/pi_service/.venv/bin/python nfc_service.py
+WorkingDirectory=/home/pi/tap-track/pi_service
+EnvironmentFile=-/etc/taptrack/nfc.env
+ExecStart=/home/pi/tap-track/pi_service/.venv/bin/python /home/pi/tap-track/pi_service/nfc_service.py
 Restart=always
 RestartSec=3
 

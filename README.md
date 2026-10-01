@@ -45,18 +45,6 @@ npm run dev
 
 The dashboard runs at `http://localhost:5176` and proxies `/api` requests to Django on port 8000.
 
-## Touchscreen prototype
-
-The independent cabinet touchscreen prototype is under `kiosk/`:
-
-```powershell
-cd kiosk
-npm ci
-npm run dev
-```
-
-It currently uses local browser storage and simulated NFC scans; it does not operate physical locks.
-
 ## Quality checks
 
 Run these before opening a pull request:
@@ -66,7 +54,7 @@ cd frontend
 npm run lint
 npm run build
 
-cd ..\kiosk
+cd ..\cabinet
 npm run lint
 npm run build
 
@@ -77,4 +65,4 @@ python backend/manage.py test api
 git diff --check
 ```
 
-GitHub Actions runs the same frontend, kiosk, and backend checks for every push and pull request.
+GitHub Actions runs the frontend, Cabinet, and backend checks for every push and pull request.

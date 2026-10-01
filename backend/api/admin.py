@@ -1,7 +1,15 @@
+import secrets
+
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django import forms
+from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError, transaction
+from django.http import HttpResponseRedirect
+from django.shortcuts import render
+from django.urls import path, reverse
 
 from .models import (
     Section,
@@ -14,6 +22,11 @@ from .models import (
     AccessLog,
     CabinetEvent,
     NFCEnrollmentSession,
+)
+from .student_import import (
+    build_student,
+    read_student_workbook,
+    validate_student_rows,
 )
 
 
@@ -72,8 +85,8 @@ class SectionAdmin(admin.ModelAdmin):
 
 
 class StudentCreationForm(forms.ModelForm):
-    password1 = forms.CharField(label='Password', widget=forms.PasswordInput)
-    password2 = forms.CharField(label='Password confirmation', widget=forms.PasswordInput)
+    password1 = forms.CharField(label='Password (optional for NFC enrollment)', widget=forms.PasswordInput, required=False)
+    password2 = forms.CharField(label='Password confirmation', widget=forms.PasswordInput, required=False)
     username = forms.CharField(required=False, label='Username')
 
     class Meta:
@@ -87,6 +100,10 @@ class StudentCreationForm(forms.ModelForm):
     def clean_password2(self):
         p1 = self.cleaned_data.get('password1')
         p2 = self.cleaned_data.get('password2')
+        if p1 and not p2:
+            raise forms.ValidationError('Confirm the password, or leave both password fields blank for NFC enrollment.')
+        if p2 and not p1:
+            raise forms.ValidationError('Enter a password, or leave both password fields blank for NFC enrollment.')
         if p1 and p2 and p1 != p2:
             raise forms.ValidationError("Passwords don't match")
         return p2
@@ -95,7 +112,10 @@ class StudentCreationForm(forms.ModelForm):
         user = super().save(commit=False)
         # prefer explicit username from form, fallback to student_id or email
         user.username = self.cleaned_data.get('username') or user.student_id or user.email
-        user.set_password(self.cleaned_data['password1'])
+        if self.cleaned_data.get('password1'):
+            user.set_password(self.cleaned_data['password1'])
+        else:
+            user.set_unusable_password()
         user.role = User.RoleChoices.STUDENT
         user.is_staff = False
         try:
@@ -108,6 +128,18 @@ class StudentCreationForm(forms.ModelForm):
             # Ensure the relation fields are saved
             self.save_m2m()
         return user
+
+
+class StudentWorkbookUploadForm(forms.Form):
+    workbook = forms.FileField(label='Student workbook (.xlsx)')
+
+    def clean_workbook(self):
+        workbook = self.cleaned_data['workbook']
+        if not workbook.name.lower().endswith('.xlsx'):
+            raise forms.ValidationError('Upload an Excel .xlsx workbook.')
+        if workbook.size > 10 * 1024 * 1024:
+            raise forms.ValidationError('The workbook must be 10 MB or smaller.')
+        return workbook
 
 
 class InstructorCreationForm(forms.ModelForm):
@@ -207,11 +239,103 @@ class AdminCreationForm(forms.ModelForm):
 
 @admin.register(StudentProfile)
 class StudentProfileAdmin(admin.ModelAdmin):
+    change_list_template = 'admin/api/studentprofile/change_list.html'
     form = CustomUserChangeForm
     add_form = StudentCreationForm
     autocomplete_fields = ('section',)
     list_display = ('student_id', 'first_name', 'last_name', 'email', 'section', 'nfc_uid', 'is_active')
     search_fields = ('student_id', 'first_name', 'last_name', 'email')
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'import-students/',
+                self.admin_site.admin_view(self.import_students_view),
+                name='api_studentprofile_import_students',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context['student_import_url'] = reverse('admin:api_studentprofile_import_students')
+        return super().changelist_view(request, extra_context=extra_context)
+
+    def import_students_view(self, request):
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+
+        context = {
+            **self.admin_site.each_context(request),
+            'opts': self.model._meta,
+            'title': 'Import Students',
+            'form': StudentWorkbookUploadForm(),
+            'rows': [],
+            'errors': [],
+            'confirm_nonce': '',
+            'result': None,
+            'uploaded': False,
+        }
+        preview_key = 'api_student_import_preview'
+
+        if request.method == 'POST' and request.POST.get('action') == 'confirm':
+            preview = request.session.get(preview_key)
+            nonce = request.POST.get('confirm_nonce', '')
+            if not preview or not secrets.compare_digest(str(preview.get('nonce', '')), nonce):
+                request.session.pop(preview_key, None)
+                context['errors'] = [{'row': '-', 'column': 'confirmation', 'message': 'The preview expired or is invalid. Upload the workbook again.'}]
+                return render(request, 'admin/api/studentprofile/import_students.html', context, status=400)
+
+            rows = preview.get('rows', [])
+            prepared, errors = validate_student_rows(rows)
+            if errors:
+                request.session.pop(preview_key, None)
+                context['rows'] = prepared
+                context['errors'] = errors
+                return render(request, 'admin/api/studentprofile/import_students.html', context, status=400)
+
+            try:
+                with transaction.atomic():
+                    for row in prepared:
+                        student = build_student(row)
+                        student.full_clean()
+                        student.save()
+            except (ValidationError, IntegrityError) as error:
+                request.session.pop(preview_key, None)
+                context['rows'] = prepared
+                if isinstance(error, ValidationError) and hasattr(error, 'message_dict'):
+                    context['errors'] = [
+                        {'row': '-', 'column': field, 'message': '; '.join(messages)}
+                        for field, messages in error.message_dict.items()
+                    ]
+                else:
+                    context['errors'] = [{'row': '-', 'column': 'database', 'message': 'The import conflicted with existing data. No records were imported.'}]
+                return render(request, 'admin/api/studentprofile/import_students.html', context, status=400)
+
+            request.session.pop(preview_key, None)
+            context['result'] = {'created': len(prepared), 'updated': 0}
+            return render(request, 'admin/api/studentprofile/import_students.html', context)
+
+        if request.method == 'POST':
+            context['form'] = StudentWorkbookUploadForm(request.POST, request.FILES)
+            if context['form'].is_valid():
+                context['uploaded'] = True
+                rows, workbook_errors = read_student_workbook(context['form'].cleaned_data['workbook'])
+                prepared, row_errors = validate_student_rows(rows) if rows else ([], [])
+                context['rows'] = prepared
+                context['errors'] = workbook_errors + row_errors
+                if not context['errors']:
+                    nonce = secrets.token_urlsafe(24)
+                    request.session[preview_key] = {'nonce': nonce, 'rows': prepared}
+                    context['confirm_nonce'] = nonce
+            else:
+                context['errors'] = [
+                    {'row': '-', 'column': 'file', 'message': message}
+                    for messages in context['form'].errors.values()
+                    for message in messages
+                ]
+
+        return render(request, 'admin/api/studentprofile/import_students.html', context)
 
     def get_fieldsets(self, request, obj=None):
         if obj:

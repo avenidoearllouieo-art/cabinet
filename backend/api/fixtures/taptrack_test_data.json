@@ -1,0 +1,59 @@
+[
+  {
+    "model": "api.section",
+    "pk": 990001,
+    "fields": {
+      "section_code": "TAP-TEST-2026",
+      "section_name": "TapTrack Development Test Section",
+      "instructor": null,
+      "program": "BSIT",
+      "year_level": "2nd Year",
+      "academic_year": "2026-2027",
+      "adviser_instructor": "",
+      "student_count": 1,
+      "status": "Active"
+    }
+  },
+  {
+    "model": "api.user",
+    "pk": 990001,
+    "fields": {
+      "password": "!",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "taptrack_test_student",
+      "first_name": "Jordan",
+      "last_name": "Santos",
+      "is_staff": false,
+      "is_active": true,
+      "date_joined": "2026-10-01T00:00:00Z",
+      "student_id": "TAPTRACK-TEST-001",
+      "instructor_id": null,
+      "email": "jordan.santos.taptrack.test@example.com",
+      "role": "student",
+      "section": 990001,
+      "nfc_uid": null,
+      "assigned_sections": [],
+      "contact_number": "",
+      "profile_image": null,
+      "created_at": "2026-10-01T00:00:00Z",
+      "updated_at": "2026-10-01T00:00:00Z",
+      "groups": [],
+      "user_permissions": []
+    }
+  },
+  {
+    "model": "api.nfcenrollmentsession",
+    "pk": 990001,
+    "fields": {
+      "nfc_uid": "1268010402",
+      "token_digest": "",
+      "token_hash": "",
+      "status": "pending",
+      "expires_at": "2099-01-01T00:00:00Z",
+      "created_at": "2026-10-01T00:00:00Z",
+      "completed_at": null,
+      "completed_by": null
+    }
+  }
+]

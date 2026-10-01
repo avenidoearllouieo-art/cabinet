@@ -119,10 +119,8 @@ class User(AbstractUser):
         return display_name
 
     def clean(self):
-        # Ensure NFC UID is present for any role that may access the cabinet
-        # (admin, instructor, student) and that identifiers are present for
-        # role-specific requirements.
-        if self.role in (self.RoleChoices.ADMIN, self.RoleChoices.INSTRUCTOR, self.RoleChoices.STUDENT):
+        # Students may await NFC enrollment; staff cabinet roles require a UID.
+        if self.role in (self.RoleChoices.ADMIN, self.RoleChoices.INSTRUCTOR):
             if not self.nfc_uid:
                 raise ValidationError({'nfc_uid': 'NFC UID is required for users with this role.'})
 

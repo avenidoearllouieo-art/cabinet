@@ -73,63 +73,52 @@ The display endpoint is only for the local mock cabinet display. It is not a Dja
 
 The service does not implement password reset or duplicate Django validation logic. Django remains the security authority.
 
-## Cabinet NFC reader service
+## Cabinet scan-result service
 
-`nfc_service.py` is the hardware-neutral service for the Cabinet access flow. It uses only Python's standard library and never calls Django, reads the database, or receives the Django API key.
+Production flow:
 
-The Cabinet selects its source with:
-
-```env
-VITE_NFC_MODE=mock
-VITE_NFC_SERVICE_URL=http://127.0.0.1:5000
-VITE_NFC_COOLDOWN_MS=2500
+```text
+IC Reader IC Reader USB keyboard-wedge
+	-> EvdevNFCReader (key-down events through Enter)
+	-> one POST http://127.0.0.1:8000/api/verify-nfc/ per completed UID
+	-> persistent SQLite result event
+	-> GET http://127.0.0.1:5001/api/scans?after=<event_id>&limit=50
+	-> Cabinet browser
 ```
 
-Use `VITE_NFC_MODE=mock` on a development computer to keep the Mock NFC UID field. Use `VITE_NFC_MODE=hardware` on the Pi; the Cabinet then polls the local service automatically and hides the manual mock input.
+`reader_adapters.py` detects an evdev device whose name contains `IC Reader`, maps digit/letter key-down events, terminates each UID on Enter, resets partial input after a 0.5-second key gap, and applies the original whitespace-removing uppercase UID normalization. Hardware mode is the default. `python-evdev` is the only additional Pi-service dependency.
 
-Run its development mock mode:
+The NFC service sends the Django request server-side using `DEVICE_API_KEY` (or `TAPTRACK_DEVICE_API_KEY`) from its process environment. It stores no key in SQLite and exposes no key to the browser. A completed registered response becomes a `registered` event; Django's 404 enrollment response becomes `unregistered`; network, HTTP, and malformed-result failures become `error`. One parsed Enter-terminated UID invokes one verifier call and one SQLite insert. Bridge polling is read-only and never creates another Django request.
 
-```bash
-cd pi_service
-python -m unittest test_nfc_service.py
-```
+The SQLite database defaults to `pi_service/nfc_events.sqlite3`; override it with `TAPTRACK_NFC_DB_PATH`. The bridge binds only to `127.0.0.1:5001`, permits CORS only from `http://127.0.0.1:4000` and `http://localhost:4000`, returns events in ascending `event_id` order, and never deletes events on GET.
 
-Install Python 3.11 or newer. The service currently has no third-party dependencies:
+### Hardware setup
 
 ```bash
-cd pi_service
+cd ~/tap-track/pi_service
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run the HTTP service with mock input:
+Ensure the systemd user can read `/dev/input/event*` devices. On Raspberry Pi OS this commonly means adding the service user to the `input` group and starting a new login session.
 
-```powershell
-$env:TAPTRACK_NFC_MODE = 'mock'
-$env:TAPTRACK_NFC_PORT = '5000'
-python nfc_service.py
-```
+Set `DEVICE_API_KEY` in `/etc/taptrack/nfc.env` with restrictive permissions. Do not place it in any `VITE_` variable or Cabinet build config.
 
-Endpoints:
+### Development mock mode
 
-```http
-GET  http://127.0.0.1:5000/nfc/status
-POST http://127.0.0.1:5000/nfc/mock-scan
-POST http://127.0.0.1:5000/nfc/mock-remove
-```
-
-The scan body is `{"uid":"TEST-NFC-001"}`. The service reports one `event_id` per card insertion and holds the card in `detected` state until `/nfc/mock-remove` is called. The Cabinet polls `/nfc/status` using `VITE_NFC_SERVICE_URL`, consumes each event once, and sends the UID through its existing Django verification function.
-
-No exact reader model or Python hardware library is identified in this repository. The production portion requires an adapter implementing `NFCReader.wait_for_card()` and `wait_for_removal()` in `reader_adapters.py`, using the teammate's confirmed reader library. The UI and Django layers do not need to change for that adapter.
-
-For hardware mode on the Pi:
+The mock reader remains available for local tests without replacing the real hardware reader:
 
 ```bash
-export TAPTRACK_NFC_MODE=hardware
-export TAPTRACK_NFC_BIND_HOST=127.0.0.1
-export TAPTRACK_NFC_PORT=5000
-python3 nfc_service.py
+cd ~/tap-track/pi_service
+TAPTRACK_NFC_MODE=mock python3 nfc_service.py
 ```
 
-The current hardware mode reports a clear unavailable-reader error until that adapter is implemented. Do not install or select a reader library until the exact reader model and connection method are confirmed.
+The same loopback server exposes `POST /nfc/mock-scan` with `{"uid":"TEST-NFC-001"}` and `POST /nfc/mock-remove`. These mock endpoints are disabled when the real evdev reader is active. `GET /nfc/status` is diagnostic only; the official Cabinet consumes scan results from `/api/scans`.
+
+Run Pi-service tests with:
+
+```bash
+cd ~/tap-track/pi_service
+python3 -m unittest discover -s . -p 'test_*.py'
+```

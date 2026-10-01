@@ -1,0 +1,69 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:api_studentprofile_changelist' %}">Students</a>
+  &rsaquo; Import Students
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <p>Import new pre-enrollment students. Existing student records are never overwritten. Imported accounts have no usable password and no NFC UID until the student completes the NFC registration flow.</p>
+  <p><a href="{% static 'api/student_import_template.xlsx' %}" download>Download fake-data Excel template</a></p>
+
+  {% if result %}
+    <div class="messagelist">
+      <div class="success">Import complete: {{ result.created }} created, {{ result.updated }} updated.</div>
+    </div>
+  {% endif %}
+
+  {% if errors %}
+    <div class="errornote">Validation failed. No student records were imported.</div>
+    <table>
+      <thead><tr><th>Row</th><th>Column</th><th>Error</th></tr></thead>
+      <tbody>
+        {% for error in errors %}
+          <tr><td>{{ error.row }}</td><td>{{ error.column }}</td><td>{{ error.message }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if rows %}
+    <h2>Preview ({{ rows|length }} student{{ rows|length|pluralize }})</h2>
+    <table>
+      <thead>
+        <tr><th>Row</th><th>Student ID</th><th>First name</th><th>Last name</th><th>Email</th><th>Section</th><th>Username</th><th>Active</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.row_number }}</td><td>{{ row.student_id }}</td><td>{{ row.first_name }}</td>
+            <td>{{ row.last_name }}</td><td>{{ row.email }}</td><td>{{ row.section_code|default:'—' }}</td>
+            <td>{{ row.username }}</td><td>{{ row.is_active|yesno:'Yes,No' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="upload">
+    {{ form.as_p }}
+    <button type="submit" class="default">Validate workbook</button>
+  </form>
+
+  {% if confirm_nonce and not errors %}
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="confirm">
+      <input type="hidden" name="confirm_nonce" value="{{ confirm_nonce }}">
+      <button type="submit" class="default">Confirm import of {{ rows|length }} students</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}
