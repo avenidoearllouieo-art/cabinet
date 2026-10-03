@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchScanEvents } from './services/nfc/scanResultBridge'
 import './App.css'
 
@@ -8,6 +9,7 @@ const NFC_MODE = (import.meta.env.VITE_NFC_MODE || (import.meta.env.DEV ? 'mock'
 const WEB_APP_BASE_URL = (import.meta.env.VITE_WEB_APP_BASE_URL || '').replace(/\/$/, '')
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
+const CABINET_STATE_KEY = 'taptrack_cabinet_session_state'
 
 function buildRegistrationUrl(serverUrl) {
   if (!WEB_APP_BASE_URL) return serverUrl
@@ -50,7 +52,7 @@ function getApiErrorMessage(response, data, body) {
   const detail = data.error || data.detail || data.message
   if (detail) return `${detail} (HTTP ${response.status})`
   if (response.status === 401 || response.status === 403) {
-    return `Django rejected the API request. Check VITE_DJANGO_API_KEY. (HTTP ${response.status})`
+    return `Django rejected the NFC verification request. (HTTP ${response.status})`
   }
   if (!body) return `Django returned an empty response. (HTTP ${response.status})`
   return `Django returned an invalid response. (HTTP ${response.status})`
@@ -59,8 +61,8 @@ function getApiErrorMessage(response, data, body) {
 function IconNFC({ className = 'icon-lg', pulse = false }) {
   return (
     <svg viewBox="0 0 64 64" className={`${className} ${pulse ? 'pulse' : ''}`} aria-hidden>
-      <g fill="none" stroke="#3fd2ff" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="32" cy="32" r="14" opacity="0.08" fill="#071826" />
+      <g fill="none" stroke="#002B5B" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="32" cy="32" r="14" opacity="0.08" fill="#002B5B" />
         <path d="M40 32c0-4.4-3.6-8-8-8" />
         <path d="M44 32c0-7-5.4-12.6-12-12.6" />
         <path d="M48 32c0-9.7-7.5-17.6-16.8-17.6" />
@@ -92,6 +94,15 @@ function formatDateTime(date) {
   }).format(date)
 }
 
+function formatSessionTime(date) {
+  if (!date) return 'Unavailable'
+  return new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(date))
+}
+
+function getParticipantCount(session) {
+  return session?.participants?.length || session?.participantIds?.length || session?.participantUids?.length || 0
+}
+
 function makeSessionId() {
   return `SESSION-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 }
@@ -105,17 +116,46 @@ function loadNfcScanCursor() {
   }
 }
 
+function loadCabinetState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CABINET_STATE_KEY) || '{}')
+    const sessions = Array.isArray(saved.sessions) ? saved.sessions : []
+    const legacyActiveSession = saved.activeSession?.status === 'open' ? saved.activeSession : null
+    if (legacyActiveSession && !sessions.some((session) => session.id === legacyActiveSession.id)) {
+      sessions.unshift(legacyActiveSession)
+    }
+    return { sessions }
+  } catch {
+    return { sessions: [] }
+  }
+}
+
+function formatDuration(start, end = new Date()) {
+  if (!start) return 'Unavailable'
+  const elapsedSeconds = Math.max(0, Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000))
+  const hours = Math.floor(elapsedSeconds / 3600)
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60)
+  const seconds = elapsedSeconds % 60
+  if (hours) return `${hours}h ${minutes}m`
+  if (minutes) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 export default function App() {
   const [view, setView] = useState('home')
   const [pendingAction, setPendingAction] = useState('open')
   const [selectedStation, setSelectedStation] = useState(null)
   const [participants, setParticipants] = useState([])
+  const [pendingRegistration, setPendingRegistration] = useState(null)
+  const [closingParticipants, setClosingParticipants] = useState([])
+  const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
   const [scanFeedback, setScanFeedback] = useState(null)
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
   const [errorMessage, setErrorMessage] = useState('')
   const [clock, setClock] = useState(() => new Date())
-  const [sessions, setSessions] = useState([])
-  const [activeSession, setActiveSession] = useState(null)
+  const [cabinetState, setCabinetState] = useState(loadCabinetState)
+  const { sessions } = cabinetState
+  const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [form, setForm] = useState({ fullName: '', studentId: '', email: '', section: '' })
   const [nfcUid, setNfcUid] = useState('')
   const [serviceStatus, setServiceStatus] = useState(null)
@@ -124,68 +164,33 @@ export default function App() {
   const [mockNfcUid, setMockNfcUid] = useState('')
   const nfcScanCursorRef = useRef(loadNfcScanCursor())
   const participantsByUidRef = useRef(new Map())
+  const closingParticipantsRef = useRef([])
   const bridgePollingRef = useRef(false)
   const bridgeAbortControllerRef = useRef(null)
   const bridgeErrorRef = useRef('')
+
+  function saveCabinetState(nextSessions) {
+    const nextState = { sessions: nextSessions }
+    try {
+      localStorage.setItem(CABINET_STATE_KEY, JSON.stringify(nextState))
+    } catch {
+      setErrorMessage('The cabinet session could not be saved in this browser.')
+      return false
+    }
+    setCabinetState(nextState)
+    return true
+  }
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setClock(new Date()), 1000)
     return () => window.clearInterval(intervalId)
   }, [])
 
-  const verifyNfcUid = useCallback(async (uid) => {
-    if (!import.meta.env.DEV) {
-      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: 'Manual NFC verification is available only in development mode.' })
-      return
-    }
-
-    if (!uid) {
-      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: 'Enter an NFC UID to check.' })
-      return
-    }
-
-    setAccessState({ status: 'checking', name: '', studentId: '', role: '', message: '' })
-    try {
-      const response = await fetchWithTimeout('/api/verify-nfc/', {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nfc_uid: uid }),
-      })
-      const { data, body } = await readApiResponse(response)
-      if (response.ok && data.success) {
-        setAccessState({ status: 'success', name: data.name || 'Student', studentId: data.student_id || '', role: data.role || '', message: '' })
-        return
-      }
-      if (response.status === 404) {
-        if (data.registration_required && data.registration_url) {
-          setAccessState({ status: 'registration', name: '', studentId: '', role: '', message: 'Please scan this QR code to register your card.', registrationUrl: buildRegistrationUrl(data.registration_url) })
-        } else {
-          setAccessState({ status: 'unregistered', name: '', studentId: '', role: '', message: 'NFC card is not registered yet.', registrationUrl: '' })
-        }
-        return
-      }
-      throw new Error(getApiErrorMessage(response, data, body))
-    } catch (error) {
-      const message = error instanceof TypeError
-        ? 'Unable to connect to the Django API. Check that Django is running and VITE_DJANGO_API_BASE_URL is correct.'
-        : error.message || 'Django API is unavailable.'
-      setAccessState({ status: 'error', name: '', studentId: '', role: '', message })
-    }
-  }, [])
-
-  async function handleMockNfcSubmit(event) {
-    event.preventDefault()
-    try {
-      await verifyNfcUid(String(mockNfcUid || '').trim())
-    } catch (error) {
-      setAccessState({ status: 'error', name: '', studentId: '', role: '', message: error.message || 'Mock NFC input failed.' })
-    }
-  }
-
   useEffect(() => {
-    if (NFC_MODE !== 'hardware' || (view !== 'home' && view !== 'participant-scan')) return undefined
+    if (NFC_MODE !== 'hardware' || (view !== 'home' && view !== 'participant-scan' && view !== 'close-scan')) return undefined
 
     let cancelled = false
+    let pauseAfterDecision = false
     const processScanEvent = (event) => {
       const eventId = Number(event?.event_id)
       if (!Number.isSafeInteger(eventId) || eventId < 1) {
@@ -211,8 +216,8 @@ export default function App() {
             setStatusMessage('Use a student card for this session.')
           } else if (participantsByUidRef.current.has(uid)) {
             const duplicate = participantsByUidRef.current.get(uid)
-            setScanFeedback({ type: 'duplicate', message: 'Duplicate scan detected', participant: duplicate || null })
-            setStatusMessage('This card was already scanned.')
+            setScanFeedback({ type: 'duplicate', message: 'Already scanned', participant: duplicate || null })
+            setStatusMessage(`${duplicate?.fullName || 'This student'} is already in this session.`)
           } else {
             const participant = { uid, fullName: name, studentId, section: String(event.section || '') }
             participantsByUidRef.current.set(uid, participant)
@@ -220,30 +225,67 @@ export default function App() {
             setScanFeedback({ type: 'success', message: 'Participant added', participant })
             setStatusMessage('Participant added successfully.')
           }
+        } else if (view === 'close-scan') {
+          pauseAfterDecision = true
+          const isMember = role === 'student' && (
+            selectedSession?.participants?.some((participant) => participant.studentId === studentId || participant.uid === uid)
+            || selectedSession?.participantIds?.includes(studentId)
+            || selectedSession?.participantUids?.includes(uid)
+          )
+          if (isMember) {
+            const participant = { uid, fullName: name, studentId, section: String(event.section || '') }
+            const attendanceResult = recordClosingAttendance(selectedSession, closingParticipantsRef.current, participant)
+            if (attendanceResult.status === 'duplicate') {
+              setScanFeedback({ type: 'duplicate', message: 'Already scanned for closing', participant: attendanceResult.participant })
+              setStatusMessage(`${attendanceResult.participant.fullName || 'This member'} is already in closing attendance.`)
+            } else if (attendanceResult.status === 'added') {
+              closingParticipantsRef.current = attendanceResult.attendance
+              setClosingParticipants(attendanceResult.attendance)
+              setScanFeedback({ type: 'success', message: 'Closing attendance recorded', participant })
+              setStatusMessage(`${name} added to closing attendance (${attendanceResult.attendance.length}).`)
+              setAccessState({ status: 'success', name, studentId, role: 'student', message: '' })
+            }
+            setCloseRejectedStudent('')
+          } else {
+            setCloseRejectedStudent(name || studentId || 'Unknown NFC card')
+            setView('close-not-authorized')
+          }
         }
         setErrorMessage('')
       } else if (event.status === 'unregistered') {
         if (event.registration_required !== true || typeof event.registration_url !== 'string') {
           throw new Error(`NFC event ${eventId} is missing registration details.`)
         }
-        const registrationUrl = buildRegistrationUrl(event.registration_url)
-        setAccessState({
-          status: 'registration',
-          name: '',
-          studentId: '',
-          role: '',
-          message: 'Please scan this QR code to register your card.',
-          registrationUrl,
-        })
-        if (view === 'participant-scan') {
-          setScanFeedback({ type: 'registration', message: 'Card not registered', registrationUrl })
-          setStatusMessage('This card needs registration before it can join.')
+        if (view === 'close-scan') {
+          pauseAfterDecision = true
+          setCloseRejectedStudent('Unknown NFC card')
+          setView('close-not-authorized')
+        } else {
+          const registrationUrl = buildRegistrationUrl(event.registration_url)
+          setAccessState({
+            status: 'registration',
+            name: '',
+            studentId: '',
+            role: '',
+            message: 'Please scan this QR code to register your card.',
+            registrationUrl,
+          })
+          if (view === 'participant-scan') {
+            pauseAfterDecision = true
+            setPendingRegistration({ uid, registrationUrl })
+            setStatusMessage('This NFC card is not linked to a student.')
+            setView('unregistered-card')
+          }
         }
         setErrorMessage('')
       } else if (event.status === 'error') {
         const message = String(event.error || 'NFC verification failed.')
         setAccessState({ status: 'error', name: '', studentId: '', role: '', message, registrationUrl: '' })
-        if (view === 'participant-scan') {
+        if (view === 'close-scan') {
+          pauseAfterDecision = true
+          setCloseRejectedStudent('NFC card could not be verified')
+          setView('close-not-authorized')
+        } else if (view === 'participant-scan') {
           setScanFeedback({ type: 'warning', message: 'NFC verification failed', detail: message, participant: null })
           setStatusMessage('The NFC reader could not verify this card.')
         }
@@ -289,7 +331,9 @@ export default function App() {
           for (const event of batch.events) {
             if (cancelled) break
             processScanEvent(event)
+            if (pauseAfterDecision) break
           }
+          if (pauseAfterDecision) break
           hasMore = batch.has_more
           if (hasMore && nfcScanCursorRef.current <= previousCursor) {
             throw new Error('NFC bridge did not advance its event cursor.')
@@ -320,7 +364,7 @@ export default function App() {
       window.clearInterval(intervalId)
       bridgeAbortControllerRef.current?.abort()
     }
-  }, [view])
+  }, [view, selectedSession])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined
@@ -348,6 +392,10 @@ export default function App() {
     setPendingAction('open')
     setSelectedStation(null)
     setParticipants([])
+    setPendingRegistration(null)
+    closingParticipantsRef.current = []
+    setClosingParticipants([])
+    setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
     setErrorMessage('')
@@ -355,67 +403,199 @@ export default function App() {
     setNfcUid('')
   }
 
-  function startCloseSession() {
-    if (!activeSession) {
-      setErrorMessage('There is no active cabinet session to close.')
-      return
-    }
-
-    setPendingAction('close')
+  function startOpenSession() {
+    setPendingAction('open')
+    setSelectedStation(null)
     setParticipants([])
+    setPendingRegistration(null)
+    closingParticipantsRef.current = []
+    setClosingParticipants([])
+    setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
-    setSelectedStation(activeSession.station)
     setScanFeedback(null)
     setErrorMessage('')
-    setStatusMessage('Scan the returning participants before confirming the closeout.')
-    setView('participant-scan')
+    setStatusMessage('Choose an available station to begin.')
+    setView('station-select')
+  }
+
+  function startCloseSession() {
+    setPendingAction('close')
+    setSelectedStation(null)
+    closingParticipantsRef.current = []
+    setClosingParticipants([])
+    setCloseRejectedStudent('')
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage('Choose an active station to close.')
+    setView('close-select')
   }
 
   function handleStationSelect(station) {
-    if (pendingAction === 'open' && occupiedStations.includes(station)) {
+    if (occupiedStations.includes(station)) {
       setErrorMessage('That station is already occupied.')
       return
     }
 
     setSelectedStation(station)
-    setScanFeedback(null)
     setErrorMessage('')
-    setStatusMessage(pendingAction === 'open'
-      ? 'Tap a registered card to add the next participant.'
-      : 'Scan each returning participant before closing the cabinet.')
+    setStatusMessage(`Tap each group member’s student card for Station ${station}.`)
     setView('participant-scan')
   }
 
-  async function handleCardScan() {
-    if (NFC_MODE !== 'mock') return
+  function selectSessionToClose(station) {
+    if (!sessions.some((session) => session.status === 'open' && session.station === station)) return
+    setSelectedStation(station)
+    closingParticipantsRef.current = []
+    setClosingParticipants([])
+    setCloseRejectedStudent('')
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage(`Tap NFC cards to record closing attendance for Station ${station}.`)
+    setView('close-scan')
+  }
+
+  function isActiveSessionMember(uid, studentId) {
+    return isSessionMember(selectedSession, { uid, studentId })
+  }
+
+  function recordClosingParticipant(participant) {
+    const result = recordClosingAttendance(selectedSession, closingParticipantsRef.current, participant)
+    if (result.status === 'rejected') return false
+    if (result.status === 'duplicate') {
+      setScanFeedback({ type: 'duplicate', message: 'Already scanned for closing', participant: result.participant })
+      setStatusMessage(`${result.participant.fullName || 'This member'} is already in closing attendance.`)
+      return true
+    }
+
+    const nextParticipants = result.attendance
+    closingParticipantsRef.current = nextParticipants
+    setClosingParticipants(nextParticipants)
+    setScanFeedback({ type: 'success', message: 'Closing attendance recorded', participant })
+    setStatusMessage(`${participant.fullName || 'Member'} added to closing attendance (${nextParticipants.length}).`)
+    setAccessState({ status: 'success', name: participant.fullName || '', studentId: participant.studentId || '', role: 'student', message: '' })
+    return true
+  }
+
+  function rejectCloseAttempt(student = 'Unknown NFC card') {
+    setCloseRejectedStudent(student)
+    setErrorMessage('')
+    setView('close-not-authorized')
+  }
+
+  function retryCloseScan() {
+    setCloseRejectedStudent('')
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage('Tap NFC cards to record closing attendance.')
+    setMockNfcUid('')
+    setView('close-scan')
+  }
+
+  function showUnregisteredCard(uid, url) {
+    const registrationUrl = buildRegistrationUrl(url)
+    setPendingRegistration({ uid, registrationUrl })
+    setAccessState({ status: 'registration', name: '', studentId: '', role: '', message: 'Please scan this QR code to register your card.', registrationUrl })
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage('This NFC card is not linked to a student.')
+    setView('unregistered-card')
+  }
+
+  function resumeParticipantScan({ skipped = false } = {}) {
+    setPendingRegistration(null)
+    setAccessState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage(skipped
+      ? `${participants.length} participants ready. The unregistered card was skipped.`
+      : `${participants.length} participants ready. Tap the registered card again after registration.`)
+    setView('participant-scan')
+  }
+
+  async function handleCardScan(uidOverride) {
+    const openingScan = view === 'participant-scan' && pendingAction === 'open'
+    const closingScan = view === 'close-scan' && pendingAction === 'close'
+    if (NFC_MODE !== 'mock' || (!openingScan && !closingScan)) return
     setErrorMessage('')
     setStatusMessage('Waiting for the mock NFC service to verify the card...')
 
     try {
-      const response = await fetch(`${PI_SERVICE_URL}/cabinet/mock-access`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      const data = await response.json()
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'NFC verification failed.')
+      const mockUid = String(uidOverride ?? mockNfcUid ?? '').trim()
+      setMockNfcUid('')
+      let data
+      let scanUid
+      if (mockUid) {
+        const response = await fetchWithTimeout('/api/verify-nfc/', {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nfc_uid: mockUid }),
+        })
+        const result = await readApiResponse(response)
+        data = result.data
+        if (response.status === 404 && data.registration_required && data.registration_url) {
+          if (closingScan) rejectCloseAttempt('Unknown NFC card')
+          else showUnregisteredCard(mockUid, data.registration_url)
+          return
+        }
+        if (!response.ok || !data.success) {
+          throw new Error(getApiErrorMessage(response, data, result.body))
+        }
+        scanUid = mockUid
+      } else {
+        const response = await fetch(`${PI_SERVICE_URL}/cabinet/mock-access`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        })
+        data = await response.json()
+        if (!response.ok || !data.success) {
+          if (data.registration_required && data.registration_url) {
+            if (closingScan) rejectCloseAttempt('Unknown NFC card')
+            else showUnregisteredCard('', data.registration_url)
+            return
+          }
+          throw new Error(data.error || 'NFC verification failed.')
+        }
+        scanUid = data.student_id || data.name
       }
 
-      const nextUid = data.student_id || data.name
+      const nextUid = scanUid || data.student_id || data.name
       const normalizedUser = {
         uid: nextUid,
         fullName: data.name || 'Verified student',
         studentId: data.student_id || 'Student ID unavailable',
         section: '',
       }
-      const alreadyAdded = participants.some((participant) => participant.uid === nextUid)
-    if (alreadyAdded) {
-      setScanFeedback({ type: 'duplicate', message: 'Duplicate scan detected', participant: normalizedUser })
-      setErrorMessage('')
-      setStatusMessage('This card was already scanned.')
-      return
-    }
+
+      if (String(data.role || '').trim().toLowerCase() !== 'student') {
+        if (closingScan) {
+          rejectCloseAttempt(normalizedUser.fullName || 'Unknown NFC card')
+          return
+        }
+        setScanFeedback({ type: 'warning', message: 'Only student cards can join', participant: null })
+        setStatusMessage('Use a student card for this group.')
+        return
+      }
+
+      if (closingScan) {
+        if (isActiveSessionMember(nextUid, normalizedUser.studentId)) {
+          recordClosingParticipant(normalizedUser)
+          setCloseRejectedStudent('')
+          setErrorMessage('')
+        } else {
+          rejectCloseAttempt(normalizedUser.fullName || normalizedUser.studentId)
+        }
+        return
+      }
+
+      const alreadyAdded = participantsByUidRef.current.has(nextUid)
+        || participants.some((participant) => participant.uid === nextUid)
+      if (alreadyAdded) {
+        setScanFeedback({ type: 'duplicate', message: 'Already scanned', participant: normalizedUser })
+        setErrorMessage('')
+        setStatusMessage(`${normalizedUser.fullName} is already in this session.`)
+        return
+      }
 
     const newParticipant = {
       uid: nextUid,
@@ -424,11 +604,17 @@ export default function App() {
       section: normalizedUser.section,
     }
 
+    participantsByUidRef.current.set(nextUid, newParticipant)
     setParticipants((current) => [...current, newParticipant])
+    setAccessState({ status: 'success', name: normalizedUser.fullName, studentId: normalizedUser.studentId, role: data.role, message: '' })
     setScanFeedback({ type: 'success', message: 'Participant added', participant: newParticipant })
     setErrorMessage('')
     setStatusMessage('Participant added successfully.')
     } catch (error) {
+      if (closingScan) {
+        rejectCloseAttempt('Unknown or unverified NFC card')
+        return
+      }
       setErrorMessage(error.message || 'NFC verification failed. Please try again.')
       setScanFeedback({ type: 'warning', message: 'NFC verification failed', participant: null })
       setStatusMessage('The mock NFC service could not verify the card.')
@@ -441,6 +627,15 @@ export default function App() {
       return
     }
 
+    setErrorMessage('')
+    setView('confirm-session')
+  }
+
+  function continueToCloseConfirmation() {
+    if (closingParticipants.length === 0) {
+      setErrorMessage('Scan at least one session member before closing the station.')
+      return
+    }
     setErrorMessage('')
     setView('confirm-session')
   }
@@ -459,35 +654,56 @@ export default function App() {
         id: makeSessionId(),
         station: selectedStation,
         status: 'open',
-        action: 'open',
+        openedAt: now.toISOString(),
         timestamp: now.toISOString(),
-        participantIds: snapshot.map((participant) => participant.uid),
+        participantIds: snapshot.map((participant) => participant.studentId),
+        participantUids: snapshot.map((participant) => participant.uid),
         participants: snapshot,
       }
 
-      setSessions((current) => [sessionRecord, ...current])
-      setActiveSession(sessionRecord)
+      if (!selectedStation || occupiedStations.includes(selectedStation)) {
+        setErrorMessage('Choose an available station before opening the cabinet.')
+        setView('station-select')
+        return
+      }
+      if (!saveCabinetState([sessionRecord, ...sessions])) return
       setStatusMessage(`Cabinet opened on Station ${selectedStation}.`)
       setView('cabinet-opened')
       return
     }
 
-    if (!activeSession) {
+    if (!selectedSession) {
       setErrorMessage('No active session is available to close.')
+      setView('close-select')
       return
     }
 
-    const closedSession = {
-      ...activeSession,
-      status: 'closed',
-      closedAt: now.toISOString(),
-      closingParticipants: snapshot,
-      participantIds: Array.from(new Set([...activeSession.participantIds, ...snapshot.map((participant) => participant.uid)])),
+    if (closingParticipants.length === 0 || closingParticipants.some((participant) => (
+      !isActiveSessionMember(participant.uid, participant.studentId)
+    ))) {
+      setErrorMessage(`Scan at least one member of the Station ${selectedStation} active session before closing.`)
+      setView('close-scan')
+      return
     }
 
-    setSessions((current) => current.map((session) => (session.id === activeSession.id ? closedSession : session)))
-    setActiveSession(closedSession)
-    setStatusMessage(`Cabinet closed on Station ${selectedStation}.`)
+    const closingAttendance = closingParticipants.map((participant) => ({
+      uid: participant.uid,
+      fullName: participant.fullName,
+      studentId: participant.studentId,
+      section: participant.section || '',
+    }))
+    const closedSession = {
+      ...selectedSession,
+      status: 'closed',
+      closedAt: now.toISOString(),
+      closingParticipants: closingAttendance,
+      closingParticipantIds: closingAttendance.map((participant) => participant.studentId),
+      closingParticipantUids: closingAttendance.map((participant) => participant.uid),
+    }
+
+    const updatedSessions = sessions.map((session) => (session.id === selectedSession.id ? closedSession : session))
+    if (!saveCabinetState(updatedSessions)) return
+    setStatusMessage(`Cabinet closed on Station ${selectedSession.station}.`)
     setView('cabinet-closed')
   }
 
@@ -616,65 +832,173 @@ export default function App() {
       {view === 'home' && (
         <Screen>
           <div className="home-shell">
-            <div className="hero-card">
-              <div className="nfc-ring">
-                <IconNFC pulse={accessState.status === 'idle'} />
-              </div>
+            <div className="hero-card cabinet-home-card">
+              <img className="brand-wordmark" src="/logo1.png" alt="TapTrack" />
               <div className="title-block">
-                <h1 className="title">
-                  {accessState.status === 'registration' ? 'NFC card not registered.' : accessState.status === 'detected' ? 'NFC detected' : accessState.status === 'checking' ? 'Checking NFC...' : accessState.status === 'success' ? `Welcome, ${accessState.name}` : accessState.status === 'unregistered' ? 'NFC card not registered' : accessState.status === 'error' ? (NFC_MODE === 'hardware' ? 'NFC reader unavailable' : 'NFC API error') : 'Waiting for NFC'}
-                </h1>
-                <p className="subtitle">
-                  {accessState.status === 'success' ? 'Your card was recognized.' : accessState.status === 'registration' ? accessState.message : accessState.status === 'detected' ? accessState.message : accessState.status === 'unregistered' || accessState.status === 'error' ? accessState.message : accessState.status === 'checking' ? 'Please wait while Django checks the card.' : NFC_MODE === 'hardware' ? 'Tap a card on the NFC reader.' : 'Enter a mock UID below to check a card.'}
-                </p>
-                {accessState.status === 'registration' && accessState.registrationUrl && (
-                  <div className="registration-qr">
-                    <QRCodeSVG value={accessState.registrationUrl} size={240} bgColor="#ffffff" fgColor="#071826" level="M" />
-                  </div>
-                )}
-                {accessState.status === 'success' && (
-                  <div className="student-readout">
-                    <strong>{accessState.name}</strong>
-                    {accessState.studentId && <span>Student ID: {accessState.studentId}</span>}
-                    {accessState.role && <span>Role: {accessState.role}</span>}
-                  </div>
-                )}
+                <h1 className="title">Cabinet Management</h1>
               </div>
-              {accessState.status === 'success' && <div className="status-chip"><span className="status-dot good" /><span>Access verified</span></div>}
+              <div className="station-status-grid" aria-label="Cabinet station status">
+                {[1, 2].map((station) => {
+                  const session = sessions.find((item) => item.status === 'open' && item.station === station)
+                  return (
+                    <div className={`station-status-card ${session ? 'is-open' : 'is-available'}`} key={station}>
+                      <strong>STATION {station}</strong>
+                      <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
+                      {session ? <span>{getParticipantCount(session)} participants</span> : <span>Ready</span>}
+                      {session && <small>Opened {formatSessionTime(session.openedAt)}</small>}
+                    </div>
+                  )
+                })}
+              </div>
+              {accessState.status === 'error' && <p className="muted">{accessState.message}</p>}
               <div className="clock-card">
-                <span className="clock-label">Cabinet Status</span>
-                <strong>{accessState.status === 'detected' || accessState.status === 'checking' ? 'Checking card' : 'Ready for NFC'}</strong>
+                <span className="clock-label">Current time</span>
                 <span className="clock-time">{formatDateTime(clock)}</span>
               </div>
             </div>
 
-            {NFC_MODE === 'mock' && (
-              <form className="mock-nfc-form" onSubmit={handleMockNfcSubmit}>
-                <label htmlFor="mock-nfc-uid">Mock NFC UID</label>
-                <div className="mock-nfc-controls">
-                  <input
-                    id="mock-nfc-uid"
-                    value={mockNfcUid}
-                    onChange={(event) => setMockNfcUid(event.target.value)}
-                    placeholder="Enter NFC UID"
-                    autoComplete="off"
-                  />
-                  <button className="btn primary" type="submit" disabled={accessState.status === 'checking'}>
-                    Check NFC
-                  </button>
-                </div>
-              </form>
-            )}
-
             <div className="home-actions">
+              <button className="btn primary home-action" onClick={startOpenSession}>OPEN CABINET</button>
+              <button className="btn secondary home-action" onClick={startCloseSession}>CLOSE CABINET</button>
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
-              <button className="btn ghost home-action" onClick={startPasswordRecovery}>Password Recovery</button>
+              {NFC_MODE === 'mock' && <button className="btn ghost home-action" onClick={startPasswordRecovery}>Password Recovery</button>}
             </div>
           </div>
         </Screen>
       )}
 
-      {view === 'password-recovery' && (
+      {view === 'already-open' && (
+        <Screen>
+          <div className="panel status-panel">
+            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>CABINET OPEN</strong></div>
+            <h2>Cabinet is already open.</h2>
+            <p className="muted">The active session must be closed before another can begin.</p>
+            <div className="confirm-list">
+              <div className="confirm-row"><span>Station</span><strong>{selectedSession?.station}</strong></div>
+              <div className="confirm-row"><span>Participants</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+            </div>
+            <div className="button-row">
+              <button className="btn primary" onClick={() => setView('cabinet-opened')}>VIEW SESSION</button>
+              <button className="btn ghost" onClick={resetToHome}>BACK TO HOME</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'close-scan' && (
+        <Screen>
+          <div className="panel status-panel">
+            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>ACTIVE SESSION</strong></div>
+            <h2>Close Station {selectedStation}</h2>
+            <div className="status-chip">
+              <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
+              <span>{statusMessage || 'Tap NFC cards to record closing attendance.'}</span>
+            </div>
+            <div className="confirm-list">
+              <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
+              <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div className="confirm-row"><span>Closing scan count</span><strong>{closingParticipants.length}</strong></div>
+              <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
+            </div>
+            <div className="participant-list session-participants">
+              <h3>Members in this session</h3>
+              {(selectedSession?.participants || []).map((participant) => (
+                <div key={participant.uid} className="participant-card">
+                  <div className="participant-badge">✓</div>
+                  <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
+                </div>
+              ))}
+            </div>
+            <div className="participant-list session-participants">
+              <h3>Closing attendance</h3>
+              {closingParticipants.length === 0
+                ? <div className="empty-state">No closing attendance recorded yet.</div>
+                : closingParticipants.map((participant) => (
+                  <div key={participant.uid || participant.studentId} className="participant-card">
+                    <div className="participant-badge">✓</div>
+                    <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
+                  </div>
+                ))}
+            </div>
+            {errorMessage && <div className="error-banner">{errorMessage}</div>}
+            {NFC_MODE === 'mock'
+              ? <form className="mock-nfc-form participant-mock-form" onSubmit={(event) => { event.preventDefault(); void handleCardScan() }}>
+                <label htmlFor="close-mock-nfc-uid">Mock NFC UID</label>
+                <div className="mock-nfc-controls">
+                  <input id="close-mock-nfc-uid" value={mockNfcUid} onChange={(event) => setMockNfcUid(event.target.value)} placeholder="Enter a session member's UID" autoComplete="off" />
+                  <button className="btn primary" type="submit">CHECK NFC</button>
+                </div>
+              </form>
+              : <div className="scan-prompt" role="status">Tap member NFC cards on the NFC reader to record closing attendance.</div>}
+            <div className="button-row stacked">
+              <button className="btn primary" onClick={continueToCloseConfirmation} disabled={closingParticipants.length === 0}>CLOSE CABINET</button>
+              <button className="btn ghost" onClick={() => setView('close-select')}>CANCEL</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'close-not-authorized' && (
+        <Screen>
+          <div className="panel status-panel">
+            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>NOT AUTHORIZED</strong></div>
+            <h2>You are not a member of the Station {selectedStation} active session.</h2>
+            <p className="muted">Only a member of this station’s session can close it.</p>
+            {closeRejectedStudent && <p className="muted">Card scanned: {closeRejectedStudent}</p>}
+            <div className="button-row">
+              <button className="btn primary" onClick={retryCloseScan}>OK</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'already-closed' && (
+        <Screen>
+          <div className="panel status-panel">
+            <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
+            <h2>Cabinet is already closed.</h2>
+            <div className="button-row">
+              <button className="btn primary" onClick={resetToHome}>BACK TO HOME</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'unregistered-card' && (
+        <Screen>
+          <div className="panel status-panel">
+            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>NFC CARD NOT REGISTERED</strong></div>
+            <h2>This card is not linked to a student.</h2>
+            <p className="muted">Your scanned participants are saved. Register this card, skip it, or return to scanning.</p>
+            <div className="confirm-list">
+              <div className="confirm-row">
+                <span>Participants already scanned</span>
+                <strong>{participants.length}</strong>
+              </div>
+              <div className="participant-list">
+                {participants.map((participant) => (
+                  <div key={participant.uid} className="participant-card">
+                    <div className="participant-badge">✓</div>
+                    <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {pendingRegistration?.registrationUrl && (
+              <div className="registration-qr">
+                <QRCodeSVG value={pendingRegistration.registrationUrl} size={280} bgColor="#ffffff" fgColor="#002B5B" level="M" />
+              </div>
+            )}
+            <div className="button-row stacked">
+              <a className="btn primary registration-link" href={pendingRegistration?.registrationUrl || '#'} target="_blank" rel="noopener noreferrer">REGISTER THIS CARD</a>
+              <button className="btn secondary" onClick={() => resumeParticipantScan({ skipped: true })}>SKIP FOR NOW</button>
+              <button className="btn ghost" onClick={() => resumeParticipantScan()}>BACK TO SCANNING</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {NFC_MODE === 'mock' && view === 'password-recovery' && (
         <Screen>
           <div className="panel recovery-panel">
             {passwordRecovery.display?.state === 'code' ? (
@@ -704,7 +1028,7 @@ export default function App() {
         </Screen>
       )}
 
-      {view === 'register-card' && (
+      {NFC_MODE === 'mock' && view === 'register-card' && (
         <Screen>
           <div className="panel form-panel">
             <h2>Register Card</h2>
@@ -759,17 +1083,17 @@ export default function App() {
       {view === 'station-select' && (
         <Screen>
           <div className="panel">
-            <h2>Select a Station</h2>
-            <p className="muted">Choose the cabinet station for this session.</p>
+            <h2>Select Station</h2>
             <div className="station-grid">
               {[1, 2].map((station) => (
                 <button
                   key={station}
                   className="btn station-button"
+                  disabled={occupiedStations.includes(station)}
                   onClick={() => handleStationSelect(station)}
                 >
-                  <span>Station {station}</span>
-                  <small>{occupiedStations.includes(station) ? 'Occupied' : 'Available'}</small>
+                  <span>STATION {station}</span>
+                  <small>{occupiedStations.includes(station) ? 'IN USE · NOT AVAILABLE' : 'AVAILABLE · SELECT'}</small>
                 </button>
               ))}
             </div>
@@ -781,6 +1105,34 @@ export default function App() {
         </Screen>
       )}
 
+      {view === 'close-select' && (
+        <Screen>
+          <div className="panel">
+            <h2>Close Cabinet</h2>
+            <p className="muted">Active sessions by station</p>
+            {!occupiedStations.length && <div className="large-state is-closed"><span className="status-dot good" /><strong>ALL CABINETS CLOSED</strong></div>}
+            <div className="station-grid">
+              {[1, 2].map((station) => {
+                const session = sessions.find((item) => item.status === 'open' && item.station === station)
+                return (
+                  <div className={`station-status-card close-station-card ${session ? 'is-open' : 'is-available'}`} key={station}>
+                    <strong>STATION {station}</strong>
+                    <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
+                    {session ? <>
+                      <span>{getParticipantCount(session)} participants</span>
+                      <small>Opened {formatSessionTime(session.openedAt)}</small>
+                      <button className="btn primary" onClick={() => selectSessionToClose(station)}>CLOSE STATION {station}</button>
+                    </> : <span>No active session</span>}
+                  </div>
+                )
+              })}
+            </div>
+            {errorMessage && <div className="error-banner">{errorMessage}</div>}
+            <div className="button-row"><button className="btn ghost" onClick={resetToHome}>BACK TO HOME</button></div>
+          </div>
+        </Screen>
+      )}
+
       {view === 'participant-scan' && (
         <Screen>
           <div className="participant-shell">
@@ -788,8 +1140,8 @@ export default function App() {
               <div className="nfc-ring small-ring">
                 <IconNFC pulse />
               </div>
-              <h2>{pendingAction === 'open' ? 'Open Cabinet' : 'Close Cabinet'}</h2>
-              <p className="muted">{selectedStation ? `Station ${selectedStation}` : 'Choose a station'}</p>
+              <h2>Scan Group Members</h2>
+              <p className="muted">Tap each registered NFC card.</p>
             </div>
 
             <div className="status-chip">
@@ -811,7 +1163,7 @@ export default function App() {
                 <div className="feedback-banner duplicate">
                   <span className="feedback-check">!</span>
                   <div>
-                    <strong>Duplicate scan</strong>
+                    <strong>{scanFeedback.message}</strong>
                     <p>{scanFeedback.participant?.fullName || 'That card has already been recorded.'}</p>
                   </div>
                 </div>
@@ -847,15 +1199,16 @@ export default function App() {
                 </div>
               )}
             </div>
+            {errorMessage && <div className="error-banner">{errorMessage}</div>}
 
             <div className="panel-card">
               <div className="panel-card-header">
-                <h3>Current Participants</h3>
-                <span>{participants.length} scanned</span>
+                <h3>Participants</h3>
+                <span>Participants scanned: {participants.length}</span>
               </div>
               <div className="participant-list">
                 {participants.length === 0 ? (
-                  <div className="empty-state">No participants scanned yet. Tap the button below to add one.</div>
+                  <div className="empty-state">No participants scanned yet.</div>
                 ) : (
                   participants.map((participant, index) => (
                     <div key={`${participant.uid}-${index}`} className="participant-card pop-pill">
@@ -871,12 +1224,21 @@ export default function App() {
             </div>
 
             <div className="button-row stacked">
-              {NFC_MODE === 'hardware'
-                ? <div className="scan-prompt" role="status">Tap another NFC card on the reader…</div>
-                : <button className="btn primary scan-action" onClick={() => handleCardScan()}>Tap another NFC card…</button>}
+              {NFC_MODE === 'mock'
+                ? <>
+                  <form className="mock-nfc-form participant-mock-form" onSubmit={(event) => { event.preventDefault(); void handleCardScan() }}>
+                    <label htmlFor="participant-mock-nfc-uid">Mock NFC UID</label>
+                    <div className="mock-nfc-controls">
+                      <input id="participant-mock-nfc-uid" value={mockNfcUid} onChange={(event) => setMockNfcUid(event.target.value)} placeholder="Enter a student UID" autoComplete="off" />
+                      <button className="btn primary" type="submit">CHECK NFC</button>
+                    </div>
+                  </form>
+                  <button className="btn secondary scan-action" onClick={() => { setMockNfcUid(''); void handleCardScan('') }}>Use Pi mock reader</button>
+                </>
+                : <div className="scan-prompt" role="status">Tap a student NFC card on the NFC reader…</div>}
               <div className="button-row inline">
-                <button className="btn secondary" onClick={continueToConfirmation}>Done</button>
-                <button className="btn ghost" onClick={resetToHome}>Cancel Session</button>
+                <button className="btn secondary" onClick={continueToConfirmation}>CONTINUE</button>
+                <button className="btn ghost" onClick={resetToHome}>CANCEL</button>
               </div>
             </div>
           </div>
@@ -887,23 +1249,27 @@ export default function App() {
         <Screen>
           <div className="panel confirm-panel">
             <h2>{pendingAction === 'open' ? 'Confirm Open Cabinet' : 'Confirm Close Cabinet'}</h2>
-            <p className="muted">Review the scanned participants and the selected station before you proceed.</p>
+            <p className="muted">{pendingAction === 'open' ? 'Review the station and group members before opening.' : 'Are you sure you want to close this cabinet session?'}</p>
             <div className="confirm-list">
               <div className="confirm-row">
                 <span>Station</span>
-                <strong>{selectedStation}</strong>
+                <strong>{pendingAction === 'open' ? selectedStation : selectedSession?.station}</strong>
               </div>
               <div className="confirm-row">
                 <span>Participants</span>
-                <strong>{participants.length}</strong>
+                <strong>{pendingAction === 'open' ? participants.length : getParticipantCount(selectedSession)}</strong>
               </div>
-              <div className="confirm-row">
-                <span>Scanned list</span>
-                <strong>{participants.map((participant) => participant.fullName).join(', ')}</strong>
-              </div>
+              {pendingAction === 'close' && (
+                <>
+                  <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+                  <div className="confirm-row"><span>Closing attendance</span><strong>{closingParticipants.length}</strong></div>
+                  <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
+                  <div className="confirm-row"><span>Current duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
+                </>
+              )}
             </div>
             <div className="participant-list">
-              {participants.map((participant, index) => (
+              {(pendingAction === 'open' ? participants : closingParticipants).map((participant, index) => (
                 <div key={`${participant.uid}-${index}`} className="participant-card">
                   <div className="participant-badge">✓</div>
                   <div>
@@ -915,8 +1281,10 @@ export default function App() {
             </div>
             {errorMessage && <div className="error-banner">{errorMessage}</div>}
             <div className="button-row">
-              <button className="btn ghost" onClick={() => setView('participant-scan')}>Back</button>
-              <button className="btn primary" onClick={finalizeSession}>{pendingAction === 'open' ? 'Open Cabinet' : 'Confirm Close Cabinet'}</button>
+              {pendingAction === 'open'
+                ? <button className="btn ghost" onClick={() => setView('participant-scan')}>BACK</button>
+                : <button className="btn ghost" onClick={() => setView('close-scan')}>BACK TO SCANNING</button>}
+              <button className="btn primary" onClick={finalizeSession}>{pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE STATION ${selectedStation}`}</button>
             </div>
           </div>
         </Screen>
@@ -925,18 +1293,26 @@ export default function App() {
       {view === 'cabinet-opened' && (
         <Screen>
           <div className="panel status-panel success-panel">
-            <div className="success-badge">
-              <IconSuccess className="icon-md" />
+            <img className="brand-wordmark compact-wordmark" src="/logo1.png" alt="TapTrack" />
+            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>CABINET OPEN</strong></div>
+            <h2>Cabinet Open</h2>
+            <div className="session-metrics">
+              <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
+              <div><span>Participants</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div><span>Session Duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
             </div>
-            <h2>Cabinet Opened</h2>
-            <p className="muted">The cabinet is open and one session was saved with all scanned participants.</p>
-            <div className="status-chip">
-              <span className="status-dot good" />
-              <span>Session {activeSession?.id || 'saved'}</span>
+            <p className="session-id">Session {selectedSession?.id || 'active'}</p>
+            <div className="participant-list session-participants">
+              {(selectedSession?.participants || []).map((participant) => (
+                <div key={participant.uid} className="participant-card">
+                  <div className="participant-badge">✓</div>
+                  <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
+                </div>
+              ))}
             </div>
             <div className="button-row stacked">
-              <button className="btn primary" onClick={startCloseSession}>Close Cabinet</button>
-              <button className="btn ghost" onClick={resetToHome}>Back to Home</button>
+              <button className="btn primary" onClick={startCloseSession}>CLOSE CABINET</button>
+              <button className="btn ghost" onClick={resetToHome}>BACK TO HOME</button>
             </div>
           </div>
         </Screen>
@@ -945,11 +1321,9 @@ export default function App() {
       {view === 'cabinet-closed' && (
         <Screen>
           <div className="panel status-panel success-panel">
-            <div className="success-badge">
-              <IconSuccess className="icon-md" />
-            </div>
+            <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
             <h2>Cabinet Closed</h2>
-            <p className="muted">The closing timestamp and returning participant list were saved.</p>
+            <p className="muted">Station {selectedStation} is closed. Other active stations remain open.</p>
             <div className="button-row">
               <button className="btn primary" onClick={resetToHome}>Done</button>
             </div>
@@ -961,8 +1335,8 @@ export default function App() {
         <Screen>
           <div className="panel">
             <h2>Cabinet Status</h2>
-            <p className="muted">Development service status and local mock session activity.</p>
-            {serviceStatus && (
+            <p className="muted">{NFC_MODE === 'mock' ? 'Local cabinet session history.' : 'Current cabinet state and session history.'}</p>
+            {NFC_MODE === 'mock' && serviceStatus && (
               <div className="status-card">
                 <strong>Mock Pi service: {serviceStatus.mode}</strong>
                 <p>Django API: {serviceStatus.django_api || 'unavailable'}</p>

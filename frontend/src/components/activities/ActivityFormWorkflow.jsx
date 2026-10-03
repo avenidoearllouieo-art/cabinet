@@ -14,8 +14,8 @@ import { controlClass } from '../forms/formStyles.js'
 
 const steps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Review & publish']
 const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', cabinet_station: '', status: 'Published', files: [] })
-const getSectionId = (section) => section?.id ?? section?.section_id ?? section?.section_code
-const getSectionName = (section) => section?.section_name || section?.name || section?.title || section?.section_code || 'Unnamed section'
+const getSectionId = (section) => section?.id ?? section?.section_id ?? section?.subject_code
+const getSectionName = (section) => section?.section_name || section?.name || section?.title || section?.subject_code || 'Unnamed section'
 const snapshot = (form) => JSON.stringify({ ...form, files: form.files.map((file) => `${file.name}:${file.size}`) })
 
 function readAssignedSections(data) {

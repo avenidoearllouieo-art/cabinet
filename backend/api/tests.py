@@ -10,7 +10,7 @@ import os
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession
 
@@ -38,8 +38,8 @@ class InstructorSectionAssignmentTests(TestCase):
             role=User.RoleChoices.INSTRUCTOR,
             instructor_id='INST-002',
         )
-        self.section_a = Section.objects.create(section_name='API Section A', section_code='API-A')
-        self.section_b = Section.objects.create(section_name='API Section B', section_code='API-B')
+        self.section_a = Section.objects.create(section_name='API Section A', subject_code='API-A')
+        self.section_b = Section.objects.create(section_name='API Section B', subject_code='API-B')
         self.client.force_authenticate(user=self.admin)
 
     def test_create_instructor_accepts_ids_and_returns_section_objects(self):
@@ -156,8 +156,8 @@ class ActivityCreationTests(TestCase):
             instructor_id='I001',
             nfc_uid='NFC-INST-001',
         )
-        self.section_a = Section.objects.create(section_name='Section A', section_code='SEC-A', instructor=self.instructor)
-        self.section_b = Section.objects.create(section_name='Section B', section_code='SEC-B', instructor=self.instructor)
+        self.section_a = Section.objects.create(section_name='Section A', subject_code='SEC-A', instructor=self.instructor)
+        self.section_b = Section.objects.create(section_name='Section B', subject_code='SEC-B', instructor=self.instructor)
         self.other_instructor = User.objects.create_user(
             username='instructor2',
             email='instructor2@example.com',
@@ -313,7 +313,7 @@ class SubmissionGradingTests(TestCase):
             instructor_id='I-GRADE',
             nfc_uid='NFC-GRADE-001',
         )
-        self.section = Section.objects.create(section_name='Section Grade', section_code='SEC-G', instructor=self.instructor)
+        self.section = Section.objects.create(section_name='Section Grade', subject_code='SEC-G', instructor=self.instructor)
         self.activity = Activity.objects.create(
             title='Graded Activity',
             description='An activity for grading tests',
@@ -742,7 +742,7 @@ class ProfileAdminFormTests(TestCase):
 
         self.assertIn('assigned_sections', InstructorProfileAdmin.autocomplete_fields)
         self.assertIn('section_name', SectionAdmin.search_fields)
-        self.assertIn('section_code', SectionAdmin.search_fields)
+        self.assertIn('subject_code', SectionAdmin.search_fields)
 
     def test_section_admin_instructor_field_filters_instructors(self):
         from django.contrib import admin
@@ -784,7 +784,7 @@ class StudentWorkbookImportTests(TestCase):
             nfc_uid='STUDENT-IMPORT-ADMIN-UID',
         )
         self.client.force_login(self.admin)
-        self.section = Section.objects.create(section_code='XLSX-TEST', section_name='Excel Import Test Section')
+        self.section = Section.objects.create(subject_code='XLSX-TEST', section_name='Excel Import Test Section')
         self.import_url = reverse('admin:api_studentprofile_import_students')
 
     @staticmethod
@@ -825,9 +825,16 @@ class StudentWorkbookImportTests(TestCase):
     def test_downloadable_template_uses_supported_columns_and_fake_data(self):
         from pathlib import Path
         from .student_import import read_student_workbook, validate_student_rows
+        from .serializers import SectionSerializer
 
         template_path = Path(__file__).parent / 'static' / 'api' / 'student_import_template.xlsx'
         self.assertTrue(template_path.exists())
+        template_workbook = load_workbook(template_path, read_only=True, data_only=True)
+        self.assertEqual(
+            next(template_workbook.active.iter_rows(values_only=True)),
+            ('student_id', 'first_name', 'last_name', 'email', 'username', 'subject_code', 'role', 'active'),
+        )
+        template_workbook.close()
         uploaded = SimpleUploadedFile(template_path.name, template_path.read_bytes())
         rows, errors = read_student_workbook(uploaded)
         prepared, row_errors = validate_student_rows(rows)
@@ -837,6 +844,8 @@ class StudentWorkbookImportTests(TestCase):
         self.assertEqual(len(prepared), 1)
         self.assertEqual(prepared[0]['student_id'], 'DEMO-STUDENT-001')
         self.assertEqual(prepared[0]['email'], 'avery.example@example.invalid')
+        self.assertEqual(SectionSerializer(self.section).data['subject_code'], 'XLSX-TEST')
+        self.assertEqual(Section._meta.get_field('subject_code').verbose_name, 'Subject Code')
         self.assertFalse(User.objects.filter(student_id='DEMO-STUDENT-001').exists())
 
     def test_duplicate_student_id_and_email_inside_workbook_are_rejected(self):
@@ -903,27 +912,27 @@ class StudentWorkbookImportTests(TestCase):
         self.assertTrue(any(error['column'] == 'username' for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='USERNAME-NEW-100').exists())
 
-    def test_invalid_section_code_reports_row_and_imports_nothing(self):
+    def test_invalid_subject_code_reports_row_and_imports_nothing(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'section_code'],
+            ['student_id', 'first_name', 'last_name', 'email', 'subject_code'],
             [
                 ['SECTION-VALID-100', 'Casey', 'Example', 'casey.section@example.com', ''],
                 ['SECTION-INVALID-100', 'Avery', 'Example', 'avery.section@example.com', 'MISSING-SECTION'],
             ],
         )
 
-        self.assertTrue(any(error['row'] == 3 and error['column'] == 'section_code' for error in response.context['errors']))
+        self.assertTrue(any(error['row'] == 3 and error['column'] == 'subject_code' for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id__in=['SECTION-VALID-100', 'SECTION-INVALID-100']).exists())
 
-    def test_ambiguous_section_code_is_rejected(self):
-        Section.objects.create(section_code='DUPLICATE-CODE', section_name='Duplicate Section One')
-        Section.objects.create(section_code='duplicate-code', section_name='Duplicate Section Two')
+    def test_ambiguous_subject_code_is_rejected(self):
+        Section.objects.create(subject_code='DUPLICATE-CODE', section_name='Duplicate Section One')
+        Section.objects.create(subject_code='duplicate-code', section_name='Duplicate Section Two')
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'section_code'],
+            ['student_id', 'first_name', 'last_name', 'email', 'subject_code'],
             [['SECTION-DUP-100', 'Avery', 'Example', 'section.duplicate@example.com', 'Duplicate-Code']],
         )
 
-        self.assertTrue(any(error['column'] == 'section_code' and 'More than one' in error['message'] for error in response.context['errors']))
+        self.assertTrue(any(error['column'] == 'subject_code' and 'More than one' in error['message'] for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='SECTION-DUP-100').exists())
 
     def test_nfc_uid_and_password_columns_are_not_accepted(self):
@@ -935,13 +944,13 @@ class StudentWorkbookImportTests(TestCase):
         self.assertTrue(any(error['column'] == 'header' and 'Unsupported column' in error['message'] for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='SECURITY-100').exists())
 
-    def test_invalid_email_and_is_active_values_are_rejected(self):
+    def test_invalid_email_and_active_values_are_rejected(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'is_active'],
+            ['student_id', 'first_name', 'last_name', 'email', 'active'],
             [['BAD-100', 'Avery', 'Example', 'not-an-email', 'sometimes']],
         )
 
-        self.assertEqual({error['column'] for error in response.context['errors']}, {'email', 'is_active'})
+        self.assertEqual({error['column'] for error in response.context['errors']}, {'email', 'active'})
         self.assertFalse(User.objects.filter(student_id='BAD-100').exists())
 
     def test_duplicate_generated_username_is_rejected(self):
@@ -958,10 +967,10 @@ class StudentWorkbookImportTests(TestCase):
 
     def test_successful_import_is_confirmed_atomically_and_uses_unusable_passwords(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'section_code', 'username', 'is_active'],
+            ['student_id', 'first_name', 'last_name', 'email', 'username', 'subject_code', 'role', 'active'],
             [
-                ['IMPORT-100', 'Avery', 'Example', 'avery.import@example.com', 'XLSX-TEST', '', 'true'],
-                ['IMPORT-101', 'Casey', 'Example', 'casey.import@example.com', '', 'casey_import_user', 'false'],
+                ['IMPORT-100', 'Avery', 'Example', 'avery.import@example.com', '', 'XLSX-TEST', 'student', 'true'],
+                ['IMPORT-101', 'Casey', 'Example', 'casey.import@example.com', 'casey_import_user', '', 'student', 'false'],
             ],
         )
         self.assertFalse(response.context['errors'])
@@ -1377,7 +1386,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.client = APIClient()
         self.device_api_key = 'cabinet-device-test-key'
         os.environ['DEVICE_API_KEY'] = self.device_api_key
-        self.section = Section.objects.create(section_name='Cabinet Section', section_code='CAB-101')
+        self.section = Section.objects.create(section_name='Cabinet Section', subject_code='CAB-101')
 
     def test_development_fixture_supports_repeatable_nfc_enrollment(self):
         from django.core.management import call_command
@@ -1390,9 +1399,9 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(student.role, User.RoleChoices.STUDENT)
         self.assertIsNone(student.nfc_uid)
         self.assertFalse(student.has_usable_password())
-        self.assertEqual(student.section.section_code, 'TAP-TEST-2026')
+        self.assertEqual(student.section.subject_code, 'TAP-TEST-2026')
         self.assertEqual(User.objects.filter(username='taptrack_test_student').count(), 1)
-        self.assertEqual(Section.objects.filter(section_code='TAP-TEST-2026').count(), 1)
+        self.assertEqual(Section.objects.filter(subject_code='TAP-TEST-2026').count(), 1)
 
         test_uid = '1268010402'
         initial_verification = self.client.post('/api/verify-nfc/', {

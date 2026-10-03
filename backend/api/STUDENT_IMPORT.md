@@ -16,10 +16,11 @@ It accepts `.xlsx` files. The Students changelist also has an **Import Students 
 | `first_name` | Yes | User first name. |
 | `last_name` | Yes | User last name. |
 | `email` | Yes | Unique email address. |
-| `section_code` | No | Blank means no section. A non-blank code must match exactly one `Section.section_code`. |
+| `subject_code` | No | Blank means no section. A non-blank code must match exactly one `Section.subject_code`. |
 | `username` | No | If blank, generated as `student_` plus the student ID with characters outside Django's username set replaced by `_`, then leading/trailing underscores trimmed. For example, `DEMO-001` becomes `student_DEMO-001`. |
-| `is_active` | No | Defaults to `true`; accepted values are true/false, yes/no, 1/0, active/inactive. |
+| `role` | No | Must be `student`; blank defaults to `student`. |
+| `active` | No | Defaults to `true`; accepted values are true/false, yes/no, 1/0, active/inactive. |
 
-The importer always creates role `student`, sets no NFC UID, and sets an unusable password. Do not include `role`, `nfc_uid`, password, token, or credential columns. NFC UID assignment and password creation remain in the existing enrollment workflow.
+The downloadable fake-data template uses the columns `student_id`, `first_name`, `last_name`, `email`, `username`, `subject_code`, `role`, and `active`. The importer only creates student accounts, sets no NFC UID, and sets an unusable password. Do not include `nfc_uid`, password, token, or credential columns. NFC UID assignment and password creation remain in the existing enrollment workflow.
 
 The import is create-only: a student ID, username, or email already present in the database is an error; existing records are never overwritten. The entire workbook is validated before confirmation, previewed with row-numbered errors, revalidated at confirmation, and saved in one transaction. Any validation or uniqueness conflict prevents all writes. The result reports created and updated counts; updated is always zero in this version.

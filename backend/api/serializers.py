@@ -76,7 +76,7 @@ class SectionSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'section_id',
-            'section_code',
+            'subject_code',
             'section_name',
             'program',
             'year_level',

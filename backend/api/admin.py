@@ -66,9 +66,9 @@ class CustomUserAdmin(BaseUserAdmin):
 @admin.register(Section)
 class SectionAdmin(admin.ModelAdmin):
     autocomplete_fields = ('instructor',)
-    list_display = ('section_id', 'section_code', 'section_name', 'program', 'year_level', 'instructor', 'status')
+    list_display = ('section_id', 'subject_code', 'section_name', 'program', 'year_level', 'instructor', 'status')
     list_filter = ('program', 'year_level', 'status')
-    search_fields = ('section_code', 'section_name', 'program', 'year_level', 'instructor__username', 'instructor__first_name', 'instructor__last_name')
+    search_fields = ('subject_code', 'section_name', 'program', 'year_level', 'instructor__username', 'instructor__first_name', 'instructor__last_name')
     ordering = ('section_name',)
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):

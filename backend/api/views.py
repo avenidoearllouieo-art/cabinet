@@ -1372,7 +1372,7 @@ class CabinetRegistrationView(APIView):
         section = None
         if section_value:
             section = Section.objects.filter(
-                models.Q(section_code__iexact=section_value)
+                models.Q(subject_code__iexact=section_value)
                 | models.Q(section_name__iexact=section_value)
             ).first()
             if not section:
@@ -1403,7 +1403,7 @@ class CabinetRegistrationView(APIView):
             'student_id': user.student_id,
             'name': user.get_full_name().strip(),
             'email': user.email,
-            'section': section.section_code or section.section_name if section else '',
+            'section': section.subject_code or section.section_name if section else '',
             'nfc_uid': user.nfc_uid,
         }, status=status.HTTP_201_CREATED)
 

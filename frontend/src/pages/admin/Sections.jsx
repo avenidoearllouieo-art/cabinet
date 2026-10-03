@@ -125,7 +125,7 @@ export default function Sections() {
     if (query.trim()) {
       const keyword = query.trim().toLowerCase()
       result = result.filter((section) =>
-        [section.section_code, section.section_name, section.year_level, section.program, section.instructor_name]
+        [section.subject_code, section.section_name, section.year_level, section.program, section.instructor_name]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
@@ -201,7 +201,7 @@ export default function Sections() {
   }
 
   const getSectionSummary = (row) => {
-    const label = row.section_code ? `${row.section_code} • ${row.section_name}` : row.section_name || 'Unnamed section'
+    const label = row.subject_code ? `${row.subject_code} • ${row.section_name}` : row.section_name || 'Unnamed section'
     return <div className="space-y-1"><div className="font-medium text-[#111827]">{label}</div><div className="text-xs text-[#6B7280]">{row.program || '—'} • {row.year_level || '—'}</div></div>
   }
 
@@ -408,7 +408,7 @@ export default function Sections() {
               <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Overview</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded-full bg-[#DBEAFE] px-3 py-1 text-xs font-semibold text-[#1D4ED8]">{selectedSectionForDrawer.section_code || 'No code'}</span>
+                  <span className="rounded-full bg-[#DBEAFE] px-3 py-1 text-xs font-semibold text-[#1D4ED8]">{selectedSectionForDrawer.subject_code || 'No code'}</span>
                   <span className="rounded-full bg-[#ECFDF5] px-3 py-1 text-xs font-semibold text-[#16A34A]">{selectedSectionForDrawer.program || 'No program'}</span>
                   <span className="rounded-full bg-[#FEF3C7] px-3 py-1 text-xs font-semibold text-[#92400E]">{selectedSectionForDrawer.year_level || 'No year level'}</span>
                 </div>

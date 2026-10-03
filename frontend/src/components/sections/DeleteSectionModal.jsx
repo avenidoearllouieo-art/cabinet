@@ -7,7 +7,7 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
   const [saving, setSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  const sectionCode = section?.section_code || '—'
+  const subjectCode = section?.subject_code || '—'
   const sectionName = section?.section_name || '—'
 
   const handleDelete = async () => {
@@ -65,8 +65,8 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <p className="text-sm font-medium text-slate-700">Section Code</p>
-            <p className="mt-1 text-sm text-slate-900">{sectionCode}</p>
+            <p className="text-sm font-medium text-slate-700">Subject Code</p>
+            <p className="mt-1 text-sm text-slate-900">{subjectCode}</p>
           </div>
           <div>
             <p className="text-sm font-medium text-slate-700">Section Name</p>

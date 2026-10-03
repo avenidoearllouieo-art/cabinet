@@ -87,6 +87,32 @@ For local mock development, use `npm run dev` from `cabinet`. The Vite developme
 
 The hardware bridge contract is `GET http://127.0.0.1:5001/api/scans?after=<event_id>&limit=50`. The Pi listener must start that bridge after completing its existing Django verification request. The browser never sends the UID to Django and never receives the device API key.
 
+## Browser mock NFC registration test
+
+For laptop testing, start Django and the Portal development server first. Seed the existing test roster from `backend` if it is not already present:
+
+```powershell
+python manage.py loaddata api/fixtures/taptrack_test_data.json
+```
+
+Start the Cabinet with a local Django proxy and localhost registration URL. The proxy reads `DEVICE_API_KEY` from `backend/.env`; keep `VITE_DJANGO_API_KEY` empty so the key is not placed in browser-visible Vite environment variables.
+
+```powershell
+$env:VITE_DJANGO_SERVER_URL = 'http://127.0.0.1:8000'
+$env:VITE_DJANGO_API_KEY = ''
+$env:VITE_WEB_APP_BASE_URL = 'http://127.0.0.1:5176'
+npm run dev -- --port 4001
+```
+
+In the Cabinet, select **OPEN CABINET** and use the mock UID field on **Scan Group Members**:
+
+- `1268010402` is the fixture's unregistered test card. Use roster student ID `TAPTRACK-TEST-001` on the existing registration page. After successful registration, return to the Cabinet tab and scan `1268010402` again; the student should be added while any earlier participants remain.
+- After that card is registered, scanning `1268010402` again in the same group reports **Already scanned** and does not add a duplicate.
+- To test another unregistered card, use a fresh development-only value such as `MOCK-UNREGISTERED-001` and register it to a different existing roster student without an NFC UID. The registration endpoint links a card to an existing roster student; it does not create a new student record.
+- **SKIP FOR NOW** returns to scanning without discarding registered participants. Continue through station selection and confirmation to test opening; close from the active session without scanning participants again.
+
+The QR contains the registration URL and short-lived token returned by Django. `VITE_WEB_APP_BASE_URL` changes only the URL host for the local browser; it preserves Django's registration route and token. For a Pi, configure it to the Portal computer's LAN URL as described above.
+
 <!-- Cabinet deployment instructions above are the project documentation. -->
 
 Currently, two official plugins are available:

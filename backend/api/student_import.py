@@ -10,7 +10,7 @@ from .models import Section, User
 
 
 REQUIRED_COLUMNS = ('student_id', 'first_name', 'last_name', 'email')
-OPTIONAL_COLUMNS = ('section_code', 'username', 'is_active')
+OPTIONAL_COLUMNS = ('username', 'subject_code', 'role', 'active')
 SUPPORTED_COLUMNS = frozenset((*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS))
 MAX_IMPORT_ROWS = 1000
 
@@ -78,7 +78,7 @@ def read_student_workbook(uploaded_file):
         workbook.close()
 
 
-def _parse_is_active(value, row_number, errors):
+def _parse_active(value, row_number, errors):
     if value == '':
         return True
     normalized = value.casefold()
@@ -86,7 +86,7 @@ def _parse_is_active(value, row_number, errors):
         return True
     if normalized in {'false', 'no', 'n', '0', 'inactive'}:
         return False
-    errors.append(_row_error(row_number, 'is_active', 'Use true/false, yes/no, 1/0, or active/inactive.'))
+    errors.append(_row_error(row_number, 'active', 'Use true/false, yes/no, 1/0, or active/inactive.'))
     return True
 
 
@@ -106,7 +106,7 @@ def build_student(row):
         role=User.RoleChoices.STUDENT,
         section=section,
         nfc_uid=None,
-        is_active=row['is_active'],
+        is_active=row['active'],
         is_staff=False,
         is_superuser=False,
     )
@@ -119,8 +119,8 @@ def validate_student_rows(rows):
     prepared = []
     seen = {key: {} for key in ('student_id', 'email', 'username')}
     section_lookup = {}
-    for section in Section.objects.all().only('pk', 'section_code'):
-        section_lookup.setdefault(section.section_code.strip().casefold(), []).append(section.pk)
+    for section in Section.objects.all().only('pk', 'subject_code'):
+        section_lookup.setdefault(section.subject_code.strip().casefold(), []).append(section.pk)
 
     for source in rows:
         row_number = int(source.get('row_number') or 0)
@@ -129,8 +129,12 @@ def validate_student_rows(rows):
         first_name = _cell_text(source.get('first_name'))
         last_name = _cell_text(source.get('last_name'))
         email = _cell_text(source.get('email'))
-        section_code = _cell_text(source.get('section_code'))
+        subject_code = _cell_text(source.get('subject_code'))
         username = _cell_text(source.get('username')) or username_for_student_id(student_id)
+        role = _cell_text(source.get('role')).casefold() or 'student'
+
+        if role != 'student':
+            row_errors.append(_row_error(row_number, 'role', 'Only the student role can be imported here.'))
 
         for column, value in (
             ('student_id', student_id),
@@ -169,16 +173,16 @@ def validate_student_rows(rows):
             row_errors.append(_row_error(row_number, 'username', 'This username is already in use.'))
 
         section_id = None
-        if section_code:
-            matches = section_lookup.get(section_code.casefold(), [])
+        if subject_code:
+            matches = section_lookup.get(subject_code.casefold(), [])
             if not matches:
-                row_errors.append(_row_error(row_number, 'section_code', 'No Section has this section_code.'))
+                row_errors.append(_row_error(row_number, 'subject_code', 'No Section has this subject_code.'))
             elif len(matches) > 1:
-                row_errors.append(_row_error(row_number, 'section_code', 'More than one Section has this section_code; resolve the duplicate Sections first.'))
+                row_errors.append(_row_error(row_number, 'subject_code', 'More than one Section has this subject_code; resolve the duplicate Sections first.'))
             else:
                 section_id = matches[0]
 
-        is_active = _parse_is_active(_cell_text(source.get('is_active')), row_number, row_errors)
+        active = _parse_active(_cell_text(source.get('active')), row_number, row_errors)
 
         candidate = {
             'row_number': row_number,
@@ -187,9 +191,10 @@ def validate_student_rows(rows):
             'last_name': last_name,
             'email': email,
             'username': username,
-            'section_code': section_code,
+            'subject_code': subject_code,
+            'role': role,
             'section_id': section_id,
-            'is_active': is_active,
+            'active': active,
         }
 
         if not row_errors:

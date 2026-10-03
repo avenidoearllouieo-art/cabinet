@@ -105,7 +105,7 @@ const SectionDetailDrawer = ({ section, students, activities, submissions, onClo
               {getStatusBadge(section.status)}
             </div>
             <h2 className="mt-3 text-2xl font-bold tracking-tight text-[#102a4c]">{section.section_name || 'Unnamed Section'}</h2>
-            <p className="mt-1 text-sm font-medium text-[#64748b]">{section.section_code || 'Section code not available'}</p>
+            <p className="mt-1 text-sm font-medium text-[#64748b]">{section.subject_code || 'Subject Code not available'}</p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -368,7 +368,7 @@ export default function InstructorSections() {
     if (query.trim()) {
       const keyword = query.trim().toLowerCase()
       result = result.filter((section) =>
-        [section.section_code, section.section_name, section.program, section.academic_year, section.instructor_name]
+        [section.subject_code, section.section_name, section.program, section.academic_year, section.instructor_name]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
@@ -466,7 +466,7 @@ export default function InstructorSections() {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `${(selectedSection.section_code || selectedSection.section_name || 'section').replace(/\s+/g, '-').toLowerCase()}.csv`
+    link.download = `${(selectedSection.subject_code || selectedSection.section_name || 'section').replace(/\s+/g, '-').toLowerCase()}.csv`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -541,7 +541,7 @@ export default function InstructorSections() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by section code, section name, program, or academic year..."
+              placeholder="Search by subject code, section name, program, or academic year..."
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
               aria-label="Search sections"
             />
@@ -656,7 +656,7 @@ export default function InstructorSections() {
                             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-700"><BookOpen size={18} /></div>
                             <div>
                               <p className="font-semibold text-slate-900">{section.section_name || 'Unnamed Section'}</p>
-                              <p className="text-sm text-slate-500">{section.section_code || '—'}</p>
+                              <p className="text-sm text-slate-500">{section.subject_code || '—'}</p>
                             </div>
                           </div>
                         </td>
@@ -686,7 +686,7 @@ export default function InstructorSections() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-base font-semibold text-slate-900">{section.section_name || 'Unnamed Section'}</p>
-                        <p className="text-sm text-slate-500">{section.section_code || '—'} • {section.program || '—'}</p>
+                        <p className="text-sm text-slate-500">{section.subject_code || '—'} • {section.program || '—'}</p>
                       </div>
                       {getStatusBadge(section.status, () => openDrawer(section))}
                     </div>

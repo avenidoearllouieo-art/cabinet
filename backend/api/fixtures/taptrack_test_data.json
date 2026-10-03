@@ -3,7 +3,7 @@
     "model": "api.section",
     "pk": 990001,
     "fields": {
-      "section_code": "TAP-TEST-2026",
+      "subject_code": "TAP-TEST-2026",
       "section_name": "TapTrack Development Test Section",
       "instructor": null,
       "program": "BSIT",

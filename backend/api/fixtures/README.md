@@ -19,7 +19,7 @@ The fixed primary keys make repeated loads update the same three fixture records
 To remove the fixture records and enrollment session created for this test UID, run this only against the isolated development/test database:
 
 ```bash
-python manage.py shell -c "from api.models import NFCEnrollmentSession, Section, User; NFCEnrollmentSession.objects.filter(pk=990001, nfc_uid='1268010402').delete(); User.objects.filter(pk=990001, username='taptrack_test_student').delete(); Section.objects.filter(pk=990001, section_code='TAP-TEST-2026').delete()"
+python manage.py shell -c "from api.models import NFCEnrollmentSession, Section, User; NFCEnrollmentSession.objects.filter(pk=990001, nfc_uid='1268010402').delete(); User.objects.filter(pk=990001, username='taptrack_test_student').delete(); Section.objects.filter(pk=990001, subject_code='TAP-TEST-2026').delete()"
 ```
 
 This cleanup does not delete Django access-log or cabinet-event audit records.

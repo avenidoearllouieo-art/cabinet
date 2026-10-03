@@ -36,14 +36,14 @@
     <h2>Preview ({{ rows|length }} student{{ rows|length|pluralize }})</h2>
     <table>
       <thead>
-        <tr><th>Row</th><th>Student ID</th><th>First name</th><th>Last name</th><th>Email</th><th>Section</th><th>Username</th><th>Active</th></tr>
+        <tr><th>Row</th><th>Student ID</th><th>First name</th><th>Last name</th><th>Email</th><th>Subject Code</th><th>Username</th><th>Role</th><th>Active</th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
           <tr>
             <td>{{ row.row_number }}</td><td>{{ row.student_id }}</td><td>{{ row.first_name }}</td>
-            <td>{{ row.last_name }}</td><td>{{ row.email }}</td><td>{{ row.section_code|default:'—' }}</td>
-            <td>{{ row.username }}</td><td>{{ row.is_active|yesno:'Yes,No' }}</td>
+            <td>{{ row.last_name }}</td><td>{{ row.email }}</td><td>{{ row.subject_code|default:'—' }}</td>
+            <td>{{ row.username }}</td><td>{{ row.role }}</td><td>{{ row.active|yesno:'Yes,No' }}</td>
           </tr>
         {% endfor %}
       </tbody>

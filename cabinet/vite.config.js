@@ -5,9 +5,12 @@ import react from '@vitejs/plugin-react'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '')
   const backendEnv = loadEnv(mode, '../backend', '')
-  const djangoServerUrl = env.VITE_DJANGO_SERVER_URL
   const apiBaseUrl = env.VITE_DJANGO_API_BASE_URL || '/api'
-  if (mode === 'development' && apiBaseUrl === '/api' && !djangoServerUrl) {
+  let djangoServerUrl = env.VITE_DJANGO_SERVER_URL
+  if (!djangoServerUrl && /^https?:\/\//i.test(apiBaseUrl)) {
+    djangoServerUrl = new URL(apiBaseUrl).origin
+  }
+  if (mode === 'development' && !djangoServerUrl) {
     throw new Error('VITE_DJANGO_SERVER_URL must be configured for the Cabinet development proxy.')
   }
   const proxy = djangoServerUrl ? {

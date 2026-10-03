@@ -14,7 +14,7 @@ class Section(models.Model):
         INACTIVE = 'Inactive', 'Inactive'
 
     section_id = models.AutoField(primary_key=True)
-    section_code = models.CharField(max_length=50, blank=True, default='')
+    subject_code = models.CharField(max_length=50, blank=True, default='', verbose_name='Subject Code')
     section_name = models.CharField(max_length=100)
     instructor = models.ForeignKey(
         'User',
@@ -34,7 +34,7 @@ class Section(models.Model):
         return self.section_name
 
     class Meta:
-        ordering = ['section_name', 'section_code']
+        ordering = ['section_name', 'subject_code']
 
 
 class UserManager(BaseUserManager):
