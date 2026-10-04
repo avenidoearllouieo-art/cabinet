@@ -28,6 +28,10 @@ DJANGO_VERIFY_URL = os.environ.get(
     'TAPTRACK_DJANGO_VERIFY_URL',
     'http://127.0.0.1:8000/api/verify-nfc/',
 )
+DJANGO_WORKFLOW_URL = os.environ.get(
+    'TAPTRACK_DJANGO_WORKFLOW_URL',
+    'http://127.0.0.1:8000/api/cabinet/workflow/',
+)
 DATABASE_PATH = Path(os.environ.get(
     'TAPTRACK_NFC_DB_PATH',
     str(Path(__file__).resolve().with_name('nfc_events.sqlite3')),
@@ -35,6 +39,10 @@ DATABASE_PATH = Path(os.environ.get(
 ALLOWED_ORIGINS = frozenset({
     'http://127.0.0.1:4000',
     'http://localhost:4000',
+    'http://127.0.0.1:5173',
+    'http://localhost:5173',
+    'http://127.0.0.1:5176',
+    'http://localhost:5176',
 })
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
@@ -130,6 +138,43 @@ class DjangoVerifier:
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
 
+        if not isinstance(payload, dict):
+            payload = {}
+        if 'error' in payload:
+            payload['error'] = self._sanitize_error(payload['error'])
+        return status_code, payload
+
+    def workflow(self, command: str | None = None) -> tuple[int, dict]:
+        if not self.api_key:
+            raise DjangoRequestError('Django device API key is not configured.')
+
+        body = None if command is None else json.dumps({'command': command}).encode('utf-8')
+        request = urllib.request.Request(
+            DJANGO_WORKFLOW_URL,
+            data=body,
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-API-Key': self.api_key,
+            },
+            method='GET' if command is None else 'POST',
+        )
+        try:
+            opener = self.opener or urllib.request.urlopen
+            response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                status_code = response.status
+                response_body = response.read()
+        except urllib.error.HTTPError as error:
+            status_code = error.code
+            response_body = error.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise DjangoRequestError('Unable to reach the Django cabinet workflow.') from error
+
+        try:
+            payload = json.loads(response_body.decode('utf-8')) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
         if not isinstance(payload, dict):
             payload = {}
         if 'error' in payload:
@@ -237,16 +282,30 @@ class SQLiteScanEventStore:
 
 def _safe_django_response(status_code: int, payload: dict, verifier: DjangoVerifier) -> dict:
     if status_code == 200 and payload.get('success') is True:
-        allowed = ('success', 'registered', 'name', 'student_id', 'role', 'section')
+        allowed = (
+            'success', 'registered', 'name', 'student_id', 'role', 'section',
+            'event_id', 'status', 'action', 'nfc_uid', 'user', 'cabinet',
+            'station', 'cabinet_session_id', 'reason',
+        )
         return {key: payload[key] for key in allowed if key in payload}
     if status_code == 404 and payload.get('registration_required') is True:
-        allowed = ('success', 'registered', 'registration_required', 'registration_url', 'expires_at', 'error')
+        allowed = (
+            'success', 'registered', 'registration_required', 'registration_url', 'expires_at', 'error',
+            'event_id', 'status', 'action', 'nfc_uid', 'user', 'cabinet',
+            'station', 'cabinet_session_id', 'reason',
+        )
         response = {key: payload[key] for key in allowed if key in payload}
         if 'error' in response:
             response['error'] = sanitize_error(response['error'], getattr(verifier, 'api_key', ''))
         return response
     error = sanitize_error(payload.get('error') or f'Django verification failed with HTTP {status_code}.', getattr(verifier, 'api_key', ''))
-    return {'success': False, 'error': error}
+    audit_keys = (
+        'event_id', 'status', 'action', 'nfc_uid', 'user', 'cabinet',
+        'station', 'cabinet_session_id', 'reason',
+    )
+    response = {key: payload[key] for key in audit_keys if key in payload}
+    response.update({'success': False, 'error': error})
+    return response
 
 
 def make_scan_event(uid: str, verifier: DjangoVerifier) -> dict:
@@ -419,6 +478,13 @@ class NFCHandler(BaseHTTPRequestHandler):
         if path == '/nfc/status':
             self._send_json(HTTPStatus.OK, self.server.service.state.snapshot())
             return
+        if path == '/cabinet/workflow':
+            try:
+                status_code, payload = self.server.service.verifier.workflow()
+                self._send_json(HTTPStatus(status_code), payload)
+            except DjangoRequestError as error:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error)})
+            return
         if path != '/api/scans':
             self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found.'})
             return
@@ -449,6 +515,21 @@ class NFCHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         service = self.server.service
+        if path == '/cabinet/workflow':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                command = str(payload.get('command') or '')
+                if command not in {'open', 'finish_open', 'start_close', 'finish_close', 'cancel'}:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
+                    return
+                status_code, response = service.verifier.workflow(command)
+                self._send_json(HTTPStatus(status_code), response)
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})
+            except DjangoRequestError as error:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error)})
+            return
         if path not in ('/nfc/mock-scan', '/nfc/mock-remove'):
             self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found.'})
             return

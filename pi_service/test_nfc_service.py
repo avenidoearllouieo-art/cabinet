@@ -166,6 +166,24 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(request.get_header('X-api-key'), 'unit-test-key')
         self.assertEqual(timeout, 5)
 
+    def test_django_workflow_proxy_uses_device_key_and_only_forwards_command(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append((request, timeout))
+            return FakeResponse(200, {'station': 'Station 1', 'session': {'id': 4}})
+
+        verifier = DjangoVerifier(api_key='workflow-device-key', opener=opener)
+        status, payload = verifier.workflow('open')
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['station'], 'Station 1')
+        request, timeout = calls[0]
+        self.assertEqual(request.full_url, 'http://127.0.0.1:8000/api/cabinet/workflow/')
+        self.assertEqual(json.loads(request.data), {'command': 'open'})
+        self.assertEqual(request.get_header('X-api-key'), 'workflow-device-key')
+        self.assertEqual(timeout, 5)
+
     def test_registered_django_response_becomes_one_registered_event(self):
         verifier = FakeVerifier((200, {
             'success': True,
@@ -334,6 +352,16 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(self.url + path, headers=headers)) as response:
             return response.status, response.headers, json.loads(response.read().decode('utf-8'))
 
+    def post_json(self, path, payload):
+        request = urllib.request.Request(
+            self.url + path,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(request) as response:
+            return response.status, json.loads(response.read().decode('utf-8'))
+
     def test_bridge_binds_to_loopback_default_and_has_expected_port(self):
         self.assertEqual(BRIDGE_HOST, '127.0.0.1')
         self.assertEqual(BRIDGE_PORT, 5001)
@@ -343,6 +371,33 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         status, _, body = self.get_json('/api/scans?after=19&limit=50')
         self.assertEqual(status, 200)
         self.assertEqual(body, {'events': [], 'next_cursor': 19, 'has_more': False})
+
+    def test_cabinet_workflow_get_and_post_proxy_to_django(self):
+        class WorkflowVerifier:
+            def __init__(self):
+                self.commands = []
+
+            def workflow(self, command=None):
+                self.commands.append(command)
+                return 200, {'station': 'Station 1', 'session': {'workflow_state': command or 'idle'}}
+
+        verifier = WorkflowVerifier()
+        self.service.verifier = verifier
+
+        get_status, _, current = self.get_json('/cabinet/workflow')
+        post_status, opened = self.post_json('/cabinet/workflow', {'command': 'open'})
+
+        self.assertEqual(get_status, 200)
+        self.assertEqual(post_status, 200)
+        self.assertEqual(verifier.commands, [None, 'open'])
+        self.assertEqual(current['station'], 'Station 1')
+        self.assertEqual(opened['session']['workflow_state'], 'open')
+
+    def test_cabinet_workflow_rejects_unsupported_commands(self):
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.post_json('/cabinet/workflow', {'command': 'override_status'})
+        self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
 
     def test_api_scans_returns_events_in_order_and_bounds_limit(self):
         for index in range(205):

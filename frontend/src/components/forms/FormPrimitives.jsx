@@ -100,11 +100,15 @@ export function FormDialog({
   children,
   stepper,
   actions,
+  headerActions,
+  asForm = true,
   maxWidth = 'max-w-4xl',
   zIndex = 'z-[9999]',
 }) {
   if (!isOpen) return null
 
+  const DialogSurface = asForm ? 'form' : 'div'
+  const submitProps = asForm ? { onSubmit } : {}
   const requestClose = () => {
     if (busy) return
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
@@ -113,26 +117,29 @@ export function FormDialog({
 
   return createPortal(
     <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-950/65 p-3 sm:p-4`} onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-      <form onSubmit={onSubmit} className={`flex max-h-[94vh] w-full ${maxWidth} flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xl`} role="dialog" aria-modal="true" aria-label={title}>
+      <DialogSurface {...submitProps} className={`flex max-h-[94vh] w-full ${maxWidth} flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xl`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
           <div>
             <h2 className="text-xl font-bold text-[#0B1F3A] sm:text-2xl">{title}</h2>
             {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
           </div>
-          <button type="button" onClick={requestClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50" aria-label="Close dialog">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerActions}
+            <button type="button" onClick={requestClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50" aria-label="Close dialog">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </header>
         {stepper}
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
         {actions && <footer className="sticky bottom-0 z-20 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">{actions}</footer>}
-      </form>
+      </DialogSurface>
     </div>,
     document.body,
   )
 }
 
-export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busy = false, disabled = false, destructiveAction, dirty = false }) {
+export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busy = false, disabled = false, destructiveAction, dirty = false, finalButtonType = 'submit', onFinalAction, hideCancel = false }) {
   const requestCancel = () => {
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
     onCancel?.()
@@ -141,12 +148,12 @@ export function FormActions({ onCancel, onBack, onNext, isLastStep = false, subm
     <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>{destructiveAction}</div>
       <div className="flex flex-col-reverse gap-3 sm:flex-row">
-        <button type="button" onClick={requestCancel} disabled={busy} className="min-h-11 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50">Cancel</button>
+        {!hideCancel && <button type="button" onClick={requestCancel} disabled={busy} className="min-h-11 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50">Cancel</button>}
         {onBack && <button type="button" onClick={onBack} disabled={busy} className="min-h-11 rounded-xl border border-slate-300 bg-slate-100 px-5 py-2.5 text-sm font-semibold text-[#0B1F3A] transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50">Back</button>}
         {!isLastStep ? (
           <button type="button" onClick={onNext} disabled={busy || disabled} className="min-h-11 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">Continue</button>
         ) : (
-          <button type="submit" disabled={busy || disabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">
+          <button type={finalButtonType} onClick={onFinalAction} disabled={busy || disabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">
             {busy ? <LoadingSpinner label="Saving…" /> : submitLabel}
           </button>
         )}

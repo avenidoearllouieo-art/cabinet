@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
+import StatusBadge from '../../components/StatusBadge'
 import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
 import AddUserModal from '../../components/users/AddUserModal.jsx'
@@ -167,115 +168,46 @@ export default function Users() {
 
   const getUserId = (row) => row?.id ?? row?.pk ?? row?.user_id ?? row?.uuid
 
-  const baseSelectColumn = {
-    key: 'select',
-    label: '',
-    className: 'w-12',
-    render: (_v, row) => {
-      const id = getUserId(row)
-      const checked = selectedIds.includes(id)
-      return (
-        <input type="checkbox" checked={checked} onChange={(e) => {
-          e.stopPropagation()
-          if (e.target.checked) setSelectedIds((s) => [...s, id])
-          else setSelectedIds((s) => s.filter((x) => x !== id))
-        }} />
-      )
-    }
-  }
+  const statusBadge = (row) => <StatusBadge status={row.is_active ? 'active' : 'inactive'} icon={row.is_active ? CheckCircle2 : CircleOff} />
 
-  const statusBadge = (row) => (
-    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${row.is_active ? 'bg-[#ECFDF3] text-[#16A34A]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
-      {row.is_active ? <CheckCircle2 size={12} /> : <CircleOff size={12} />}
-      {row.is_active ? 'Active' : 'Inactive'}
-    </span>
-  )
-
-  const profileAvatar = (row) => {
-    const initials = `${row.first_name?.[0] || ''}${row.last_name?.[0] || ''}`.trim().toUpperCase() || (row.username?.[0] || '').toUpperCase() || '?'
-    const imageUrl = row.profile_image_url || row.profile_image || row.avatar_url || row.avatar
-
-    return (
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-100 text-sm font-semibold uppercase text-slate-700">
-          {imageUrl ? <img src={imageUrl} alt={row.username || initials} className="h-full w-full object-cover" /> : initials}
-        </div>
-      </div>
-    )
-  }
-
-  const nfcStatusBadge = (uid) => (
-    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${uid ? 'bg-[#ECFDF5] text-[#166534]' : 'bg-[#FEF3C7] text-[#92400E]'}`}>
-      {uid ? 'Registered' : 'Not Assigned'}
-    </span>
-  )
+  const nfcStatusBadge = (uid) => <StatusBadge status={uid ? 'registered' : 'not assigned'} label={uid ? 'Registered' : 'Not Assigned'} />
 
   const roleBadge = (role) => {
     const normalized = (role || '').toLowerCase()
-    const classes = {
-      administrator: 'bg-[#F3E8FF] text-[#6D28D9]',
-      admin: 'bg-[#F3E8FF] text-[#6D28D9]',
-      instructor: 'bg-[#DBEAFE] text-[#1D4ED8]',
-      student: 'bg-[#DCFCE7] text-[#15803D]',
-    }[normalized] || 'bg-[#E5E7EB] text-[#374151]'
-
     const label = normalized === 'administrator' || normalized === 'admin' ? 'Administrator' : normalized === 'instructor' ? 'Instructor' : normalized === 'student' ? 'Student' : role || 'Unknown'
-
-    return (
-      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${classes}`}>
-        {label}
-      </span>
-    )
+    return <StatusBadge status={normalized} label={label} tone="info" />
   }
 
-  const studentColumns = [
-    baseSelectColumn,
-    { key: 'student_id', label: 'Student ID' },
-    { key: 'username', label: 'Username' },
-    { key: 'name', label: 'Full Name', className: 'min-w-[240px]', render: (_v, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
-    { key: 'section_name', label: 'Section', render: (_v, row) => row.section_name || row.section || '—' },
-    { key: 'email', label: 'Email' },
-    { key: 'nfc_uid', label: 'NFC UID', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
-    { key: 'status', label: 'Status', render: (_v, row) => statusBadge(row) },
-    { key: 'actions', label: 'Actions', render: (_v, row) => <ActionsMenu user={row} onAction={handleRowAction} /> }
+  const columns = [
+    { key: 'name', label: 'Full Name', className: 'w-[14%]', render: (_v, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
+    { key: 'username', label: 'Username', className: 'w-[11%]' },
+    { key: 'email', label: 'Email', className: 'w-[20%]' },
+    { key: 'role', label: 'Role', className: 'w-[10%]', render: (_v, row) => roleBadge(row.role) },
+    { key: 'nfc_status', label: 'NFC Status', className: 'w-[11%]', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
+    { key: 'status', label: 'Account Status', className: 'w-[11%]', render: (_v, row) => statusBadge(row) },
+    {
+      key: 'actions',
+      label: 'Action',
+      className: 'w-[17%]',
+      render: (_v, row) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            type="checkbox"
+            aria-label={`Select ${row.username}`}
+            checked={selectedIds.includes(getUserId(row))}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              const id = getUserId(row)
+              if (event.target.checked) setSelectedIds((current) => [...current, id])
+              else setSelectedIds((current) => current.filter((selectedId) => selectedId !== id))
+            }}
+          />
+          <button type="button" onClick={() => handleRowAction('view', row)} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">View</button>
+          <ActionsMenu user={row} onAction={handleRowAction} />
+        </div>
+      ),
+    },
   ]
-
-  const instructorColumns = [
-    baseSelectColumn,
-    { key: 'instructor_id', label: 'Instructor ID' },
-    { key: 'username', label: 'Username' },
-    { key: 'name', label: 'Full Name', className: 'min-w-[240px]', render: (_v, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
-    { key: 'assigned_sections', label: 'Assigned Sections', render: (_v, row) => (row.assigned_sections && row.assigned_sections.length ? row.assigned_sections.map(s=>s.section_name||s.section_name).join(', ') : '—') },
-    { key: 'email', label: 'Email' },
-    { key: 'nfc_uid', label: 'NFC UID', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
-    { key: 'status', label: 'Status', render: (_v, row) => statusBadge(row) },
-    { key: 'actions', label: 'Actions', render: (_v, row) => <ActionsMenu user={row} onAction={handleRowAction} /> }
-  ]
-
-  const adminColumns = [
-    baseSelectColumn,
-    { key: 'admin_id', label: 'Admin ID', render: (_v, row) => row.id },
-    { key: 'username', label: 'Username' },
-    { key: 'name', label: 'Full Name', className: 'min-w-[240px]', render: (_v, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
-    { key: 'email', label: 'Email' },
-    { key: 'nfc_uid', label: 'NFC UID', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
-    { key: 'status', label: 'Status', render: (_v, row) => statusBadge(row) },
-    { key: 'actions', label: 'Actions', render: (_v, row) => <ActionsMenu user={row} onAction={handleRowAction} /> }
-  ]
-
-  const allColumns = [
-    baseSelectColumn,
-    { key: 'profile', label: 'Profile', className: 'min-w-[180px]', render: (_v, row) => profileAvatar(row) },
-    { key: 'username', label: 'Username' },
-    { key: 'name', label: 'Full Name', className: 'min-w-[220px]', render: (_v, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
-    { key: 'email', label: 'Email' },
-    { key: 'role', label: 'Role', render: (_v, row) => roleBadge(row.role) },
-    { key: 'nfc_status', label: 'NFC Status', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
-    { key: 'status', label: 'Account Status', render: (_v, row) => statusBadge(row) },
-    { key: 'actions', label: 'Actions', render: (_v, row) => <ActionsMenu user={row} onAction={handleRowAction} /> }
-  ]
-
-  const columns = activeRole === 'student' ? studentColumns : activeRole === 'instructor' ? instructorColumns : activeRole === 'admin' ? adminColumns : allColumns
 
   const totalUsers = users.length
   const totalStudents = users.filter((u) => u.role === 'student').length
@@ -290,8 +222,8 @@ export default function Users() {
         title="Users Management"
         description="Manage system users, roles, and permissions"
         action={
-          <div className="flex items-center gap-3">
-            <div className="rounded-md border bg-white p-1">
+          <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto">
+            <div className="flex max-w-full flex-wrap rounded-md border bg-white p-1">
               <button onClick={() => setActiveRole('all')} className={`px-3 py-1 ${activeRole==='all'?'bg-blue-50 font-semibold':''}`}>All Users</button>
               <button onClick={() => setActiveRole('student')} className={`px-3 py-1 ${activeRole==='student'?'bg-blue-50 font-semibold':''}`}>Students</button>
               <button onClick={() => setActiveRole('instructor')} className={`px-3 py-1 ${activeRole==='instructor'?'bg-blue-50 font-semibold':''}`}>Instructors</button>
@@ -425,7 +357,25 @@ export default function Users() {
             <p className="mt-2 text-sm text-slate-600">Get started by adding your first student, instructor, or administrator.</p>
           </div>
         ) : (
-          <DataTable columns={columns} data={filteredUsers} loading={loading} showActions={false} emptyMessage={users.length ? 'No users match your filters.' : 'No users available.'} />
+          <DataTable
+            columns={columns}
+            data={filteredUsers}
+            loading={loading}
+            showActions={false}
+            variant="users"
+            expandable
+            renderExpandedRow={(row) => (
+              <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <div><dt className="font-semibold">System ID</dt><dd>{row.id}</dd></div>
+                <div><dt className="font-semibold">NFC UID</dt><dd className="break-all">{row.nfc_uid || 'Not assigned'}</dd></div>
+                <div><dt className="font-semibold">Last Login</dt><dd>{row.last_login ? new Date(row.last_login).toLocaleString() : '—'}</dd></div>
+                <div><dt className="font-semibold">Student ID</dt><dd>{row.student_id || '—'}</dd></div>
+                <div><dt className="font-semibold">Instructor ID</dt><dd>{row.instructor_id || '—'}</dd></div>
+                <div><dt className="font-semibold">Section</dt><dd>{row.section_name || row.section || '—'}</dd></div>
+              </dl>
+            )}
+            emptyMessage={users.length ? 'No users match your filters.' : 'No users available.'}
+          />
         )}
       </div>
 
@@ -455,7 +405,7 @@ export default function Users() {
         onUnauthorized={() => navigate('/admin/login')}
         onSaved={handleUserSaved}
       />
-      <UserDrawer user={drawerUser} onClose={() => setDrawerUser(null)} />
+      <UserDrawer key={getUserId(drawerUser) || 'closed'} user={drawerUser} onClose={() => setDrawerUser(null)} />
     </div>
   )
 

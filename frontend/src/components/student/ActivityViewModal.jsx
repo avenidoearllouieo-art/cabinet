@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Download } from 'lucide-react'
-import Modal from '../Modal.jsx'
+import { useEffect, useState } from 'react'
+import { BookOpen, CheckCircle2, Download, Eye, FileText, Send, Star, Users } from 'lucide-react'
 import api from '../../services/api.js'
 import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
 import ActivityDiscussion from '../ActivityDiscussion.jsx'
+import StatusBadge from '../StatusBadge.jsx'
+import { FormActions, FormDialog, FormSection, FormStepper, InlineFeedback } from '../forms/FormPrimitives.jsx'
+
+const detailSteps = ['Activity details', 'Attachments', 'Your submission', 'Discussion']
 
 function formatDate(value) {
   if (!value) return '—'
@@ -39,186 +42,195 @@ function getAttachmentUrl(attachment) {
 }
 
 function statusBadge(status) {
-  const s = String(status || '').toLowerCase()
-  if (s.includes('graded')) return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Graded</span>
-  if (s.includes('submitted')) return <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">Submitted</span>
-  if (s.includes('late') || s.includes('overdue')) return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>
-  return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Not Submitted</span>
+  const value = String(status || 'Not Submitted')
+  if (value.toLowerCase().includes('graded')) return <StatusBadge status="graded" label="Graded" />
+  if (value.toLowerCase().includes('submitted')) return <StatusBadge status="submitted" label={value} />
+  if (value.toLowerCase().includes('late') || value.toLowerCase().includes('overdue')) return <StatusBadge status="late" label={value} />
+  return <StatusBadge status="pending" label={value} />
 }
 
-export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose }) {
+export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose, onSubmit, submissionAction = '' }) {
   const [activity, setActivity] = useState(initialActivity || null)
   const [submission, setSubmission] = useState(null)
-
-  const fetchSubmission = useCallback(async (activityId) => {
-    if (!activityId) return
-    try {
-      const res = await api.get('/submissions/', { params: { activity: activityId, page_size: 1 } })
-      const results = Array.isArray(res.data) ? res.data : res.data.results || []
-      setSubmission(results[0] || null)
-    } catch (err) {
-      console.error('Failed to load submission', err)
-    }
-  }, [])
+  const [step, setStep] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
+    if (!isOpen) return undefined
+    let active = true
     const timeoutId = window.setTimeout(async () => {
+      setLoading(true)
+      setLoadError('')
+      setStep(0)
       setActivity(initialActivity || null)
       setSubmission(null)
-      if (!initialActivity) return
-      if (typeof initialActivity === 'number' || !initialActivity.attachments) {
-        try {
-          const res = await api.get(`/activities/${initialActivity.id || initialActivity}/`)
-          setActivity(res.data)
-        } catch (err) {
-          console.error('Failed to load activity', err)
-        }
+      if (!initialActivity) {
+        setLoading(false)
+        return
       }
-      fetchSubmission(initialActivity.id || initialActivity)
+      const activityId = typeof initialActivity === 'number' ? initialActivity : initialActivity.id
+      try {
+        const activityResponse = await api.get(`/activities/${activityId}/`)
+        if (active) setActivity(activityResponse.data)
+      } catch (err) {
+        console.error('Failed to load activity details', err)
+        if (active) setLoadError('Showing the activity summary. Full details could not be refreshed.')
+      }
+      try {
+        const submissionResponse = await api.get('/submissions/', { params: { activity: activityId, ordering: '-submitted_at', page_size: 1 } })
+        const results = Array.isArray(submissionResponse.data) ? submissionResponse.data : submissionResponse.data.results || []
+        if (active) setSubmission(results[0] || null)
+      } catch (err) {
+        console.error('Failed to load submission', err)
+      } finally {
+        if (active) setLoading(false)
+      }
     }, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [initialActivity, isOpen, fetchSubmission])
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [initialActivity, isOpen])
 
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
+  const canEditSubmission = submissionAction === 'Submit Activity' || submissionAction === 'Edit Submission'
+  const visibleSubmissionStatus = submission?.score != null || submission?.graded_at ? 'Graded' : submissionStatus
+  const latestSubmittedAt = submission?.submitted_at || submission?.created_at || activity?.student_submitted_at
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Activity Details" containerClassName="max-w-[900px]">
+    <FormDialog
+      isOpen={isOpen}
+      title="Activity Details"
+      description={activity?.title || 'Student activity overview'}
+      onClose={onClose}
+      dirty={false}
+      busy={loading}
+      asForm={false}
+      maxWidth="max-w-5xl"
+      stepper={<FormStepper steps={detailSteps} currentStep={step} />}
+      actions={(
+        <FormActions
+          onCancel={onClose}
+          onBack={step > 0 ? () => setStep((current) => Math.max(0, current - 1)) : undefined}
+          onNext={() => setStep((current) => Math.min(detailSteps.length - 1, current + 1))}
+          isLastStep={step === detailSteps.length - 1}
+          submitLabel="Close"
+          finalButtonType="button"
+          onFinalAction={onClose}
+          hideCancel
+          busy={loading}
+        />
+      )}
+    >
       {!activity ? (
-        <p className="text-sm text-slate-600">Activity details are unavailable.</p>
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">Activity details are unavailable.</div>
       ) : (
-        <div className="space-y-5">
-          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)] sm:p-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-[#102a4c]">{activity.title}</h2>
-                <p className="mt-1 text-sm font-medium text-[#64748b]">{activity.activity_type || 'Assignment'}</p>
+        <div className="space-y-4">
+          {loadError && <InlineFeedback>{loadError}</InlineFeedback>}
+          {step === 0 && (
+            <>
+              <FormSection icon={Users} title={activity.title || 'Activity'} description={activity.activity_type || 'Activity details'}>
+                <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <DetailFact label="Instructor" value={activity.instructor_name || 'Not recorded'} />
+                  <DetailFact label="Due date" value={formatDate(activity.due_date)} />
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><dt className="text-xs font-semibold text-slate-500">Current status</dt><dd className="mt-2">{statusBadge(visibleSubmissionStatus)}</dd></div>
+                  <DetailFact label="Maximum score" value={activity.max_score != null ? `${activity.max_score} pts` : 'Not recorded'} icon={<Star size={15} />} />
+                </dl>
+              </FormSection>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <FormSection icon={FileText} title="Description">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{activity.description || 'No description provided.'}</p>
+                </FormSection>
+                <FormSection icon={BookOpen} title="Instructions">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{activity.instructions || 'No instructions provided.'}</p>
+                </FormSection>
               </div>
-              <div className="grid gap-x-6 gap-y-2 border-t border-[#e7edf4] pt-4 text-sm sm:grid-cols-2 md:min-w-[320px] md:border-l md:border-t-0 md:pl-5 md:pt-0">
-                <span className="text-[#64748b]">Instructor: <strong className="text-[#28415f]">{activity.instructor_name || 'Unassigned'}</strong></span>
-                <span className="text-[#64748b]">Due: <strong className="text-[#28415f]">{formatDate(activity.due_date)}</strong></span>
-                <span className="text-[#64748b]">Max Score: <strong className="text-[#28415f]">{activity.max_score != null ? `${activity.max_score} pts` : '—'}</strong></span>
-                <span className="flex items-center gap-2 text-[#64748b]">Status: {statusBadge(submissionStatus)}</span>
-              </div>
-            </div>
-          </section>
+            </>
+          )}
 
-          <section className="grid gap-5 lg:grid-cols-2">
-            <div className="min-h-[150px] rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
-              <h3 className="text-base font-bold text-[#102a4c]">Description</h3>
-              <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.description || 'No description provided.'}</p>
-            </div>
-            <div className="min-h-[150px] rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
-              <h3 className="text-base font-bold text-[#102a4c]">Instructions</h3>
-              <p className="mt-4 text-sm leading-7 text-[#334155] whitespace-pre-wrap">{activity.instructions || 'No instructions provided.'}</p>
-            </div>
-          </section>
+          {step === 1 && (
+            <FormSection icon={FileText} title="Attachments" description="Files shared by your instructor.">
+              {activity.attachments?.length ? (
+                <ul className="space-y-2">
+                  {activity.attachments.map((attachment) => (
+                    <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="min-w-0"><p className="break-words text-sm font-semibold text-slate-800">{getAttachmentName(attachment)}</p><p className="mt-0.5 text-xs text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p></div>
+                      <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="student-table-action student-table-action-primary"><Download size={14} />Download</a>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No attachments for this activity.</p>}
+            </FormSection>
+          )}
 
-          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Attachments</h3>
-                <p className="text-sm text-slate-500">Download files shared by your instructor.</p>
-              </div>
-            </div>
-            {activity.attachments?.length ? (
-              <div className="mt-4 space-y-3">
-                {activity.attachments.map((attachment) => (
-                  <div key={attachment.id} className="flex flex-col gap-3 rounded-[12px] border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="break-words font-medium text-slate-900">{getAttachmentName(attachment)}</p>
-                      <p className="text-sm text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p>
-                    </div>
-                    <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#002B5B] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#123f73]">
-                      <Download size={16} /> Download
-                    </a>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-4 rounded-xl border border-dashed border-[#cbd8e6] bg-[#f7f9fc] px-4 py-3 text-sm text-[#64748b]">No attachments for this activity.</p>
-            )}
-          </section>
+          {step === 2 && (
+            <FormSection icon={CheckCircle2} title="Your Submission" description="Latest submission, notes, files, and feedback.">
+              <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><dt className="text-xs font-medium text-slate-500">Status</dt><dd className="mt-2">{statusBadge(visibleSubmissionStatus)}</dd></div>
+                <DetailFact label="Submitted" value={latestSubmittedAt ? formatDate(latestSubmittedAt) : 'Not submitted'} />
+                <DetailFact label="Score" value={submission?.score != null ? `${submission.score}${activity.max_score != null ? ` / ${activity.max_score}` : ''}` : 'Not graded'} />
+                <DetailFact label="Date graded" value={submission?.graded_at ? formatDate(submission.graded_at) : 'Not recorded'} />
+              </dl>
 
-          <section className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-sm sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Your Submission</h3>
-                <p className="text-sm text-slate-500">Latest saved files, notes, and submission details.</p>
-              </div>
-            </div>
-            {submission ? (
-              <div className="space-y-4">
-                <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                    <span className="font-semibold text-slate-900">Status:</span> {submission.score != null || submission.graded_at ? 'Graded' : submissionStatus}
-                    <span className="text-slate-400">•</span>
-                    <span className="font-semibold text-slate-900">Submitted:</span> {formatDate(submission.submitted_at)}
-                    {(submission.score != null || submission.graded_at) ? <><span className="text-slate-400">•</span><span className="font-semibold text-slate-900">Grade:</span> {submission.score ?? '—'}{activity.max_score != null && submission.score != null ? ` / ${activity.max_score}` : ''}</> : null}
-                  </div>
-                  {submission.remarks ? <p className="mt-3 whitespace-pre-wrap">{submission.remarks}</p> : <p className="mt-3 text-slate-500">No notes were added.</p>}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h4 className="text-sm font-semibold text-[#102a4c]">Submission notes</h4>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{submission?.remarks || 'No notes were added.'}</p>
                 </div>
-                {submission.files?.length ? (
-                  <div className="space-y-3">
-                    {submission.files.map((file) => (
-                      <div key={file.id} className="flex flex-col gap-2 rounded-[12px] border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="font-medium text-slate-900">{file.name || file.filename || 'Attachment'}</p>
-                          <p className="text-sm text-slate-500">{formatBytes(getAttachmentSize(file))}</p>
-                        </div>
-                        <a href={getAttachmentUrl(file)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
-                          <Download size={16} /> Download
-                        </a>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-6 text-sm text-slate-600">No files attached to the latest submission.</div>
-                )}
-                {submission.previous_attempts?.length ? (
-                  <div className="rounded-[12px] border border-slate-200 bg-white p-4">
-                    <h4 className="text-sm font-semibold text-slate-900">Previous versions</h4>
-                    <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                      {submission.previous_attempts.map((attempt) => (
-                        <li key={attempt.id} className="flex items-center justify-between rounded-[10px] bg-slate-50 px-3 py-2">
-                          <span>Attempt {attempt.attempt || 1}</span>
-                          <span>{formatDate(attempt.submitted_at)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h4 className="text-sm font-semibold text-[#102a4c]">Instructor feedback</h4>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{submission?.feedback || activity.student_feedback || 'No feedback yet.'}</p>
+                </div>
               </div>
-            ) : (
-              <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-6 text-sm text-slate-600">No submission has been saved for this activity yet.</div>
-            )}
-          </section>
 
-          <section className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Instructor Feedback</h3>
-                <p className="text-sm text-slate-500">If graded, your instructor's feedback appears here.</p>
+              <div className="mt-4">
+                <h4 className="mb-2 text-sm font-semibold text-[#102a4c]">Submitted files</h4>
+                {submission?.files?.length ? (
+                  <ul className="space-y-2">
+                    {submission.files.map((file) => <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"><span className="break-words text-sm font-medium text-slate-700">{file.name || file.filename || 'Attachment'} <span className="text-xs text-slate-500">· {formatBytes(getAttachmentSize(file))}</span></span><a href={getAttachmentUrl(file)} target="_blank" rel="noreferrer" className="student-table-action"><Download size={14} />Download</a></li>)}
+                  </ul>
+                ) : <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No files attached to the latest submission.</p>}
               </div>
-            </div>
-            <div className="rounded-[12px] bg-slate-50 p-4 text-sm text-slate-700">
-              {submission?.feedback || activity.student_feedback || 'No feedback yet.'}
-            </div>
-          </section>
 
-          <ActivityAnnouncements activityId={activity?.id} />
-          <ActivityDiscussion activityId={activity?.id} />
+              {submission?.previous_attempts?.length > 0 && (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h4 className="text-sm font-semibold text-[#102a4c]">Previous versions</h4>
+                  <ul className="mt-2 divide-y divide-slate-200 text-sm text-slate-600">
+                    {submission.previous_attempts.map((attempt) => <li key={attempt.id} className="flex justify-between gap-3 py-2"><span>Attempt {attempt.attempt || 1}</span><span>{formatDate(attempt.submitted_at)}</span></li>)}
+                  </ul>
+                </div>
+              )}
 
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Close
-            </button>
-          </div>
+              {submissionAction && (
+                <div className="mt-4 flex justify-end">
+                  <button type="button" onClick={() => onSubmit?.(activity)} disabled={loading} className={canEditSubmission ? 'student-table-action student-table-action-primary min-h-11 px-4' : 'student-table-action min-h-11 px-4'}>
+                    {canEditSubmission ? <Send size={15} /> : <Eye size={15} />}{submissionAction}
+                  </button>
+                </div>
+              )}
+            </FormSection>
+          )}
+
+          {step === 3 && (
+            <FormSection icon={Send} title="Discussion" description="Announcements and messages for this activity.">
+              <div className="space-y-4">
+                <ActivityAnnouncements activityId={activity.id} />
+                <ActivityDiscussion activityId={activity.id} />
+              </div>
+            </FormSection>
+          )}
         </div>
       )}
-    </Modal>
+    </FormDialog>
+  )
+}
+
+function DetailFact({ label, value, icon }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <dt className="flex items-center gap-2 text-xs font-medium text-slate-500">{icon}{label}</dt>
+      <dd className="mt-2 break-words text-sm font-semibold text-[#102a4c]">{value}</dd>
+    </div>
   )
 }

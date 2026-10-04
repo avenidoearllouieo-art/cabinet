@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
+import CabinetStationStatus from '../../components/CabinetStationStatus'
 import { Activity, ClipboardList, Radio, Send, ShieldCheck, Users } from 'lucide-react'
 
 const formatDate = (value) => {
@@ -54,6 +55,7 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       <PageHeader title="Operations Overview" description="Live cabinet activity and system readiness." />
+      <CabinetStationStatus detailLevel="admin" />
 
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500 shadow-sm">Loading operations dashboard…</div>

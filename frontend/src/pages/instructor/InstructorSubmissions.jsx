@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import GradeSubmissionModal from '../../components/submissions/GradeSubmissionModal.jsx'
 import {
@@ -26,22 +28,6 @@ const formatDate = (value) => {
   }
 }
 
-const statusBadge = (status) => {
-  const normalized = String(status || '').toLowerCase()
-  switch (normalized) {
-    case 'graded':
-      return 'bg-emerald-100 text-emerald-700'
-    case 'late':
-      return 'bg-orange-100 text-orange-700'
-    case 'submitted':
-      return 'bg-sky-100 text-sky-700'
-    case 'missing':
-      return 'bg-red-100 text-red-700'
-    default:
-      return 'bg-slate-100 text-slate-700'
-  }
-}
-
 const sortOptions = [
   { value: 'newest', label: 'Newest' },
   { value: 'oldest', label: 'Oldest' },
@@ -50,11 +36,14 @@ const sortOptions = [
 ]
 
 export default function InstructorSubmissions() {
+  const location = useLocation()
+  const initialSectionId = new URLSearchParams(location.search).get('section') || ''
+  const sectionScoped = Boolean(initialSectionId)
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [selectedSection, setSelectedSection] = useState('')
+  const [selectedSection, setSelectedSection] = useState(initialSectionId)
   const [selectedActivity, setSelectedActivity] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('all')
   const [selectedSort, setSelectedSort] = useState('newest')
@@ -68,12 +57,13 @@ export default function InstructorSubmissions() {
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false)
   const [selectedSubmission, setSelectedSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
+  const activeSectionId = initialSectionId || selectedSection
 
   const fetchFilters = useCallback(async () => {
     try {
       const [sectionsRes, activitiesRes] = await Promise.all([
         api.get('/sections/'),
-        api.get('/activities/'),
+        api.get('/activities/', { params: activeSectionId ? { section: activeSectionId } : undefined }),
       ])
 
       const sectionResults = Array.isArray(sectionsRes.data)
@@ -89,14 +79,14 @@ export default function InstructorSubmissions() {
     } catch (err) {
       console.error('Error fetching filter lists:', err)
     }
-  }, [])
+  }, [activeSectionId])
 
   const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
       const params = {
         search: query || undefined,
-        student__section: selectedSection || undefined,
+        student__section: activeSectionId || undefined,
         activity: selectedActivity || undefined,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         ordering: selectedSort === 'oldest' ? 'submitted_at' : selectedSort === 'highest_score' ? '-score' : selectedSort === 'lowest_score' ? 'score' : '-submitted_at',
@@ -117,7 +107,7 @@ export default function InstructorSubmissions() {
     } finally {
       setLoading(false)
     }
-  }, [query, selectedActivity, selectedSection, selectedSort, selectedStatus])
+  }, [activeSectionId, query, selectedActivity, selectedSort, selectedStatus])
 
   const handleSubmissionGraded = async (gradedSubmission) => {
     setSubmissions((existing) =>
@@ -191,17 +181,22 @@ export default function InstructorSubmissions() {
       key: 'status',
       label: 'Status',
       className: 'min-w-[120px]',
-      render: (_value, row) => (
-        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusBadge(row.status)}`}>
-          {row.status ? String(row.status).replace('-', ' ') : 'Unknown'}
-        </span>
-      ),
+      render: (_value, row) => {
+        const label = row.status ? String(row.status).replaceAll('_', ' ') : 'Unknown'
+        return <StatusBadge status={label} label={label} />
+      },
     },
     {
       key: 'score',
       label: 'Score',
       className: 'min-w-[100px]',
       render: (value) => (value !== null && value !== undefined ? value : 'Pending'),
+    },
+    {
+      key: 'updated_at',
+      label: 'Last Updated',
+      className: 'min-w-[170px]',
+      render: (_value, row) => formatDate(row.updated_at || row.graded_at || row.submitted_at),
     },
     {
       key: 'actions',
@@ -211,7 +206,7 @@ export default function InstructorSubmissions() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => handleViewSubmission(row)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-sky-50 hover:text-sky-600"
+            className="instructor-table-action"
             title="View submission"
           >
             <Eye size={14} />
@@ -219,7 +214,7 @@ export default function InstructorSubmissions() {
           </button>
           <button
             onClick={() => handleGradeSubmission(row)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-600"
+            className="instructor-table-action"
             title={row.score === null ? 'Grade submission' : 'Edit grade'}
           >
             <CheckCircle2 size={14} />
@@ -231,28 +226,28 @@ export default function InstructorSubmissions() {
   ]
 
   return (
-    <div className="space-y-8">
-      <div className="space-y-4">
+    <div className="space-y-5">
+      <div className="space-y-3">
         <PageHeader title="Instructor Submissions" description="Review, grade, and track student submissions." />
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={<Circle size={18} />} label="Total Activities" value={totalActivities} subtitle="Your created activities" />
-          <StatCard icon={<Send size={18} />} label="Total Submissions" value={totalSubmissions} subtitle="Submitted by students" />
-          <StatCard icon={<Filter size={18} />} label="Pending Review" value={pendingReviewCount} subtitle="Awaiting your grading" />
-          <StatCard icon={<CheckCircle2 size={18} />} label="Graded Submissions" value={gradedCount} subtitle="Already reviewed" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard icon={<Circle />} label="Activities" value={totalActivities} subtitle="Created by you" />
+          <StatCard icon={<Send />} label="Submissions" value={totalSubmissions} subtitle="Received" />
+          <StatCard icon={<Filter />} label="Pending Review" value={pendingReviewCount} subtitle="Awaiting grading" bgColor="bg-amber-50" textColor="text-amber-900" />
+          <StatCard icon={<CheckCircle2 />} label="Graded" value={gradedCount} subtitle="Reviewed" bgColor="bg-emerald-50" textColor="text-emerald-900" />
         </div>
       </div>
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-6 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
-          <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
+      <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+        <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-3 md:flex-row">
+          <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
             <Search size={18} className="text-slate-400" />
             <input
               type="text"
               placeholder="Search student ID, name, or activity..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="flex-1 border-0 bg-transparent text-sm outline-none"
+              className="h-11 flex-1 border-0 bg-transparent text-sm outline-none"
             />
           </div>
 
@@ -260,12 +255,12 @@ export default function InstructorSubmissions() {
           <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
             Section
             <select
-              value={selectedSection}
+              value={activeSectionId}
               onChange={(e) => setSelectedSection(e.target.value)}
-              className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400"
+              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
-              <option value="">All Sections</option>
-              {sections.map((section) => (
+              {!sectionScoped && <option value="">All Sections</option>}
+              {sections.filter((section) => !sectionScoped || String(section.id) === String(initialSectionId)).map((section) => (
                 <option key={section.id} value={section.id}>
                   {section.section_name}
                 </option>
@@ -278,7 +273,7 @@ export default function InstructorSubmissions() {
             <select
               value={selectedActivity}
               onChange={(e) => setSelectedActivity(e.target.value)}
-              className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400"
+              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               <option value="">All Activities</option>
               {activities.map((activity) => (
@@ -294,7 +289,7 @@ export default function InstructorSubmissions() {
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400"
+              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               <option value="all">All</option>
               <option value="submitted">Submitted</option>
@@ -309,7 +304,7 @@ export default function InstructorSubmissions() {
             <select
               value={selectedSort}
               onChange={(e) => setSelectedSort(e.target.value)}
-              className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400"
+              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               {sortOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -331,7 +326,7 @@ export default function InstructorSubmissions() {
           {loading ? (
             <div className="p-8 text-center text-slate-500">Loading submissions...</div>
           ) : filteredSubmissions.length === 0 ? (
-            <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-16 text-center">
+            <div className="rounded-xl border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-8 text-center">
               <div className="mb-3 flex justify-center text-4xl text-[#2563EB]">
                 <Send size={32} />
               </div>
@@ -340,7 +335,7 @@ export default function InstructorSubmissions() {
               </p>
             </div>
           ) : (
-            <DataTable columns={columns} rows={filteredSubmissions} />
+            <DataTable columns={columns} rows={filteredSubmissions} variant="instructor" />
           )}
         </div>
       </div>

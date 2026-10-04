@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ClipboardList, Search, ArrowRight, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { ClipboardList, Search, AlertCircle, CheckCircle2, Eye } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
+import StatusBadge from '../../components/StatusBadge'
+import DataTable from '../../components/DataTable'
+import Pagination from '../../components/Pagination'
 import ActivityViewModal from '../../components/student/ActivityViewModal.jsx'
 import ActivitySubmitModal from '../../components/student/ActivitySubmitModal.jsx'
 
@@ -24,12 +27,10 @@ function formatDate(value) {
   }
 }
 
-function shortDescription(value) {
-  if (!value) return 'No description available.'
-  return value.length > 90 ? `${value.slice(0, 90)}…` : value
-}
-
 function getSubmissionState(activity) {
+  const activityStatus = String(activity?.status || '').toLowerCase()
+  if (activityStatus === 'closed' || activityStatus === 'archived') return 'closed'
+
   const status = String(activity?.student_submission_status || '').toLowerCase()
   const hasSubmission = Boolean(activity?.student_submitted_at) && !status.includes('not submitted')
   const dueDate = activity?.due_date ? new Date(activity.due_date) : null
@@ -45,23 +46,6 @@ function getSubmissionState(activity) {
   if (isPastDue) return 'overdue'
   if (dueDate && dueDate.toDateString() === now.toDateString()) return 'due_today'
   return 'pending'
-}
-
-function getBadgeClasses(state) {
-  switch (state) {
-    case 'submitted':
-      return 'bg-emerald-50 text-emerald-700'
-    case 'late':
-      return 'bg-amber-50 text-amber-700'
-    case 'overdue':
-      return 'bg-rose-50 text-rose-700'
-    case 'closed':
-      return 'bg-slate-100 text-slate-700'
-    case 'due_today':
-      return 'bg-sky-50 text-sky-700'
-    default:
-      return 'bg-slate-100 text-slate-700'
-  }
 }
 
 function getBadgeLabel(state) {
@@ -89,6 +73,7 @@ function getActionLabel(state, canEdit) {
 }
 
 function getCanEdit(activity) {
+  if (['closed', 'archived'].includes(String(activity?.status || '').toLowerCase())) return false
   const dueDate = activity?.due_date ? new Date(activity.due_date) : null
   const now = new Date()
   const isPastDue = dueDate && dueDate < now
@@ -110,7 +95,7 @@ export default function StudentActivities() {
   const [query, setQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
   const [page, setPage] = useState(1)
-  const [, setPageCount] = useState(0)
+  const [pageCount, setPageCount] = useState(1)
   const [activeActivity, setActiveActivity] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
@@ -120,7 +105,13 @@ export default function StudentActivities() {
       const params = {}
       if (sectionId) params.section = sectionId
       const response = await api.get('/activities/stats/', { params })
-      setStats(response.data)
+      const data = response.data || {}
+      setStats({
+        totalActivities: data.totalActivities ?? data.total_activities ?? 0,
+        pendingActivities: data.pendingActivities ?? data.pending_activities ?? 0,
+        submittedActivities: data.submittedActivities ?? data.submitted_activities ?? 0,
+        overdueActivities: data.overdueActivities ?? data.overdue_activities ?? 0,
+      })
     } catch (err) {
       console.error('Failed to load activity stats:', err)
       setError('Failed to load activity stats.')
@@ -134,8 +125,11 @@ export default function StudentActivities() {
       const params = { search: query || undefined, page }
       if (sectionId) params.section = sectionId
       const response = await api.get('/activities/', { params })
-      const fetchedActivities = response.data.results || []
-      setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
+      const data = response.data || {}
+      const fetchedActivities = Array.isArray(data) ? data : Array.isArray(data.results) ? data.results : []
+      const count = Number(data.count) || fetchedActivities.length
+      const pageSize = Number(data.page_size) || 10
+      setPageCount(Math.max(1, Math.ceil(count / pageSize)))
       setActivities(fetchedActivities)
     } catch (err) {
       console.error('Failed to load activities:', err)
@@ -215,6 +209,12 @@ export default function StudentActivities() {
     setIsSubmitModalOpen(true)
   }
 
+  const handleSubmitFromDetails = (activity) => {
+    setIsViewModalOpen(false)
+    setActiveActivity(activity)
+    setIsSubmitModalOpen(true)
+  }
+
   const handleModalSuccess = () => {
     setIsSubmitModalOpen(false)
     setActiveActivity(null)
@@ -258,99 +258,109 @@ export default function StudentActivities() {
     })
   }, [activities, activeFilter, query])
 
+  const columns = [
+    { key: 'id', label: 'ID', className: 'min-w-[72px]', render: (value) => value ?? 'Not recorded' },
+    {
+      key: 'title',
+      label: 'Title',
+      className: 'min-w-[240px]',
+      render: (value, activity) => (
+        <div>
+          <p className="font-semibold text-[#102a4c]">{value || 'Untitled activity'}</p>
+          <p className="text-xs text-slate-500">{activity.activity_type || 'Activity'}</p>
+        </div>
+      ),
+    },
+    { key: 'instructor_name', label: 'Instructor', className: 'min-w-[160px]', render: (value) => value || 'Not recorded' },
+    { key: 'due_date', label: 'Due Date', className: 'min-w-[180px]', render: (value) => formatDate(value) },
+    {
+      key: 'student_submission_status',
+      label: 'Status',
+      className: 'min-w-[125px]',
+      render: (_value, activity) => {
+        const state = getSubmissionState(activity)
+        return <StatusBadge status={state} label={getBadgeLabel(state)} />
+      },
+    },
+    {
+      key: 'actions',
+      label: 'Action',
+      className: 'min-w-[250px]',
+      render: (_value, activity) => {
+        const state = getSubmissionState(activity)
+        const actionLabel = getActionLabel(state, getCanEdit(activity))
+        const viewSubmission = actionLabel === 'View Submission'
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => handleViewActivity(activity)} className="student-table-action">
+              <Eye size={14} />View Details
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSubmitActivity(activity)}
+              className={viewSubmission ? 'student-table-action' : 'student-table-action student-table-action-primary'}
+            >
+              {actionLabel}
+            </button>
+          </div>
+        )
+      },
+    },
+  ]
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader title="Student Activities" description="Review the activities assigned to your section and manage your submissions." />
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard icon={<ClipboardList size={18} />} label="Total Activities" value={stats.totalActivities} subtitle="Activities assigned to your section" />
         <StatCard icon={<Search size={18} />} label="Pending Activities" value={stats.pendingActivities} subtitle="Not submitted yet" />
         <StatCard icon={<CheckCircle2 size={18} />} label="Submitted Activities" value={stats.submittedActivities} subtitle="Activities you have submitted" />
         <StatCard icon={<AlertCircle size={18} />} label="Overdue Activities" value={stats.overdueActivities} subtitle="Past due without submission" />
       </div>
 
-      <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative flex w-full items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900">
-              <Search size={16} className="text-slate-500" />
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative flex min-h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 focus-within:border-transparent focus-within:ring-2 focus-within:ring-[#0B2A4A] lg:max-w-md">
+              <Search size={16} className="shrink-0 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search title or instructor"
+                placeholder="Search by title or instructor"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                className="ml-3 min-w-[240px] bg-transparent text-sm text-slate-900 outline-none"
+                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none"
+                aria-label="Search activities by title or instructor"
               />
-            </div>
           </div>
           <div className="text-sm text-slate-500">Showing {filteredActivities.length} of {activities.length} activities</div>
         </div>
 
-        <div className="mb-6 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter activities">
           {filterTabs.map((tab) => (
             <button
               key={tab.value}
               type="button"
               onClick={() => setActiveFilter(tab.value)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeFilter === tab.value ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+              aria-pressed={activeFilter === tab.value}
+              className={`min-h-9 rounded-lg px-3 py-2 text-sm font-semibold transition ${activeFilter === tab.value ? 'bg-[#F5B700] text-[#0B1F3A]' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
             >
               {tab.label}
             </button>
           ))}
         </div>
 
-        {error ? (
-          <div className="p-6 text-sm text-rose-700">{error}</div>
-        ) : loading ? (
-          <div className="p-6 text-sm text-slate-500">Loading activities…</div>
-        ) : filteredActivities.length === 0 ? (
-          <div className="rounded-[16px] border border-dashed border-slate-200 bg-slate-50 p-8 text-sm text-slate-600">No activities match this view right now.</div>
-        ) : (
-          <div className="space-y-4">
-            {filteredActivities.map((activity) => {
-              const state = getSubmissionState(activity)
-              const canEdit = getCanEdit(activity)
-              const actionLabel = getActionLabel(state, canEdit)
-              return (
-                <div key={activity.id} className="rounded-[20px] border border-slate-200 bg-slate-50 p-5 shadow-sm">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-slate-900">{activity.title}</h3>
-                        <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${getBadgeClasses(state)}`}>
-                          {state === 'submitted' && <CheckCircle2 size={12} />}
-                          {state === 'late' && <Clock size={12} />}
-                          {state === 'overdue' && <AlertCircle size={12} />}
-                          {getBadgeLabel(state)}
-                        </span>
-                        {activity.student_submitted_at ? (
-                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">Submitted {formatDate(activity.student_submitted_at)}</span>
-                        ) : null}
-                      </div>
-                      <p className="text-sm leading-7 text-slate-600">{shortDescription(activity.description)}</p>
-                      <div className="flex flex-wrap gap-4 text-sm text-slate-500">
-                        <span>Instructor: {activity.instructor_name || '—'}</span>
-                        <span>Due: {formatDate(activity.due_date)}</span>
-                        <span>Max score: {activity.max_score ?? '—'}</span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => handleViewActivity(activity)} className="inline-flex items-center gap-2 rounded-full border border-[#002B5B] bg-white px-4 py-2 text-sm font-semibold text-[#002B5B] transition hover:bg-[#002B5B]/5">
-                        <ArrowRight size={14} /> View Details
-                      </button>
-                      <button type="button" onClick={() => handleSubmitActivity(activity)} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${actionLabel === 'View Submission' ? 'border border-[#002B5B] bg-white text-[#002B5B] hover:bg-[#002B5B]/5' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                        {actionLabel}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+        {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
+        <DataTable columns={columns} rows={filteredActivities} loading={loading} variant="instructor" showActions={false} emptyMessage={error ? 'No activities are available.' : 'No activities match these filters.'} />
+        {pageCount > 1 && <Pagination page={page} pageCount={pageCount} onPageChange={setPage} label="Showing page" />}
+      </section>
 
-      <ActivityViewModal activity={activeActivity} isOpen={isViewModalOpen} onClose={() => { setIsViewModalOpen(false); setActiveActivity(null) }} />
+      <ActivityViewModal
+        activity={activeActivity}
+        isOpen={isViewModalOpen}
+        submissionAction={activeActivity ? getActionLabel(getSubmissionState(activeActivity), getCanEdit(activeActivity)) : ''}
+        onSubmit={handleSubmitFromDetails}
+        onClose={() => { setIsViewModalOpen(false); setActiveActivity(null) }}
+      />
 
       <ActivitySubmitModal activity={activeActivity} isOpen={isSubmitModalOpen} onClose={() => { setIsSubmitModalOpen(false); setActiveActivity(null) }} onSuccess={handleModalSuccess} />
     </div>

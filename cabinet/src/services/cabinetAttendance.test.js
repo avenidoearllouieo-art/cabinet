@@ -12,9 +12,9 @@ const stationOne = {
   id: 'session-1',
   station: 1,
   status: 'open',
-  participants: members,
-  participantIds: members.map((member) => member.studentId),
-  participantUids: members.map((member) => member.uid),
+  opened_by: members,
+  openedByStudentIds: members.map((member) => member.studentId),
+  openedByUids: members.map((member) => member.uid),
 }
 
 const stationTwoMember = { uid: 'uid-station-2', fullName: 'Station 2 Member', studentId: 'STATION-2' }
@@ -22,9 +22,9 @@ const stationTwo = {
   id: 'session-2',
   station: 2,
   status: 'open',
-  participants: [stationTwoMember],
-  participantIds: [stationTwoMember.studentId],
-  participantUids: [stationTwoMember.uid],
+  opened_by: [stationTwoMember],
+  openedByStudentIds: [stationTwoMember.studentId],
+  openedByUids: [stationTwoMember.uid],
 }
 
 function collectMembers(session, participants) {

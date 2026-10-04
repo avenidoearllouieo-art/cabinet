@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import { Search, ChevronLeft } from 'lucide-react'
 
 export default function InstructorSectionStudents() {
@@ -113,21 +114,23 @@ export default function InstructorSectionStudents() {
       key: 'is_active',
       label: 'Registration Status',
       className: 'min-w-[160px]',
-      render: (value) => (value ? 'Active' : 'Inactive'),
+      render: (value) => <StatusBadge status={value ? 'active' : 'inactive'} label={value ? 'Active' : 'Inactive'} />,
     },
     {
       key: 'last_access_status',
       label: 'Cabinet Access Status',
       className: 'min-w-[180px]',
       render: (value) => {
-        if (!value) return 'No access records'
-        return value === 'success' ? 'Last access successful' : 'Last access failed'
+        if (!value) return <StatusBadge status="unknown" label="No access records" />
+        return value === 'success'
+          ? <StatusBadge status="success" label="Last access successful" />
+          : <StatusBadge status="failed" label="Last access failed" />
       },
     },
   ]
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <PageHeader
@@ -144,7 +147,7 @@ export default function InstructorSectionStudents() {
         <button
           type="button"
           onClick={() => navigate('/instructor/sections')}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
           <ChevronLeft size={16} />
           Back to Sections
@@ -157,8 +160,8 @@ export default function InstructorSectionStudents() {
         </div>
       )}
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <label className="relative block w-full lg:max-w-lg">
             <span className="sr-only">Search students</span>
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -167,7 +170,7 @@ export default function InstructorSectionStudents() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search student ID, name, or email"
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
+              className="h-11 w-full rounded-lg border border-slate-200 bg-white px-4 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
 
@@ -178,7 +181,7 @@ export default function InstructorSectionStudents() {
                 setSortField('name')
                 setSortDirection((prev) => (sortField === 'name' && prev === 'asc' ? 'desc' : 'asc'))
               }}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${sortField === 'name' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              className={`min-h-11 rounded-lg px-4 py-2 text-sm font-medium transition ${sortField === 'name' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
             >
               Sort by Name {sortField === 'name' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
             </button>
@@ -188,14 +191,14 @@ export default function InstructorSectionStudents() {
                 setSortField('student_id')
                 setSortDirection((prev) => (sortField === 'student_id' && prev === 'asc' ? 'desc' : 'asc'))
               }}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${sortField === 'student_id' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              className={`min-h-11 rounded-lg px-4 py-2 text-sm font-medium transition ${sortField === 'student_id' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
             >
               Sort by Student ID {sortField === 'student_id' ? (sortDirection === 'asc' ? '↑' : '↓') : ''}
             </button>
           </div>
         </div>
 
-        <DataTable columns={columns} rows={filteredStudents} loading={loading} />
+        <DataTable columns={columns} rows={filteredStudents} loading={loading} variant="instructor" />
       </div>
     </div>
   )

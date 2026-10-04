@@ -20,6 +20,7 @@ from .models import (
     Activity,
     Submission,
     AccessLog,
+    CabinetSession,
     CabinetEvent,
     NFCEnrollmentSession,
 )
@@ -479,14 +480,67 @@ class SubmissionAdmin(admin.ModelAdmin):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
+@admin.register(CabinetSession)
+class CabinetSessionAdmin(admin.ModelAdmin):
+    list_display = ('station', 'status', 'opened_by_students', 'closed_by_students', 'opened_at', 'closed_at', 'opened_by_count')
+    list_filter = ('status', 'station', 'opened_by__role', 'closed_by__role')
+    search_fields = ('station', 'notes', 'opened_by__first_name', 'opened_by__last_name', 'opened_by__student_id', 'closed_by__first_name', 'closed_by__last_name')
+    ordering = ('-opened_at',)
+    readonly_fields = ('opened_by', 'closed_by', 'opened_at', 'closed_at', 'created_at', 'updated_at')
+    date_hierarchy = 'opened_at'
+
+    @admin.display(description='Opened by')
+    def opened_by_students(self, obj):
+        return ', '.join(user.get_full_name().strip() for user in obj.opened_by.all())
+
+    @admin.display(description='Closed by')
+    def closed_by_students(self, obj):
+        return ', '.join(user.get_full_name().strip() for user in obj.closed_by.all())
+
+    @admin.display(description='Opened by count')
+    def opened_by_count(self, obj):
+        return obj.opened_by.count()
+
+
+class AccessLogAdminForm(forms.ModelForm):
+    class Meta:
+        model = AccessLog
+        fields = '__all__'
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.instance and self.instance.pk:
+            raise ValidationError('Access log records are immutable audit entries and cannot be edited.')
+        return cleaned_data
+
+    def save(self, commit=True):
+        raise ValidationError('Access log records are created only by the NFC cabinet workflow.')
+
+
 @admin.register(AccessLog)
 class AccessLogAdmin(admin.ModelAdmin):
-    list_display = ('user', 'status', 'access_time', 'updated_at')
-    list_filter = ('status', 'user__section')
-    search_fields = ('user__first_name', 'user__last_name', 'user__student_id')
+    list_display = ('user', 'nfc_uid', 'station', 'action', 'status', 'cabinet_session', 'access_time')
+    list_filter = ('status', 'action', 'station', 'user__section', 'cabinet_session__status')
+    search_fields = ('user__first_name', 'user__last_name', 'user__student_id', 'nfc_uid', 'station', 'reason')
     ordering = ('-access_time',)
-    readonly_fields = ('access_time', 'updated_at')
+    form = AccessLogAdminForm
+    readonly_fields = ('user', 'cabinet_session', 'access_time', 'status', 'action', 'nfc_uid', 'station', 'cabinet_name', 'reason', 'updated_at')
     date_hierarchy = 'access_time'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return super().has_view_permission(request, obj)
+
+    def get_model_perms(self, request):
+        return {'view': self.has_view_permission(request)}
 
 
 @admin.register(CabinetEvent)
@@ -501,8 +555,8 @@ class CabinetEventAdmin(admin.ModelAdmin):
 
 @admin.register(NFCEnrollmentSession)
 class NFCEnrollmentSessionAdmin(admin.ModelAdmin):
-    list_display = ('nfc_uid', 'status', 'expires_at', 'created_at', 'completed_at', 'completed_by')
+    list_display = ('nfc_uid', 'station', 'cabinet_name', 'status', 'expires_at', 'created_at', 'completed_at', 'completed_by')
     list_filter = ('status',)
     search_fields = ('nfc_uid', 'completed_by__username', 'completed_by__student_id')
-    readonly_fields = ('nfc_uid', 'token_digest', 'token_hash', 'created_at', 'completed_at', 'completed_by')
+    readonly_fields = ('nfc_uid', 'station', 'cabinet_name', 'token_digest', 'token_hash', 'created_at', 'completed_at', 'completed_by')
     ordering = ('-created_at',)

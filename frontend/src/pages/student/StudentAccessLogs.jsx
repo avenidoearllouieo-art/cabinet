@@ -3,23 +3,15 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import ViewInstructorAccessLogModal from '../../components/accesslogs/ViewInstructorAccessLogModal.jsx'
 import { Search, CheckCircle2, AlertCircle, LogIn, Eye } from 'lucide-react'
-
-const statusStyles = {
-  success: 'bg-[#ECFDF5] text-[#16A34A]',
-  failed: 'bg-[#FEE2E2] text-[#B91C1C]',
-}
 
 const getStatusBadge = (status) => {
   if (!status) return <span className="text-[#6B7280]">—</span>
   const lower = String(status).toLowerCase()
-  const style = statusStyles[lower] || 'bg-[#F3F4F6] text-[#6B7280]'
-  return (
-    <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${style}`}>
-      {lower.charAt(0).toUpperCase() + lower.slice(1)}
-    </span>
-  )
+  const label = lower.charAt(0).toUpperCase() + lower.slice(1)
+  return <StatusBadge status={label} label={label} />
 }
 
 const formatDate = (value) => {
@@ -121,7 +113,7 @@ export default function StudentAccessLogs() {
       render: (value) => value || '—',
     },
     {
-      key: 'rfid_tag',
+      key: 'nfc_uid',
       label: 'NFC',
       render: (value) => value || '—',
     },

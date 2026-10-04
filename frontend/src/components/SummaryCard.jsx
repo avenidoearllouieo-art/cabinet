@@ -1,4 +1,4 @@
-import { isValidElement } from 'react'
+import { cloneElement, isValidElement } from 'react'
 
 export default function SummaryCard({
   title,
@@ -10,7 +10,7 @@ export default function SummaryCard({
   iconColor = 'text-blue-900',
 }) {
   const iconContent = isValidElement(Icon)
-    ? Icon
+    ? cloneElement(Icon, { size: 18 })
     : Icon
       ? (() => {
           const IconComponent = Icon
@@ -19,23 +19,15 @@ export default function SummaryCard({
       : null
 
   return (
-    <div className="admin-summary-card flex min-h-[104px] cursor-default items-center justify-between rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#b9cbe0] hover:shadow-[0_14px_30px_rgba(25,55,89,0.10)]">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl p-2.5 ${iconBg} ${iconColor}`}>
+    <article className="admin-summary-card flex h-[120px] min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-[#dbe5f0] bg-white px-4 py-3 shadow-sm">
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${iconBg} ${iconColor}`}>
           {iconContent}
-        </div>
-
-        <div className="min-w-0">
-          <p className="text-sm font-semibold leading-5 text-[#28415f]">{title}</p>
-          {trendText && (
-            <p className={`mt-1 text-xs font-medium leading-5 ${trendColor || 'text-slate-500'}`}>
-              {trendText}
-            </p>
-          )}
-        </div>
       </div>
-
-      <p className="ml-3 shrink-0 text-3xl font-bold tracking-tight text-[#102a4c]">{value}</p>
-    </div>
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+        <p className="truncate text-sm font-semibold leading-5 text-[#28415f]" title={title}>{title}</p>
+        <p className="truncate text-[26px] font-bold leading-7 text-[#102a4c]" title={String(value)}>{value}</p>
+        <p className={`truncate text-xs leading-4 ${trendColor || 'text-slate-500'}`} title={trendText}>{trendText || '\u00a0'}</p>
+      </div>
+    </article>
   )
 }

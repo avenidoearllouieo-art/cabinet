@@ -11,7 +11,7 @@ export default function InstructorLayout() {
       <Header />
       <div className="flex min-h-screen pt-[70px] items-stretch justify-start">
         <Sidebar variant="instructor" onCollapsedChange={setSidebarCollapsed} />
-        <main className={`${sidebarCollapsed ? 'ml-[76px]' : 'ml-[250px] max-sm:ml-[76px]'} admin-main min-h-screen min-w-0 flex-1 p-5 transition-[margin] duration-300 sm:p-8`}>
+        <main className={`${sidebarCollapsed ? 'ml-[76px]' : 'ml-[250px] max-sm:ml-[76px]'} admin-main min-h-screen min-w-0 flex-1 p-4 transition-[margin] duration-300 sm:p-6`}>
           <Outlet />
         </main>
       </div>

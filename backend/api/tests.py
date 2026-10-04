@@ -1,6 +1,7 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
-from django.test import Client, TestCase
+from django.contrib import admin as django_admin
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -12,7 +13,156 @@ from urllib.parse import parse_qs, urlparse
 
 from openpyxl import Workbook, load_workbook
 
-from .models import AccessLog, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession
+from .admin import AccessLogAdmin
+from .models import AccessLog, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession
+
+
+class InstructorSectionOverviewScopeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='section-overview-instructor',
+            email='section-overview-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='OVERVIEW-INST-1',
+        )
+        self.section_a = Section.objects.create(
+            section_name='Overview Section A',
+            subject_code='OV-A',
+            program='Program A',
+            year_level='3',
+            academic_year='2026-2027',
+            instructor=self.instructor,
+        )
+        self.section_b = Section.objects.create(
+            section_name='Overview Section B',
+            subject_code='OV-B',
+            program='Program B',
+            year_level='2',
+            academic_year='2026-2027',
+        )
+        self.section_b.assigned_instructors.add(self.instructor)
+        self.student_a = User.objects.create_user(
+            username='overview-student-a',
+            email='overview-student-a@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='OV-STU-A',
+            section=self.section_a,
+        )
+        self.student_b = User.objects.create_user(
+            username='overview-student-b',
+            email='overview-student-b@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='OV-STU-B',
+            section=self.section_b,
+        )
+        self.student_b_missing = User.objects.create_user(
+            username='overview-student-b-missing',
+            email='overview-student-b-missing@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='OV-STU-B-MISSING',
+            section=self.section_b,
+        )
+        self.activity_a = Activity.objects.create(
+            title='Section A activity',
+            created_by=self.instructor,
+            cabinet_station='Cabinet Station 1',
+        )
+        self.activity_a.assigned_sections.add(self.section_a)
+        self.activity_b = Activity.objects.create(
+            title='Section B activity',
+            created_by=self.instructor,
+            cabinet_station='Cabinet Station 2',
+        )
+        self.activity_b.assigned_sections.add(self.section_b)
+        Submission.objects.create(activity=self.activity_a, student=self.student_a)
+        Submission.objects.create(activity=self.activity_b, student=self.student_b)
+        AccessLog.objects.create(user=self.student_a, station='Cabinet Station 1', status='success')
+        AccessLog.objects.create(user=self.student_b, station='Cabinet Station 2', status='failed')
+        self.client.force_authenticate(user=self.instructor)
+
+    def test_section_overview_contains_only_selected_sections_records(self):
+        response = self.client.get(f'/api/sections/{self.section_a.pk}/overview/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()
+        self.assertEqual(payload['section']['section_id'], self.section_a.pk)
+        self.assertEqual(payload['counts'], {
+            'students': 1,
+            'activities': 1,
+            'submitted': 1,
+            'expected': 1,
+            'missing': 0,
+            'late': 0,
+            'pending_review': 1,
+        })
+        self.assertEqual({student['id'] for student in payload['students']}, {self.student_a.pk})
+        self.assertEqual({activity['id'] for activity in payload['activities']}, {self.activity_a.pk})
+        self.assertEqual({log['user'] for log in payload['access_logs']}, {self.student_a.pk})
+        self.assertEqual(payload['cabinet_stations'], [{'station': 'Cabinet Station 1', 'status': 'Available'}])
+
+    def test_assigned_sections_and_section_list_metrics_respect_selected_section(self):
+        response = self.client.get('/api/sections/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        sections = response.json()['results']
+        self.assertEqual({section['section_id'] for section in sections}, {self.section_a.pk, self.section_b.pk})
+        by_id = {section['section_id']: section for section in sections}
+        self.assertEqual(by_id[self.section_a.pk]['student_count'], 1)
+        self.assertEqual(by_id[self.section_a.pk]['activity_count'], 1)
+        self.assertEqual(by_id[self.section_a.pk]['submitted_count'], 1)
+        self.assertEqual(by_id[self.section_a.pk]['missing_count'], 0)
+        self.assertEqual(by_id[self.section_a.pk]['cabinet_station'], 'Cabinet Station 1')
+        self.assertEqual(by_id[self.section_b.pk]['student_count'], 2)
+        self.assertEqual(
+            by_id[self.section_b.pk]['instructor_name'],
+            self.instructor.get_full_name().strip() or self.instructor.username,
+        )
+        self.assertEqual(by_id[self.section_b.pk]['activity_count'], 1)
+        self.assertEqual(by_id[self.section_b.pk]['submitted_count'], 1)
+        self.assertEqual(by_id[self.section_b.pk]['expected_submission_count'], 2)
+        self.assertEqual(by_id[self.section_b.pk]['missing_count'], 1)
+        self.assertEqual(by_id[self.section_b.pk]['cabinet_station'], 'Cabinet Station 2')
+
+        students_response = self.client.get(f'/api/users/?section={self.section_b.pk}&role=student')
+        self.assertEqual(students_response.status_code, 200, students_response.json())
+        self.assertEqual(
+            {student['id'] for student in students_response.json()['results']},
+            {self.student_b.pk, self.student_b_missing.pk},
+        )
+
+    def test_section_destination_endpoints_are_scoped_to_selected_section(self):
+        activities_response = self.client.get(f'/api/activities/?section={self.section_a.pk}')
+        submissions_response = self.client.get(f'/api/submissions/?section={self.section_a.pk}')
+        logs_response = self.client.get(f'/api/access-logs/?user__section={self.section_a.pk}')
+        stats_response = self.client.get(f'/api/access-logs/stats/?user__section={self.section_a.pk}')
+
+        self.assertEqual(activities_response.status_code, 200, activities_response.json())
+        self.assertEqual(submissions_response.status_code, 200, submissions_response.json())
+        self.assertEqual(logs_response.status_code, 200, logs_response.json())
+        self.assertEqual(stats_response.status_code, 200, stats_response.json())
+        self.assertEqual({activity['id'] for activity in activities_response.json()['results']}, {self.activity_a.pk})
+        self.assertEqual({submission['id'] for submission in submissions_response.json()['results']}, {self.student_a.submissions.get().pk})
+        self.assertEqual({log['user'] for log in logs_response.json()['results']}, {self.student_a.pk})
+        self.assertEqual(stats_response.json()['total_accesses_today'], 1)
+
+    def test_instructor_cannot_open_an_unassigned_section_overview(self):
+        other = User.objects.create_user(
+            username='other-section-instructor',
+            email='other-section-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='OVERVIEW-INST-2',
+        )
+        other_section = Section.objects.create(section_name='Other Section', instructor=other)
+
+        response = self.client.get(f'/api/sections/{other_section.pk}/overview/')
+
+        self.assertEqual(response.status_code, 404)
 
 
 class InstructorSectionAssignmentTests(TestCase):
@@ -506,6 +656,53 @@ class StudentProfileTests(TestCase):
         self.assertEqual(response.json()['id'], self.student.id)
         self.assertEqual(response.json()['student_id'], 'S005')
 
+    def test_student_profile_resolves_instructors_from_section_relationships(self):
+        primary = User.objects.create_user(
+            username='section-primary-instructor',
+            email='section-primary-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='SECTION-PRIMARY',
+            first_name='Primary',
+            last_name='Teacher',
+            contact_number='555-0101',
+        )
+        assigned = User.objects.create_user(
+            username='section-assigned-instructor',
+            email='section-assigned-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='SECTION-ASSIGNED',
+            first_name='Assigned',
+            last_name='Teacher',
+            contact_number='555-0102',
+        )
+        section = Section.objects.create(
+            section_name='Student Profile Section',
+            program='Information Technology',
+            year_level='3',
+            academic_year='2026-2027',
+            instructor=primary,
+        )
+        section.assigned_instructors.add(primary, assigned)
+        self.student.section = section
+        self.student.save(update_fields=['section'])
+        self.client.force_authenticate(user=self.student)
+
+        response = self.client.get('/api/users/profile/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()
+        self.assertEqual(payload['section_program'], 'Information Technology')
+        self.assertEqual(payload['section_name'], 'Student Profile Section')
+        self.assertEqual(
+            [(instructor['id'], instructor['full_name']) for instructor in payload['section_instructors']],
+            [(primary.pk, 'Primary Teacher'), (assigned.pk, 'Assigned Teacher')],
+        )
+        self.assertEqual(payload['section_instructors'][0]['email'], primary.email)
+        self.assertEqual(payload['section_instructors'][0]['contact_number'], '555-0101')
+        self.assertEqual(payload['section_instructors'][0]['role'], User.RoleChoices.INSTRUCTOR)
+
     def test_student_can_update_editable_profile_fields(self):
         self.client.force_authenticate(user=self.student)
 
@@ -555,6 +752,30 @@ class InstructorProfileTests(TestCase):
         self.assertEqual(self.instructor.email, 'updated-instructor5@example.com')
         self.assertEqual(self.instructor.contact_number, '09171234567')
         self.assertEqual(self.instructor.role, 'instructor')
+
+    def test_instructor_profile_includes_assigned_section_academic_details(self):
+        section = Section.objects.create(
+            section_name='Instructor Profile Section',
+            subject_code='IP-301',
+            program='Information Technology',
+            year_level='3',
+            academic_year='2026-2027',
+            instructor=self.instructor,
+        )
+        self.instructor.assigned_sections.add(section)
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.get('/api/users/profile/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['assigned_sections'], [{
+            'section_id': section.pk,
+            'section_name': 'Instructor Profile Section',
+            'subject_code': 'IP-301',
+            'program': 'Information Technology',
+            'year_level': '3',
+            'academic_year': '2026-2027',
+        }])
 
 
 class ProfileAdminFormTests(TestCase):
@@ -993,6 +1214,9 @@ class StudentWorkbookImportTests(TestCase):
         self.assertFalse(students[1].is_active)
         self.assertIsNone(students[1].section)
 
+    @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+        {'device_id': 'CABINET1-STATION1', 'api_key': 'unit-test-device-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+    ])
     def test_imported_student_can_complete_existing_nfc_enrollment_flow(self):
         upload = self.upload(
             ['student_id', 'first_name', 'last_name', 'email'],
@@ -1020,6 +1244,15 @@ class StudentWorkbookImportTests(TestCase):
                 'confirm_password': 'Enrollment-Test-Password-123',
             })
             self.assertEqual(registration.status_code, 201, registration.json())
+            registration_log = AccessLog.objects.get(
+                nfc_uid=test_uid,
+                action=AccessLog.AccessActionChoices.REGISTRATION,
+            )
+            self.assertEqual(registration_log.user, student)
+            self.assertEqual(registration_log.status, AccessLog.AccessStatusChoices.SUCCESS)
+            self.assertEqual(registration_log.station, 'Station 1')
+            self.assertEqual(registration_log.cabinet_name, 'Cabinet 1')
+            self.assertEqual(registration_log.reason, 'NFC card registered successfully')
             verification = self.client.post('/api/verify-nfc/', {'nfc_uid': test_uid}, HTTP_X_API_KEY=device_key)
             self.assertEqual(verification.status_code, 200, verification.json())
             self.assertEqual(verification.json()['student_id'], 'ENROLL-100')
@@ -1029,6 +1262,181 @@ class StudentWorkbookImportTests(TestCase):
                 os.environ.pop('DEVICE_API_KEY', None)
             else:
                 os.environ['DEVICE_API_KEY'] = previous_key
+
+
+class InstructorAccessLogTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='access-log-instructor',
+            email='access-log-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='ACCESS-LOG-INSTRUCTOR',
+        )
+        self.section_a = Section.objects.create(section_name='Log Section A', instructor=self.instructor)
+        self.section_b = Section.objects.create(section_name='Log Section B')
+        self.section_b.assigned_instructors.add(self.instructor)
+        self.unrelated_section = Section.objects.create(section_name='Unrelated Log Section')
+        self.student_a = User.objects.create_user(
+            username='access-log-student-a',
+            email='access-log-student-a@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='LOG-STUDENT-A',
+            first_name='Casey',
+            last_name='Alpha',
+            section=self.section_a,
+        )
+        self.student_b = User.objects.create_user(
+            username='access-log-student-b',
+            email='access-log-student-b@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='LOG-STUDENT-B',
+            first_name='Jordan',
+            last_name='Beta',
+            section=self.section_b,
+        )
+        self.outside_student = User.objects.create_user(
+            username='access-log-outside-student',
+            email='access-log-outside-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='LOG-STUDENT-OUTSIDE',
+            section=self.unrelated_section,
+        )
+        now = timezone.now()
+        self.success_log = self.create_log(
+            self.student_a,
+            AccessLog.AccessStatusChoices.SUCCESS,
+            nfc_uid='AA11BB22',
+            station='Reader 1',
+            cabinet_name='Cabinet Alpha',
+            reason='NFC verified successfully',
+            access_time=now,
+        )
+        self.rejected_log = self.create_log(
+            self.student_b,
+            AccessLog.AccessStatusChoices.REJECTED,
+            nfc_uid='',
+            station='Reader 2',
+            cabinet_name='',
+            reason='',
+            access_time=now,
+        )
+        self.duplicate_log = self.create_log(
+            self.student_b,
+            AccessLog.AccessStatusChoices.DUPLICATE,
+            nfc_uid='CC33DD44',
+            station='Reader 2',
+            cabinet_name='Cabinet Gamma',
+            reason='Duplicate participant scan',
+            access_time=now,
+        )
+        self.old_log = self.create_log(
+            self.student_a,
+            AccessLog.AccessStatusChoices.SUCCESS,
+            nfc_uid='EE55FF66',
+            station='Reader 1',
+            cabinet_name='Cabinet Old',
+            reason='NFC verified successfully',
+            access_time=now - timedelta(days=2),
+        )
+        self.outside_log = self.create_log(
+            self.outside_student,
+            AccessLog.AccessStatusChoices.SUCCESS,
+            nfc_uid='OUTSIDE-UID',
+            station='Reader Outside',
+            cabinet_name='Cabinet Outside',
+            reason='NFC verified successfully',
+            access_time=now,
+        )
+
+    def create_log(self, user, status, **fields):
+        access_time = fields.pop('access_time')
+        log = AccessLog.objects.create(user=user, status=status, **fields)
+        log.access_time = access_time
+        log.save(update_fields=['access_time'])
+        return log
+
+    def setUpInstructor(self):
+        self.client.force_authenticate(user=self.instructor)
+
+    def test_instructor_access_logs_serialize_actual_record_and_limit_scope(self):
+        self.setUpInstructor()
+
+        response = self.client.get('/api/access-logs/?page_size=25')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        results = response.json()['results']
+        self.assertEqual({entry['id'] for entry in results}, {
+            self.success_log.pk,
+            self.rejected_log.pk,
+            self.duplicate_log.pk,
+            self.old_log.pk,
+        })
+        serialized = next(entry for entry in results if entry['id'] == self.success_log.pk)
+        self.assertEqual(serialized['student_id'], 'LOG-STUDENT-A')
+        self.assertEqual(serialized['student_name'], 'Casey Alpha')
+        self.assertEqual(serialized['section_name'], 'Log Section A')
+        self.assertEqual(serialized['nfc_uid'], 'AA11BB22')
+        self.assertEqual(serialized['cabinet_name'], 'Cabinet Alpha')
+        self.assertEqual(serialized['station'], 'Reader 1')
+        self.assertEqual(serialized['access_result'], 'Success')
+
+        failed = next(entry for entry in results if entry['id'] == self.rejected_log.pk)
+        self.assertEqual(failed['access_result'], 'Failed')
+        self.assertEqual(failed['nfc_uid'], '')
+        self.assertEqual(failed['cabinet_name'], '')
+        self.assertEqual(failed['reason'], '')
+        self.assertEqual(next(entry for entry in results if entry['id'] == self.duplicate_log.pk)['reason'], 'Duplicate participant scan')
+
+    def test_instructor_filters_cover_failure_groups_search_dates_sections_and_pages(self):
+        self.setUpInstructor()
+        today = timezone.localdate().isoformat()
+
+        failed_response = self.client.get('/api/access-logs/?status=failed&page_size=25')
+        self.assertEqual(failed_response.status_code, 200, failed_response.json())
+        self.assertEqual(
+            {entry['id'] for entry in failed_response.json()['results']},
+            {self.rejected_log.pk, self.duplicate_log.pk},
+        )
+        success_response = self.client.get(f'/api/access-logs/?status=success&access_time_after={today}&access_time_before={today}')
+        self.assertEqual([entry['id'] for entry in success_response.json()['results']], [self.success_log.pk])
+
+        cabinet_search = self.client.get('/api/access-logs/?search=Gamma')
+        self.assertEqual([entry['id'] for entry in cabinet_search.json()['results']], [self.duplicate_log.pk])
+        name_search = self.client.get('/api/access-logs/?search=Casey Alpha')
+        self.assertEqual(
+            {entry['id'] for entry in name_search.json()['results']},
+            {self.success_log.pk, self.old_log.pk},
+        )
+        nfc_search = self.client.get('/api/access-logs/?search=AA11BB22')
+        self.assertEqual([entry['id'] for entry in nfc_search.json()['results']], [self.success_log.pk])
+        section_response = self.client.get(f'/api/access-logs/?user__section={self.section_b.pk}')
+        self.assertEqual(
+            {entry['id'] for entry in section_response.json()['results']},
+            {self.rejected_log.pk, self.duplicate_log.pk},
+        )
+        date_response = self.client.get(f'/api/access-logs/?access_time_after={today}&access_time_before={today}')
+        self.assertEqual(
+            {entry['id'] for entry in date_response.json()['results']},
+            {self.success_log.pk, self.rejected_log.pk, self.duplicate_log.pk},
+        )
+        one_item_page = self.client.get('/api/access-logs/?page_size=1&page=2')
+        self.assertEqual(one_item_page.json()['count'], 4)
+        self.assertEqual(len(one_item_page.json()['results']), 1)
+
+    def test_cabinet_filter_options_are_instructor_and_section_scoped(self):
+        self.setUpInstructor()
+
+        all_options = self.client.get('/api/access-logs/filter-options/')
+        self.assertEqual(all_options.status_code, 200, all_options.json())
+        self.assertEqual(set(all_options.json()['cabinets']), {'Cabinet Alpha', 'Cabinet Gamma', 'Cabinet Old'})
+
+        section_options = self.client.get(f'/api/access-logs/filter-options/?user__section={self.section_b.pk}')
+        self.assertEqual(section_options.json()['cabinets'], ['Cabinet Gamma'])
 
 
 class StudentAccessLogsTests(TestCase):
@@ -1052,8 +1460,8 @@ class StudentAccessLogsTests(TestCase):
             last_name='Two',
             student_id='S002',
         )
-        AccessLog.objects.create(user=self.student, status='success', cabinet_name='Cabinet A', reason='Entry granted', rfid_tag='ABC123')
-        AccessLog.objects.create(user=self.other_student, status='failed', cabinet_name='Cabinet B', reason='Denied', rfid_tag='XYZ999')
+        AccessLog.objects.create(user=self.student, status='success', cabinet_name='Cabinet A', reason='Entry granted', nfc_uid='ABC123')
+        AccessLog.objects.create(user=self.other_student, status='failed', cabinet_name='Cabinet B', reason='Denied', nfc_uid='XYZ999')
 
     def test_student_only_sees_own_access_logs(self):
         self.client.force_authenticate(user=self.student)
@@ -1078,7 +1486,109 @@ class StudentAccessLogsTests(TestCase):
         self.assertEqual(data['successful_accesses_today'], 1)
         self.assertEqual(data['failed_accesses_today'], 0)
 
+    def test_access_logs_store_nfc_uid_and_cabinet_session(self):
+        session = CabinetSession.objects.create(station='Station 1', status='open')
+        session.opened_by.add(self.student)
+        log = AccessLog.objects.create(
+            user=self.student,
+            nfc_uid='ABCD-1234',
+            station='Station 1',
+            action='open',
+            status='success',
+            reason='Cabinet session opened',
+            cabinet_session=session,
+        )
 
+        self.assertEqual(log.nfc_uid, 'ABCD-1234')
+        self.assertEqual(log.station, 'Station 1')
+        self.assertEqual(log.cabinet_session_id, session.id)
+
+    def test_access_log_api_rejects_client_created_audit_values(self):
+        admin_user = User.objects.create_superuser(
+            username='access-log-api-admin',
+            email='access-log-api-admin@example.com',
+            password='secret1234',
+        )
+        self.client.force_authenticate(user=admin_user)
+
+        response = self.client.post('/api/access-logs/', {
+            'user': self.student.pk,
+            'status': 'success',
+            'action': 'open',
+            'nfc_uid': 'CLIENT-SUPPLIED',
+            'station': 'Station 1',
+            'cabinet_name': 'Cabinet 1',
+            'reason': 'Forged audit data',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 405)
+        self.assertFalse(AccessLog.objects.filter(nfc_uid='CLIENT-SUPPLIED').exists())
+
+    def test_access_log_admin_is_read_only(self):
+        access_log_admin = AccessLogAdmin(model=AccessLog, admin_site=django_admin.site)
+        admin_user = User.objects.create_superuser(
+            username='access-log-admin',
+            email='access-log-admin@example.com',
+            password='secret1234',
+        )
+        request = RequestFactory().get('/admin/api/accesslog/')
+        request.user = admin_user
+
+        self.assertFalse(access_log_admin.has_add_permission(request))
+        self.assertFalse(access_log_admin.has_change_permission(request))
+        self.assertFalse(access_log_admin.has_delete_permission(request))
+        self.assertTrue(access_log_admin.has_view_permission(request))
+        self.assertEqual(access_log_admin.get_model_perms(request), {'view': True})
+        self.assertTrue({
+            'user', 'cabinet_session', 'access_time', 'status', 'action',
+            'nfc_uid', 'station', 'cabinet_name', 'reason', 'updated_at',
+        }.issubset(set(access_log_admin.get_readonly_fields(request))))
+
+        session = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
+        log = AccessLog.objects.create(
+            user=self.student,
+            cabinet_session=session,
+            access_time=timezone.now(),
+            status='success',
+            action='scan',
+            nfc_uid='ABCD1234',
+            station='Station 1',
+            cabinet_name='Cabinet 1',
+            reason='Original audit reason',
+        )
+        self.client.force_login(admin_user)
+        response = self.client.get(reverse('admin:api_accesslog_change', args=[log.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ABCD1234')
+        self.assertContains(response, 'Original audit reason')
+
+        response = self.client.post(reverse('admin:api_accesslog_change', args=[log.pk]), {
+            'user': self.other_student.pk,
+            'cabinet_session': '',
+            'access_time': '2000-01-01 00:00:00',
+            'status': 'failed',
+            'action': 'open',
+            'nfc_uid': 'OVERRIDE',
+            'station': 'Station 2',
+            'cabinet_name': 'Forged cabinet',
+            'reason': 'Forged reason',
+            'updated_at': '2000-01-01 00:00:00',
+        })
+        self.assertEqual(response.status_code, 403)
+        log.refresh_from_db()
+        self.assertEqual(log.user, self.student)
+        self.assertEqual(log.cabinet_session, session)
+        self.assertEqual(log.status, 'success')
+        self.assertEqual(log.action, 'scan')
+        self.assertEqual(log.nfc_uid, 'ABCD1234')
+        self.assertEqual(log.station, 'Station 1')
+        self.assertEqual(log.cabinet_name, 'Cabinet 1')
+        self.assertEqual(log.reason, 'Original audit reason')
+
+
+@override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+    {'device_id': 'CABINET1-STATION1', 'api_key': 'test-device-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+])
 class PasswordResetFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -1381,12 +1891,584 @@ class PasswordResetFlowTests(TestCase):
         self.assertIn('request_id', response.json())
 
 
+class CabinetEventAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username='cabinet-event-admin',
+            email='cabinet-event-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.section = Section.objects.create(section_name='Cabinet Events A', subject_code='CAB-EVENT-A')
+        self.student = User.objects.create_user(
+            username='cabinet-event-student',
+            email='cabinet-event-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            first_name='Avery',
+            last_name='Student',
+            student_id='CAB-EVENT-001',
+            nfc_uid='CARD-CAB-EVENT-001',
+            section=self.section,
+        )
+        self.other_student = User.objects.create_user(
+            username='cabinet-event-other',
+            email='cabinet-event-other@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='CAB-EVENT-002',
+        )
+        opened_at = timezone.now() - timedelta(seconds=12)
+        self.session = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.CLOSED)
+        self.session.opened_at = opened_at
+        self.session.closed_at = opened_at + timedelta(seconds=12)
+        self.session.save(update_fields=['opened_at', 'closed_at'])
+        self.event = CabinetEvent.objects.create(
+            user=self.student,
+            event_type='cabinet_opened',
+            details={
+                'event_type': 'cabinet_opened',
+                'station': 'Station 1',
+                'cabinet_id': 'Cabinet A',
+                'nfc_uid': self.student.nfc_uid,
+                'access_method': 'NFC',
+                'result': 'success',
+                'cabinet_session_id': self.session.pk,
+            },
+        )
+        self.other_event = CabinetEvent.objects.create(
+            user=self.other_student,
+            event_type='access_denied',
+            details={'event_type': 'access_denied', 'result': 'rejected', 'failure_reason': 'Inactive account'},
+        )
+
+    def test_user_filter_and_event_details_use_real_owner_relationship(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(f'/api/cabinet-events/?user={self.student.pk}')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()['results']
+        self.assertEqual([entry['id'] for entry in payload], [self.event.pk])
+        self.assertEqual(payload[0]['user'], self.student.pk)
+        self.assertEqual(payload[0]['user_name'], 'Avery Student')
+        self.assertEqual(payload[0]['user_identifier'], 'CAB-EVENT-001')
+        self.assertEqual(payload[0]['role'], User.RoleChoices.STUDENT)
+        self.assertEqual(payload[0]['section_name'], 'Cabinet Events A')
+        self.assertEqual(payload[0]['station'], 'Station 1')
+        self.assertEqual(payload[0]['cabinet_id'], 'Cabinet A')
+        self.assertEqual(payload[0]['event_type'], 'Cabinet Opened')
+        self.assertEqual(payload[0]['result'], 'Success')
+        self.assertEqual(payload[0]['access_method'], 'NFC')
+        self.assertEqual(payload[0]['nfc_uid'], self.student.nfc_uid)
+        self.assertEqual(payload[0]['duration_seconds'], 12)
+
+        detail_response = self.client.get(f'/api/cabinet-events/{self.event.pk}/')
+        self.assertEqual(detail_response.status_code, 200, detail_response.json())
+        self.assertEqual(detail_response.json()['id'], self.event.pk)
+
+        denied_response = self.client.get(f'/api/cabinet-events/?user={self.other_student.pk}')
+        self.assertEqual(denied_response.status_code, 200, denied_response.json())
+        denied_event = denied_response.json()['results'][0]
+        self.assertEqual(denied_event['user'], self.other_student.pk)
+        self.assertEqual(denied_event['event_type'], 'Access Denied')
+        self.assertEqual(denied_event['failure_reason'], 'Inactive account')
+
+    def test_event_records_cannot_be_edited_but_admin_can_delete(self):
+        self.client.force_authenticate(user=self.admin)
+        detail_url = f'/api/cabinet-events/{self.event.pk}/'
+
+        update_response = self.client.patch(detail_url, {'event_type': 'access_denied'}, format='json')
+        self.assertEqual(update_response.status_code, 405)
+
+        self.client.force_authenticate(user=self.student)
+        denied_delete = self.client.delete(detail_url)
+        self.assertEqual(denied_delete.status_code, 403)
+
+        self.client.force_authenticate(user=self.admin)
+        delete_response = self.client.delete(detail_url)
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertFalse(CabinetEvent.objects.filter(pk=self.event.pk).exists())
+
+    def test_all_supported_cabinet_event_types_have_meaningful_results(self):
+        expected = {
+            'access_granted': ('Access Granted', 'Success'),
+            'access_denied': ('Access Denied', 'Denied'),
+            'cabinet_opened': ('Cabinet Opened', 'Success'),
+            'cabinet_closed': ('Cabinet Closed', 'Success'),
+            'unlock_failed': ('Unlock Failed', 'Failed'),
+            'session_timeout': ('Session Timeout', 'Timeout'),
+        }
+        for event_type in expected:
+            details = {'event_type': event_type}
+            if event_type not in {'access_denied', 'unlock_failed', 'session_timeout'}:
+                details['result'] = 'success'
+            if event_type == 'unlock_failed':
+                details['failure_reason'] = 'Cabinet unlock failed'
+            CabinetEvent.objects.create(user=self.student, event_type=event_type, details=details)
+
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/cabinet-events/?user={self.student.pk}')
+        self.assertEqual(response.status_code, 200, response.json())
+        serialized = {entry['details']['event_type']: (entry['event_type'], entry['result']) for entry in response.json()['results']}
+        for event_type, expected_values in expected.items():
+            self.assertEqual(serialized[event_type], expected_values)
+
+
+class UserProfileAccessLogTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            username='profile-log-admin',
+            email='profile-log-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.instructor = User.objects.create_user(
+            username='profile-log-instructor',
+            email='profile-log-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='PROFILE-LOG-INSTRUCTOR',
+        )
+        self.section = Section.objects.create(
+            section_name='Profile Log Section',
+            subject_code='PROFILE-LOG',
+            instructor=self.instructor,
+        )
+        self.mary_section = Section.objects.create(
+            section_name='Profile Log Section B',
+            subject_code='PROFILE-LOG-B',
+        )
+        self.john = User.objects.create_user(
+            username='profile-log-john',
+            email='john@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='PROFILE-LOG-JOHN',
+            section=self.section,
+        )
+        self.mary = User.objects.create_user(
+            username='profile-log-mary',
+            email='mary@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='PROFILE-LOG-MARY',
+            section=self.mary_section,
+        )
+        self.john_logs = [
+            AccessLog.objects.create(user=self.john, action='open', status='success', station='Station 1'),
+            AccessLog.objects.create(user=self.john, action='close', status='success', station='Station 1'),
+            AccessLog.objects.create(user=self.john, action='open', status='success', station='Station 2'),
+        ]
+        self.mary_logs = [
+            AccessLog.objects.create(user=self.mary, action='open', status='success', station='Station 2'),
+            AccessLog.objects.create(user=self.mary, action='close', status='success', station='Station 2'),
+        ]
+
+    def test_admin_profile_logs_are_user_specific_and_global_logs_remain_global(self):
+        self.client.force_authenticate(user=self.admin)
+
+        for user, expected_logs in ((self.john, self.john_logs), (self.mary, self.mary_logs)):
+            response = self.client.get(f'/api/users/{user.pk}/access-logs/?page_size=5')
+            self.assertEqual(response.status_code, 200, response.json())
+            self.assertEqual(
+                {entry['id'] for entry in response.json()['results']},
+                {log.pk for log in expected_logs},
+            )
+            self.assertEqual({entry['user'] for entry in response.json()['results']}, {user.pk})
+
+        global_response = self.client.get('/api/access-logs/')
+        self.assertEqual(global_response.status_code, 200, global_response.json())
+        global_users = {entry['user'] for entry in global_response.json()['results']}
+        self.assertEqual(global_users, {self.john.pk, self.mary.pk})
+
+    def test_admin_profile_details_scope_records_and_counts_to_selected_user(self):
+        john_activity = Activity.objects.create(title='John activity', created_by=self.instructor, section=self.section)
+        mary_activity = Activity.objects.create(title='Mary activity', created_by=self.instructor, section=self.mary_section)
+        john_submission = Submission.objects.create(activity=john_activity, student=self.john)
+        mary_submission = Submission.objects.create(activity=mary_activity, student=self.mary)
+        self.client.force_authenticate(user=self.admin)
+
+        for user, own_logs, own_activity, own_submission in (
+            (self.john, self.john_logs, john_activity, john_submission),
+            (self.mary, self.mary_logs, mary_activity, mary_submission),
+        ):
+            response = self.client.get(f'/api/users/{user.pk}/profile-details/')
+            self.assertEqual(response.status_code, 200, response.json())
+            payload = response.json()
+            self.assertEqual(payload['counts'], {
+                'access_logs': len(own_logs),
+                'activities': 1,
+                'submissions': 1,
+            })
+            self.assertEqual(
+                {entry['id'] for entry in payload['access_logs']},
+                {log.pk for log in own_logs},
+            )
+            self.assertEqual({entry['id'] for entry in payload['activities']}, {own_activity.pk})
+            self.assertEqual({entry['id'] for entry in payload['submissions']}, {own_submission.pk})
+            for endpoint, expected_id in (
+                ('activities', own_activity.pk),
+                ('submissions', own_submission.pk),
+            ):
+                list_response = self.client.get(f'/api/users/{user.pk}/{endpoint}/')
+                self.assertEqual(list_response.status_code, 200, list_response.json())
+                self.assertEqual(
+                    {entry['id'] for entry in list_response.json()['results']},
+                    {expected_id},
+                )
+
+    def test_access_log_detail_returns_exact_cabinet_event_fields(self):
+        opened_at = timezone.now() - timedelta(minutes=5)
+        session = CabinetSession.objects.create(
+            station='Station 4',
+            status=CabinetSession.StatusChoices.CLOSED,
+        )
+        session.opened_at = opened_at
+        session.closed_at = opened_at + timedelta(minutes=5)
+        session.save(update_fields=['opened_at', 'closed_at'])
+        log = AccessLog.objects.create(
+            user=self.john,
+            cabinet_session=session,
+            action=AccessLog.AccessActionChoices.OPEN,
+            status=AccessLog.AccessStatusChoices.SUCCESS,
+            nfc_uid='ABCD1234',
+            reason='Cabinet session opened',
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(f'/api/access-logs/{log.pk}/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()
+        self.assertEqual(payload['id'], log.pk)
+        self.assertEqual(payload['user'], self.john.pk)
+        self.assertEqual(payload['username'], self.john.username)
+        self.assertEqual(payload['role'], User.RoleChoices.STUDENT)
+        self.assertEqual(payload['station'], 'Station 4')
+        self.assertEqual(payload['access_type'], 'Cabinet Opened')
+        self.assertEqual(payload['access_method'], 'NFC')
+        self.assertEqual(payload['nfc_uid'], 'ABCD1234')
+        self.assertEqual(payload['status'], AccessLog.AccessStatusChoices.SUCCESS)
+        self.assertEqual(payload['duration_seconds'], 300)
+
+    def test_instructor_and_student_profile_log_requests_obey_user_scope(self):
+        self.client.force_authenticate(user=self.instructor)
+        instructor_response = self.client.get(f'/api/users/{self.john.pk}/access-logs/')
+        self.assertEqual(instructor_response.status_code, 200, instructor_response.json())
+        self.assertEqual(
+            {entry['user'] for entry in instructor_response.json()['results']},
+            {self.john.pk},
+        )
+        self.assertEqual(self.client.get(f'/api/users/{self.mary.pk}/access-logs/').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 403)
+
+        self.client.force_authenticate(user=self.john)
+        self_response = self.client.get(f'/api/users/{self.john.pk}/access-logs/')
+        other_response = self.client.get(f'/api/users/{self.mary.pk}/access-logs/')
+        self.assertEqual(self_response.status_code, 200, self_response.json())
+        self.assertEqual({entry['user'] for entry in self_response.json()['results']}, {self.john.pk})
+        self.assertEqual(other_response.status_code, 404)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 403)
+
+
+@override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+    {'device_id': 'CABINET1-STATION1', 'api_key': 'cabinet-device-test-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+])
 class CabinetDeviceIntegrationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.device_api_key = 'cabinet-device-test-key'
         os.environ['DEVICE_API_KEY'] = self.device_api_key
         self.section = Section.objects.create(section_name='Cabinet Section', subject_code='CAB-101')
+
+    @override_settings(TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'])
+    def test_station_status_is_derived_per_station_and_hides_details_from_students(self):
+        student = User.objects.create_user(
+            username='station-status-student',
+            email='station-status@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='STATION-STATUS-001',
+        )
+        session = CabinetSession.objects.create(
+            station='Station 1',
+            status=CabinetSession.StatusChoices.OPEN,
+        )
+        session.opened_by.add(student)
+        self.client.force_authenticate(user=student)
+
+        response = self.client.get('/api/cabinet-sessions/station-status/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        stations = response.json()['stations']
+        self.assertEqual(
+            [(item['station'], item['status']) for item in stations],
+            [('Station 1', 'OCCUPIED'), ('Station 2', 'AVAILABLE')],
+        )
+        self.assertIsNone(stations[0]['active_session'])
+        station_two_session = CabinetSession.objects.create(
+            station='Station 2',
+            status=CabinetSession.StatusChoices.OPEN,
+        )
+
+        instructor = User.objects.create_user(
+            username='station-status-instructor',
+            email='station-status-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='STATION-STATUS-INSTRUCTOR',
+        )
+        self.client.force_authenticate(user=instructor)
+        instructor_response = self.client.get('/api/cabinet-sessions/station-status/')
+        instructor_station = instructor_response.json()['stations'][0]
+        self.assertEqual(instructor_station['status'], 'OCCUPIED')
+        self.assertEqual(instructor_station['active_session']['participant_count'], 1)
+        self.assertTrue(instructor_station['active_session']['opened_at'])
+        self.assertEqual(instructor_response.json()['stations'][1]['status'], 'OCCUPIED')
+
+        admin = User.objects.create_user(
+            username='station-status-admin',
+            email='station-status-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin)
+        admin_response = self.client.get('/api/cabinet-sessions/station-status/')
+        admin_station = admin_response.json()['stations'][0]
+        self.assertEqual(admin_station['active_session']['id'], session.pk)
+        self.assertEqual(admin_station['active_session']['station'], 'Station 1')
+
+        session.status = CabinetSession.StatusChoices.CLOSED
+        session.save(update_fields=['status', 'updated_at'])
+        closed_response = self.client.get('/api/cabinet-sessions/station-status/')
+        self.assertEqual(closed_response.json()['stations'][0]['status'], 'AVAILABLE')
+        self.assertEqual(closed_response.json()['stations'][1]['status'], 'OCCUPIED')
+
+        station_two_session.status = CabinetSession.StatusChoices.CLOSED
+        station_two_session.save(update_fields=['status', 'updated_at'])
+        all_available_response = self.client.get('/api/cabinet-sessions/station-status/')
+        self.assertEqual(
+            [item['status'] for item in all_available_response.json()['stations']],
+            ['AVAILABLE', 'AVAILABLE'],
+        )
+
+    @override_settings(
+        DEBUG=True,
+        TAPTRACK_NFC_DEVICE_MAP=[{
+            'device_id': 'CABINET1-STATION1',
+            'api_key': 'cabinet-device-test-key',
+            'station': 'Station 1',
+            'cabinet_name': 'Cabinet 1',
+            'active': True,
+        }],
+        TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'],
+    )
+    def test_open_workflow_rejects_same_station_but_allows_another_station(self):
+        first = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        second_station = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 2'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        duplicate = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+
+        self.assertEqual(first.status_code, 200, first.json())
+        self.assertEqual(second_station.status_code, 200, second_station.json())
+        self.assertEqual(duplicate.status_code, 409, duplicate.json())
+
+    @override_settings(
+        DEBUG=True,
+        TAPTRACK_NFC_DEVICE_MAP=[{
+            'device_id': 'CABINET1-STATION1',
+            'api_key': 'cabinet-device-test-key',
+            'station': 'Station 1',
+            'cabinet_name': 'Cabinet 1',
+            'active': True,
+        }],
+        TAPTRACK_CABINET_NAME='Cabinet 1',
+        TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'],
+    )
+    def test_mock_workflow_lists_configured_station_state_and_accepts_only_configured_choice(self):
+        CabinetSession.objects.create(station='Station 2', status=CabinetSession.StatusChoices.OPEN)
+
+        response = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        payload = response.json()
+        self.assertEqual(payload['mode'], 'mock')
+        self.assertEqual([station['name'] for station in payload['stations']], ['Station 1', 'Station 2'])
+        self.assertEqual([station['status'] for station in payload['stations']], ['available', 'occupied'])
+        self.assertNotIn(self.device_api_key, response.content.decode())
+
+        opened = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(opened.status_code, 200, opened.json())
+        self.assertEqual(opened.json()['station'], 'Station 1')
+
+        student = User.objects.create_user(
+            username='mock-station-student',
+            email='mock-station@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='MOCK-STATION-001',
+            nfc_uid='MOCK-STATION-UID',
+        )
+        scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': ' mock-station-uid ', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(scan.status_code, 200, scan.json())
+        access_log = student.access_logs.get()
+        self.assertEqual(access_log.cabinet_session_id, opened.json()['session']['id'])
+        self.assertEqual(access_log.action, AccessLog.AccessActionChoices.OPEN)
+        self.assertEqual(access_log.nfc_uid, 'MOCK-STATION-UID')
+        self.assertEqual(access_log.station, 'Station 1')
+        self.assertEqual(access_log.cabinet_name, 'Cabinet 1')
+        self.assertEqual(access_log.reason, 'NFC verified successfully')
+        self.assertEqual(scan.json()['event_id'], access_log.id)
+        self.assertEqual(scan.json()['user']['student_id'], student.student_id)
+        self.assertEqual(scan.json()['station']['name'], 'Station 1')
+
+        second_student = User.objects.create_user(
+            username='mock-station-student-two',
+            email='mock-station-two@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='MOCK-STATION-002',
+            nfc_uid='MOCK-STATION-UID-2',
+        )
+        second_scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': second_student.nfc_uid, 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(second_scan.status_code, 200, second_scan.json())
+
+        opened_sessions = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        ).json()['stations']
+        opened_session = next(item['session'] for item in opened_sessions if item['name'] == 'Station 1')
+        self.assertEqual({item['studentId'] for item in opened_session['opened_by']}, {student.student_id, second_student.student_id})
+        self.assertEqual(opened_session['participant_count'], 2)
+        self.assertNotIn('participants', opened_session)
+        self.assertNotIn('closing_participants', opened_session)
+
+        finish_open = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'finish_open', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(finish_open.status_code, 200, finish_open.json())
+        start_close = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'start_close', 'station': 'Station 1'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(start_close.status_code, 200, start_close.json())
+        for closing_student in (student, second_student):
+            closing_scan = self.client.post(
+                '/api/verify-nfc/',
+                {'nfc_uid': closing_student.nfc_uid, 'station': 'Station 1'},
+                HTTP_X_API_KEY=self.device_api_key,
+                HTTP_X_TAPTRACK_MOCK_MODE='true',
+                format='json',
+            )
+            self.assertEqual(closing_scan.status_code, 200, closing_scan.json())
+
+        closed_sessions = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        ).json()['stations']
+        closed_by_session = next(item['session'] for item in closed_sessions if item['name'] == 'Station 1')
+        self.assertEqual({item['studentId'] for item in closed_by_session['closed_by']}, {student.student_id, second_student.student_id})
+        self.assertEqual(closed_by_session['participant_count'], 2)
+
+        invalid = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 3'},
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            format='json',
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_hardware_device_ignores_browser_station_override_and_disabled_devices_are_rejected(self):
+        student = User.objects.create_user(
+            username='reader-bound-student',
+            email='reader-bound@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='READER-BOUND-001',
+            nfc_uid='READER-BOUND-UID',
+        )
+
+        response = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': student.nfc_uid, 'station': 'Station 2'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.json())
+        log = AccessLog.objects.get(user=student)
+        self.assertEqual(log.station, 'Station 1')
+        self.assertEqual(log.cabinet_name, 'Cabinet 1')
+
+        with override_settings(TAPTRACK_NFC_DEVICE_MAP=[{
+            'device_id': 'CABINET1-STATION1',
+            'api_key': self.device_api_key,
+            'station': 'Station 1',
+            'cabinet_name': 'Cabinet 1',
+            'active': False,
+        }]):
+            disabled = self.client.post(
+                '/api/verify-nfc/',
+                {'nfc_uid': student.nfc_uid},
+                HTTP_X_API_KEY=self.device_api_key,
+                format='json',
+            )
+        self.assertEqual(disabled.status_code, 403)
 
     def test_development_fixture_supports_repeatable_nfc_enrollment(self):
         from django.core.management import call_command
@@ -1454,6 +2536,7 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    @override_settings(TAPTRACK_CABINET_NAME='Cabinet 1')
     def test_valid_cabinet_nfc_scan_creates_successful_access_log(self):
         student = User.objects.create_user(
             username='cabinet-access-student',
@@ -1463,13 +2546,183 @@ class CabinetDeviceIntegrationTests(TestCase):
             student_id='CAB-ACCESS-001',
             nfc_uid='CARD-CABINET-ACCESS-001',
         )
+        session = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
+        session.opened_by.add(student)
 
         response = self.client.post('/api/verify-nfc/', {
-            'nfc_uid': student.nfc_uid,
+            'nfc_uid': ' card- cabinet - access-001 ',
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
 
         self.assertEqual(response.status_code, 200, response.json())
-        self.assertEqual(student.access_logs.filter(status='success').count(), 1)
+        log = student.access_logs.get()
+        self.assertEqual(log.user, student)
+        self.assertEqual(log.cabinet_session, session)
+        self.assertIsNotNone(log.access_time)
+        self.assertEqual(log.status, AccessLog.AccessStatusChoices.SUCCESS)
+        self.assertEqual(log.action, AccessLog.AccessActionChoices.SCAN)
+        self.assertEqual(log.nfc_uid, 'CARD-CABINET-ACCESS-001')
+        self.assertEqual(log.station, 'Station 1')
+        self.assertEqual(log.cabinet_name, 'Cabinet 1')
+        self.assertEqual(log.reason, 'NFC verified successfully')
+        self.assertIsNotNone(log.updated_at)
+        self.assertEqual(response.json()['event_id'], log.id)
+        self.assertEqual(response.json()['nfc_uid'], log.nfc_uid)
+        self.assertEqual(response.json()['action'], log.action)
+        self.assertEqual(response.json()['cabinet_session_id'], session.pk)
+        self.assertEqual(response.json()['reason'], log.reason)
+
+    @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+        {'device_id': 'CABINET1-STATION1', 'api_key': 'reader-one-secret', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+        {'device_id': 'CABINET1-STATION2', 'api_key': 'reader-two-secret', 'station': 'Station 2', 'cabinet_name': 'Cabinet 1', 'active': True},
+    ])
+    def test_reader_identity_keeps_simultaneous_station_logs_separate(self):
+        student = User.objects.create_user(
+            username='multi-station-student',
+            email='multi-station@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='MULTI-STATION-001',
+            nfc_uid='MULTI-STATION-UID',
+        )
+        station_one = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
+        station_two = CabinetSession.objects.create(station='Station 2', status=CabinetSession.StatusChoices.OPEN)
+        station_one.opened_by.add(student)
+        station_two.opened_by.add(student)
+
+        for device_key in ('reader-one-secret', 'reader-two-secret'):
+            response = self.client.post(
+                '/api/verify-nfc/',
+                {'nfc_uid': student.nfc_uid},
+                HTTP_X_API_KEY=device_key,
+                format='json',
+            )
+            self.assertEqual(response.status_code, 200, response.json())
+
+        logs = list(student.access_logs.order_by('station'))
+        self.assertEqual([log.station for log in logs], ['Station 1', 'Station 2'])
+        self.assertEqual([log.cabinet_name for log in logs], ['Cabinet 1', 'Cabinet 1'])
+        self.assertEqual([log.cabinet_session_id for log in logs], [station_one.pk, station_two.pk])
+
+    @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+        {'device_id': 'CABINET1-STATION1', 'api_key': 'reader-workflow-secret', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+        {'device_id': 'CABINET1-STATION2', 'api_key': 'reader-two-workflow-secret', 'station': 'Station 2', 'cabinet_name': 'Cabinet 1', 'active': True},
+    ])
+    def test_backend_workflow_derives_open_close_and_rejected_audit_events(self):
+        participant = User.objects.create_user(
+            username='workflow-participant',
+            email='workflow-participant@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='WORKFLOW-001',
+            nfc_uid='WORKFLOW-UID-001',
+        )
+        outsider = User.objects.create_user(
+            username='workflow-outsider',
+            email='workflow-outsider@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='WORKFLOW-002',
+            nfc_uid='WORKFLOW-UID-002',
+        )
+
+        opened = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'open'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(opened.status_code, 200, opened.json())
+        session_id = opened.json()['session']['id']
+        self.assertEqual(opened.json()['station'], 'Station 1')
+
+        participant_scan = self.client.post(
+            '/api/verify-nfc/', {'nfc_uid': participant.nfc_uid},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(participant_scan.status_code, 200, participant_scan.json())
+        open_log = AccessLog.objects.get(user=participant)
+        self.assertEqual(open_log.action, AccessLog.AccessActionChoices.OPEN)
+        self.assertEqual(open_log.cabinet_session_id, session_id)
+
+        finish_open = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'finish_open'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(finish_open.status_code, 200, finish_open.json())
+        station_two_open = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'open'},
+            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+        )
+        self.assertEqual(station_two_open.status_code, 200, station_two_open.json())
+        station_two_scan = self.client.post(
+            '/api/verify-nfc/', {'nfc_uid': participant.nfc_uid},
+            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+        )
+        self.assertEqual(station_two_scan.status_code, 200, station_two_scan.json())
+        self.assertEqual(AccessLog.objects.filter(user=participant).latest('access_time').station, 'Station 2')
+        station_two_finish = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'finish_open'},
+            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+        )
+        self.assertEqual(station_two_finish.status_code, 200, station_two_finish.json())
+        self.client.post(
+            '/api/cabinet/workflow/', {'command': 'start_close'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+
+        rejected_scan = self.client.post(
+            '/api/verify-nfc/', {'nfc_uid': outsider.nfc_uid},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(rejected_scan.status_code, 403, rejected_scan.json())
+        rejected_log = AccessLog.objects.get(user=outsider)
+        self.assertEqual(rejected_log.status, AccessLog.AccessStatusChoices.REJECTED)
+        self.assertEqual(rejected_log.action, AccessLog.AccessActionChoices.CLOSE)
+        self.assertEqual(rejected_log.reason, 'Participant is not part of this cabinet session')
+
+        closing_scan = self.client.post(
+            '/api/verify-nfc/', {'nfc_uid': participant.nfc_uid},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(closing_scan.status_code, 200, closing_scan.json())
+        close_log = AccessLog.objects.filter(user=participant).latest('access_time')
+        self.assertEqual(close_log.action, AccessLog.AccessActionChoices.CLOSE)
+        self.assertEqual(close_log.reason, 'Cabinet close attendance recorded')
+
+        closed = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'finish_close'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(closed.status_code, 200, closed.json())
+        self.assertEqual(closed.json()['session']['status'], CabinetSession.StatusChoices.CLOSED)
+        station_one_session = CabinetSession.objects.get(pk=session_id)
+        station_two_session = CabinetSession.objects.get(pk=station_two_open.json()['session']['id'])
+        self.assertEqual(station_one_session.status, CabinetSession.StatusChoices.CLOSED)
+        self.assertEqual(station_two_session.status, CabinetSession.StatusChoices.OPEN)
+
+    def test_duplicate_participant_scan_is_recorded_as_duplicate(self):
+        student = User.objects.create_user(
+            username='cabinet-duplicate-student',
+            email='cabinet-duplicate@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='CAB-ACCESS-DUPLICATE',
+            nfc_uid='CARD-CABINET-DUPLICATE',
+        )
+        session = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
+        session.opened_by.add(student)
+
+        first = self.client.post('/api/verify-nfc/', {'nfc_uid': student.nfc_uid}, HTTP_X_API_KEY=self.device_api_key, format='json')
+        duplicate = self.client.post('/api/verify-nfc/', {'nfc_uid': student.nfc_uid}, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(first.status_code, 200, first.json())
+        self.assertEqual(duplicate.status_code, 409, duplicate.json())
+        log = student.access_logs.order_by('-access_time').first()
+        self.assertEqual(log.status, AccessLog.AccessStatusChoices.DUPLICATE)
+        self.assertEqual(log.reason, 'Duplicate participant scan')
+        self.assertEqual(log.cabinet_session, session)
+        self.assertEqual(log.station, 'Station 1')
+        event = CabinetEvent.objects.get(details__access_log_id=log.pk)
+        self.assertEqual(event.user_id, student.pk)
+        self.assertEqual(event.event_type, 'access_denied')
 
     def test_multiple_valid_cabinet_scans_create_multiple_access_logs(self):
         student = User.objects.create_user(
@@ -1488,6 +2741,12 @@ class CabinetDeviceIntegrationTests(TestCase):
             self.assertEqual(response.status_code, 200, response.json())
 
         self.assertEqual(student.access_logs.filter(status='success').count(), 2)
+        events = list(student.cabinet_events.order_by('timestamp'))
+        self.assertEqual(len(events), 2)
+        self.assertEqual({event.user_id for event in events}, {student.pk})
+        self.assertEqual({event.event_type for event in events}, {'access_granted'})
+        for event in events:
+            self.assertTrue(student.access_logs.filter(pk=event.details['access_log_id']).exists())
 
     def test_invalid_cabinet_nfc_scan_creates_no_success_log(self):
         response = self.client.post('/api/verify-nfc/', {
@@ -1496,7 +2755,13 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         self.assertEqual(response.status_code, 404, response.json())
         self.assertFalse(AccessLog.objects.filter(status='success').exists())
-        self.assertEqual(AccessLog.objects.filter(status='failed').count(), 1)
+        log = AccessLog.objects.get()
+        self.assertIsNone(log.user)
+        self.assertEqual(log.nfc_uid, 'CARD-UNKNOWN-999')
+        self.assertEqual(log.status, AccessLog.AccessStatusChoices.UNREGISTERED)
+        self.assertEqual(log.action, AccessLog.AccessActionChoices.SCAN)
+        self.assertEqual(log.reason, 'NFC UID is not registered')
+        self.assertFalse(CabinetEvent.objects.exists())
 
     def test_unknown_nfc_scan_creates_temporary_enrollment_session(self):
         response = self.client.post('/api/verify-nfc/', {

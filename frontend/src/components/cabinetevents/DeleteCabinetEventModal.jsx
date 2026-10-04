@@ -7,8 +7,8 @@ export default function DeleteCabinetEventModal({ isOpen, event, onClose, onUnau
   const [saving, setSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  const studentName = event?.student_name || event?.student || '—'
-  const cabinetNumber = event?.cabinet_number || '—'
+  const userName = event?.user_name || 'Unregistered user'
+  const cabinetId = event?.cabinet_id || '—'
 
   const handleDelete = async () => {
     if (!resolvedEventId) {
@@ -65,26 +65,35 @@ export default function DeleteCabinetEventModal({ isOpen, event, onClose, onUnau
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <p className="text-sm font-medium text-slate-700">Student Name</p>
-            <p className="mt-1 text-sm text-slate-900">{studentName}</p>
+            <p className="text-sm font-medium text-slate-700">User</p>
+            <p className="mt-1 text-sm text-slate-900">{userName}</p>
           </div>
           <div>
-            <p className="text-sm font-medium text-slate-700">Cabinet Number</p>
-            <p className="mt-1 text-sm text-slate-900">{cabinetNumber}</p>
+            <p className="text-sm font-medium text-slate-700">Station</p>
+            <p className="mt-1 text-sm text-slate-900">{event?.station || '—'}</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-700">Cabinet ID</p>
+            <p className="mt-1 text-sm text-slate-900">{cabinetId}</p>
           </div>
           <div>
             <p className="text-sm font-medium text-slate-700">Event Type</p>
             <p className="mt-1 text-sm text-slate-900">{event?.event_type || '—'}</p>
           </div>
           <div className="sm:col-span-2">
-            <p className="text-sm font-medium text-slate-700">Date</p>
+            <p className="text-sm font-medium text-slate-700">Date &amp; Time</p>
             <p className="mt-1 text-sm text-slate-900">
-              {event?.date
+              {event?.timestamp
                 ? new Intl.DateTimeFormat('en-US', {
                     dateStyle: 'medium',
-                  }).format(new Date(event.date))
+                    timeStyle: 'short',
+                  }).format(new Date(event.timestamp))
                 : '—'}
             </p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-700">Result</p>
+            <p className="mt-1 text-sm text-slate-900">{event?.result || '—'}</p>
           </div>
         </div>
 

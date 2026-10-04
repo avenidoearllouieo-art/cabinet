@@ -50,7 +50,7 @@ export default function InstructorNotifications() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         title="Instructor Notifications"
         description="Review the latest activity, deadline, and access log notifications."
@@ -63,7 +63,7 @@ export default function InstructorNotifications() {
         <div className="flex gap-3">
           <button
             onClick={markAllRead}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             <CheckCircle2 size={16} />
             Mark all read
@@ -71,7 +71,7 @@ export default function InstructorNotifications() {
         </div>
       </div>
 
-      <div className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         {loading ? (
           <div className="py-16 text-center text-slate-500">Loading notifications...</div>
         ) : error ? (
@@ -89,7 +89,7 @@ export default function InstructorNotifications() {
             {notifications.map((notification) => (
               <div
                 key={notification.id}
-                className={`rounded-3xl border p-5 shadow-sm transition ${notification.is_read ? 'border-slate-200 bg-slate-50' : 'border-slate-300 bg-white hover:bg-slate-50'}`}
+                className={`rounded-xl border p-4 shadow-sm transition ${notification.is_read ? 'border-slate-200 bg-slate-50' : 'border-slate-300 bg-white hover:bg-slate-50'}`}
               >
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>

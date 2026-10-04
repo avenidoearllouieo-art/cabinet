@@ -16,113 +16,206 @@ html {
 }
 
 :root {
-  --ustp-navy: #002B5B;
-  --ustp-white: #FFFFFF;
-  --ustp-yellow: #FFC107;
-  --ustp-yellow-hover: #E0A800;
-  --ustp-border: rgba(0, 43, 91, 0.16);
-  --ustp-muted: rgba(0, 43, 91, 0.68);
-  color: var(--ustp-navy);
-  background: var(--ustp-white);
+  --tt-navy: #002b5b;
+  --tt-navy-deep: #071f41;
+  --tt-gold: #ffc107;
+  --tt-gold-hover: #e0a800;
+  --tt-ink: #102a4c;
+  --tt-muted: #64748b;
+  --tt-line: #dbe5f0;
+  --tt-surface: #ffffff;
+  --tt-surface-subtle: #f7f9fc;
+  --tt-canvas: #f4f7fb;
+  --tt-success: #15803d;
+  --tt-success-bg: #ecfdf3;
+  --tt-warning: #a16207;
+  --tt-warning-bg: #fffbeb;
+  --tt-danger: #b91c1c;
+  --tt-danger-bg: #fef2f2;
+  --tt-info: #1d5b91;
+  --tt-info-bg: #eef4fa;
+  --tt-radius: 12px;
+  --tt-control-radius: 8px;
+  --tt-control-height: 44px;
+  --tt-shadow: 0 2px 8px rgba(0, 43, 91, 0.06);
+  --ustp-navy: var(--tt-navy);
+  --ustp-white: var(--tt-surface);
+  --ustp-yellow: var(--tt-gold);
+  --ustp-yellow-hover: var(--tt-gold-hover);
+  --ustp-border: var(--tt-line);
+  --ustp-muted: var(--tt-muted);
+  color: var(--tt-ink);
+  background: var(--tt-canvas);
 }
 
 body {
-  background: var(--ustp-white);
-  color: var(--ustp-navy);
+  background: var(--tt-canvas);
+  color: var(--tt-ink);
 }
 
 .notification-overlay {
   background: rgba(0, 43, 91, 0.16) !important;
 }
 
-[class~="bg-slate-50"],
-[class~="bg-slate-100"],
-[class~="bg-gray-100"],
-[class~="bg-white"] {
-  background-color: var(--ustp-white) !important;
+.tt-panel {
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius);
+  background: var(--tt-surface);
+  box-shadow: var(--tt-shadow);
 }
 
-[class~="text-slate-900"],
-[class~="text-slate-800"],
-[class~="text-slate-700"],
-[class~="text-blue-900"] {
-  color: var(--ustp-navy) !important;
+.tt-control {
+  min-height: var(--tt-control-height);
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-control-radius);
+  background: var(--tt-surface);
+  color: var(--tt-ink);
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
-[class~="text-slate-600"],
-[class~="text-slate-500"],
-[class~="text-gray-500"] {
-  color: var(--ustp-muted) !important;
+.tt-control::placeholder {
+  color: var(--tt-muted);
 }
 
-[class~="border-slate-200"],
-[class~="border-gray-200"] {
-  border-color: var(--ustp-border) !important;
-}
-
-[class~="bg-yellow-100"],
-[class~="bg-yellow-50"],
-[class~="bg-amber-100"],
-[class~="bg-blue-50"],
-[class~="bg-emerald-50"],
-[class~="bg-purple-50"],
-[class~="bg-orange-50"] {
-  background-color: rgba(255, 193, 7, 0.14) !important;
-}
-
-[class~="text-yellow-600"],
-[class~="text-yellow-700"],
-[class~="text-amber-800"],
-[class~="text-blue-600"],
-[class~="text-emerald-600"],
-[class~="text-purple-600"],
-[class~="text-orange-600"],
-[class~="text-taptrack-gold"] {
-  color: var(--ustp-yellow) !important;
-}
-
-button[class*="bg-"],
-a[class*="bg-blue-600"],
-a[class*="bg-yellow-"] {
-  background-color: var(--ustp-yellow) !important;
-  color: var(--ustp-navy) !important;
-}
-
-button[class*="bg-"]:hover,
-a[class*="bg-blue-600"]:hover,
-a[class*="bg-yellow-"]:hover {
-  background-color: var(--ustp-yellow-hover) !important;
-}
-
-input,
-select,
-textarea {
-  background-color: var(--ustp-white);
-  color: var(--ustp-navy);
-  border-color: var(--ustp-border);
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--ustp-yellow);
-  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.22);
+.tt-control:focus-visible {
+  border-color: var(--tt-navy);
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.28);
   outline: none;
+}
+
+.tt-button {
+  display: inline-flex;
+  min-height: var(--tt-control-height);
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--tt-control-radius);
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.tt-button:focus-visible {
+  outline: 2px solid var(--tt-navy);
+  outline-offset: 2px;
+}
+
+.tt-button-primary {
+  background: var(--tt-gold);
+  color: var(--tt-navy);
+}
+
+.tt-button-primary:hover {
+  background: var(--tt-gold-hover);
+}
+
+.tt-button-secondary {
+  border-color: var(--tt-line);
+  background: var(--tt-surface);
+  color: var(--tt-navy);
+}
+
+.tt-button-secondary:hover {
+  background: var(--tt-surface-subtle);
+}
+
+.tt-button-danger {
+  background: var(--tt-danger);
+  color: #ffffff;
+}
+
+.tt-button-danger:hover {
+  background: #991b1b;
+}
+
+.tt-status {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.tt-status-success {
+  background: var(--tt-success-bg);
+  color: var(--tt-success);
+}
+
+.tt-status-warning {
+  background: var(--tt-warning-bg);
+  color: var(--tt-warning);
+}
+
+.tt-status-danger {
+  background: var(--tt-danger-bg);
+  color: var(--tt-danger);
+}
+
+.tt-status-neutral {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.tt-status-info {
+  background: var(--tt-info-bg);
+  color: var(--tt-info);
+}
+
+.admin-data-table {
+  border-color: var(--tt-line) !important;
+  border-radius: var(--tt-radius) !important;
+  background: var(--tt-surface);
+  box-shadow: var(--tt-shadow) !important;
+}
+
+.admin-data-table thead th {
+  height: 42px;
+  border-right: 0 !important;
+  border-bottom: 1px solid var(--tt-line) !important;
+  background: var(--tt-surface-subtle) !important;
+  color: var(--tt-muted) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+
+.admin-data-table tbody td {
+  border-right: 0 !important;
+  border-bottom: 1px solid #edf1f5 !important;
+  padding: 10px 12px !important;
+  color: var(--tt-ink);
+}
+
+.admin-data-table tbody tr:hover td {
+  background: #f7f9fc;
+}
+
+.admin-data-table tbody tr:last-child td {
+  border-bottom: 0 !important;
 }
 
 /* Admin workspace visual language. Page behavior remains owned by each route. */
 :is(.admin-shell, .instructor-shell, .student-shell) {
-  --admin-navy: #002b5b;
-  --admin-ink: #102a4c;
-  --admin-muted: #64748b;
-  --admin-line: #dbe5f0;
-  --admin-surface: #ffffff;
-  --admin-canvas: #f4f7fb;
-  background: var(--admin-canvas) !important;
+  --admin-navy: var(--tt-navy);
+  --admin-ink: var(--tt-ink);
+  --admin-muted: var(--tt-muted);
+  --admin-line: var(--tt-line);
+  --admin-surface: var(--tt-surface);
+  --admin-canvas: var(--tt-canvas);
+  background: var(--tt-canvas) !important;
 }
 
 :is(.admin-shell, .instructor-shell, .student-shell) .admin-main {
-  background: var(--admin-canvas) !important;
+  background: var(--tt-canvas) !important;
 }
 
 :is(.admin-shell, .instructor-shell, .student-shell) .rounded-xl.border,
@@ -149,18 +242,121 @@ textarea:focus {
   color: var(--admin-muted) !important;
 }
 
-:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-blue-600"] {
-  background-color: var(--admin-navy) !important;
-  color: white !important;
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-blue-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-sky-50"] {
+  background-color: var(--tt-info-bg) !important;
 }
 
-:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-blue-600"]:hover {
-  background-color: #123f73 !important;
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-emerald-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-emerald-100"] {
+  background-color: var(--tt-success-bg) !important;
 }
 
-:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-red-600"] {
-  background-color: #dc2626 !important;
-  color: white !important;
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-amber-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-amber-100"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-orange-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-orange-100"] {
+  background-color: var(--tt-warning-bg) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-rose-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-rose-100"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-red-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-red-100"] {
+  background-color: var(--tt-danger-bg) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-purple-50"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="bg-violet-50"] {
+  background-color: var(--tt-info-bg) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-blue-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-blue-700"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-sky-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-sky-700"] {
+  color: var(--tt-info) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-emerald-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-emerald-700"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-emerald-800"] {
+  color: var(--tt-success) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-amber-700"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-amber-800"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-orange-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-orange-700"] {
+  color: var(--tt-warning) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-rose-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-rose-700"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-red-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) [class~="text-red-700"] {
+  color: var(--tt-danger) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) button[class~="bg-blue-600"],
+:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-[#2563EB]"],
+:is(.admin-shell, .instructor-shell, .student-shell) a[class~="bg-blue-600"] {
+  border-color: var(--tt-gold) !important;
+  background: var(--tt-gold) !important;
+  color: var(--tt-navy) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) button[class~="bg-blue-600"]:hover,
+:is(.admin-shell, .instructor-shell, .student-shell) button[class*="bg-[#2563EB]"]:hover,
+:is(.admin-shell, .instructor-shell, .student-shell) a[class~="bg-blue-600"]:hover {
+  background: var(--tt-gold-hover) !important;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) input:not([type="checkbox"]):not([type="radio"]),
+:is(.admin-shell, .instructor-shell, .student-shell) select,
+:is(.admin-shell, .instructor-shell, .student-shell) textarea {
+  border-color: var(--tt-line);
+  border-radius: var(--tt-control-radius);
+  background-color: var(--tt-surface);
+  color: var(--tt-ink);
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) input:not([type="checkbox"]):not([type="radio"]),
+:is(.admin-shell, .instructor-shell, .student-shell) select {
+  min-height: var(--tt-control-height);
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) input:focus-visible,
+:is(.admin-shell, .instructor-shell, .student-shell) select:focus-visible,
+:is(.admin-shell, .instructor-shell, .student-shell) textarea:focus-visible {
+  border-color: var(--tt-navy);
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.24);
+  outline: none;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) table {
+  border-collapse: collapse;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) table thead th {
+  height: 42px;
+  border-right: 0 !important;
+  border-bottom: 1px solid var(--tt-line) !important;
+  background: var(--tt-surface-subtle) !important;
+  color: var(--tt-muted) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  vertical-align: middle;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) table tbody td {
+  border-right: 0 !important;
+  border-bottom: 1px solid #edf1f5 !important;
+  vertical-align: middle;
+}
+
+:is(.admin-shell, .instructor-shell, .student-shell) table tbody tr:hover td {
+  background: var(--tt-surface-subtle);
 }
 
 :is(.admin-shell, .instructor-shell, .student-shell) .admin-page-header + .grid {
@@ -176,4 +372,188 @@ textarea:focus {
   :is(.admin-shell, .instructor-shell, .student-shell) .admin-page-header h1 {
     font-size: 25px;
   }
+}
+
+.instructor-shell .admin-summary-card {
+  width: 100%;
+  height: 120px;
+  min-height: 120px;
+  padding: 12px 14px;
+  border-color: var(--tt-line);
+  border-radius: 10px;
+  box-shadow: var(--tt-shadow);
+}
+
+.instructor-shell .instructor-data-table {
+  border-color: var(--tt-line) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--tt-shadow) !important;
+}
+
+.instructor-shell .instructor-data-table thead th {
+  height: 42px;
+  padding: 10px 12px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+
+.instructor-shell .instructor-data-table tbody tr {
+  height: 48px;
+}
+
+.instructor-shell .instructor-data-table tbody td {
+  padding: 10px 12px !important;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.instructor-shell .instructor-data-table tbody tr:hover td {
+  background: #f4f8fc !important;
+}
+
+.instructor-shell .instructor-table-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 4px 9px;
+  color: var(--tt-navy);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.instructor-shell .instructor-table-action:hover {
+  border-color: var(--tt-gold);
+  background: #fff9e5;
+}
+
+.student-shell .student-table-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 4px 9px;
+  color: var(--tt-navy);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.student-shell .student-table-action:hover {
+  border-color: var(--tt-gold);
+  background: #fff9e5;
+}
+
+.student-shell .student-table-action-primary {
+  border-color: var(--tt-gold);
+  background: var(--tt-gold);
+  color: var(--tt-navy);
+}
+
+.student-shell .student-table-action-primary:hover {
+  background: var(--tt-gold-hover);
+}
+
+.instructor-shell .instructor-more-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--tt-navy);
+}
+
+.instructor-shell .instructor-more-button:hover {
+  border-color: var(--tt-gold);
+  background: #fff9e5;
+}
+
+.instructor-action-menu {
+  z-index: 9999;
+  width: 176px;
+  overflow: hidden;
+  border: 1px solid var(--tt-line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 4px;
+  box-shadow: 0 12px 28px rgba(0, 43, 91, 0.16);
+}
+
+.instructor-action-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 5px;
+  padding: 7px 9px;
+  color: var(--tt-ink);
+  text-align: left;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.instructor-action-menu-item:hover {
+  background: var(--tt-surface-subtle);
+}
+
+.instructor-action-menu-danger {
+  color: var(--tt-danger);
+}
+
+:is(.instructor-shell, .student-shell) .instructor-pagination {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  color: var(--tt-muted);
+  font-size: 13px;
+}
+
+:is(.instructor-shell, .student-shell) .instructor-pagination button {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--tt-navy);
+}
+
+:is(.instructor-shell, .student-shell) .instructor-pagination button:hover:not(:disabled) {
+  border-color: var(--tt-gold);
+  background: #fff9e5;
+}
+
+:is(.instructor-shell, .student-shell) .instructor-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.instructor-shell .instructor-text-action {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tt-navy);
+  font-size: 13px;
+  font-weight: 600;
 }

@@ -5,6 +5,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import DeleteSubmissionModal from '../../components/submissions/DeleteSubmissionModal.jsx'
 
@@ -23,14 +24,6 @@ const statusOptions = [
   { value: 'graded', label: 'Graded' },
   { value: 'pending', label: 'Pending' },
 ]
-
-const statusStyles = {
-  submitted: 'bg-[#ECFDF5] text-[#16A34A]',
-  late: 'bg-[#FEE2E2] text-[#B91C1C]',
-  pending: 'bg-[#FEF3C7] text-[#92400E]',
-  graded: 'bg-[#DBEAFE] text-[#1D4ED8]',
-  unknown: 'bg-[#F3F4F6] text-[#475569]',
-}
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -184,7 +177,7 @@ export default function Submissions() {
     {
       key: 'student',
       label: 'Student',
-      className: 'min-w-[180px] whitespace-normal',
+      className: 'w-[15%]',
       render: (_value, row) => {
         const studentName = row.student_name || `${row.student?.first_name || ''} ${row.student?.last_name || ''}`.trim() || '—'
         return (
@@ -198,7 +191,7 @@ export default function Submissions() {
     {
       key: 'activity',
       label: 'Activity',
-      className: 'min-w-[220px] whitespace-normal',
+      className: 'w-[19%]',
       render: (_value, row) => (
         <div className="space-y-1">
           <div className="font-medium text-[#111827]">{row.activity_title || row.activity?.title || '—'}</div>
@@ -207,46 +200,37 @@ export default function Submissions() {
       ),
     },
     {
-      key: 'instructor',
-      label: 'Instructor',
-      className: 'min-w-[160px] whitespace-normal',
-      render: (_value, row) => resolveInstructor(row),
-    },
-    {
       key: 'section',
       label: 'Section',
-      className: 'min-w-[140px] whitespace-normal',
+      className: 'w-[11%]',
       render: (_value, row) => row.student?.section_name || row.student?.section?.section_name || '—',
     },
     {
       key: 'submitted_at',
       label: 'Submitted',
-      className: 'min-w-[180px] whitespace-normal',
+      className: 'w-[16%]',
       render: (value, row) => formatDate(value || row.submitted_at),
     },
     {
       key: 'status',
       label: 'Status',
-      className: 'min-w-[120px] whitespace-normal',
+      className: 'w-[11%]',
       render: (_value, row) => {
         const status = resolveStatus(row)
-        return (
-          <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[status] || statusStyles.unknown}`}>
-            {status === 'unknown' ? 'Unknown' : status.charAt(0).toUpperCase() + status.slice(1)}
-          </span>
-        )
+        const label = status === 'unknown' ? 'Unknown' : status.charAt(0).toUpperCase() + status.slice(1)
+        return <StatusBadge status={status} label={label} />
       },
     },
     {
       key: 'score',
-      label: 'Score',
-      className: 'min-w-[110px] whitespace-normal',
+      label: 'Grade',
+      className: 'w-[9%]',
       render: (_value, row) => (row.score != null ? `${row.score} / 100` : '—'),
     },
     {
       key: 'actions',
-      label: 'Actions',
-      className: 'w-[90px] text-left',
+      label: 'Action',
+      className: 'w-[13%] text-left',
       render: (_value, row) => (
         <div className="relative" ref={openActionId === row.id ? actionMenuRef : null}>
           <button
@@ -380,7 +364,22 @@ export default function Submissions() {
           <div>{filteredSubmissions.length} result{filteredSubmissions.length === 1 ? '' : 's'}</div>
         </div>
 
-        <DataTable columns={columns} data={filteredSubmissions} loading={loading} emptyMessage={submissions.length ? 'No submissions match your filters.' : 'No submissions available.'} />
+        <DataTable
+          columns={columns}
+          data={filteredSubmissions}
+          loading={loading}
+          expandable
+          variant="admin"
+          renderExpandedRow={(row) => (
+            <dl className="grid gap-2 sm:grid-cols-2">
+              <div><dt className="font-semibold">Student ID</dt><dd>{row.student?.student_id || row.student_id || '—'}</dd></div>
+              <div><dt className="font-semibold">Instructor</dt><dd>{resolveInstructor(row)}</dd></div>
+              <div className="sm:col-span-2"><dt className="font-semibold">Remarks</dt><dd className="whitespace-pre-wrap">{row.remarks || '—'}</dd></div>
+              <div className="sm:col-span-2"><dt className="font-semibold">Feedback</dt><dd className="whitespace-pre-wrap">{row.feedback || '—'}</dd></div>
+            </dl>
+          )}
+          emptyMessage={submissions.length ? 'No submissions match your filters.' : 'No submissions available.'}
+        />
       </div>
 
       {toastMessage && (

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BookOpen, CalendarClock, ClipboardCheck, Users } from 'lucide-react'
+import { BookOpen, CalendarClock, ClipboardCheck, Download, FileText, PencilLine, Users } from 'lucide-react'
 import api from '../../services/api.js'
+import ActivityDiscussion from '../ActivityDiscussion.jsx'
+import StatusBadge from '../StatusBadge.jsx'
 import {
   FileUploadArea,
   FormActions,
@@ -12,11 +14,110 @@ import {
 } from '../forms/FormPrimitives.jsx'
 import { controlClass } from '../forms/formStyles.js'
 
-const steps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Review & publish']
+const editSteps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Review & publish']
+const viewSteps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Activity status / review', 'Discussion']
 const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', cabinet_station: '', status: 'Published', files: [] })
 const getSectionId = (section) => section?.id ?? section?.section_id ?? section?.subject_code
 const getSectionName = (section) => section?.section_name || section?.name || section?.title || section?.subject_code || 'Unnamed section'
+const displayValue = (value) => value === null || value === undefined || String(value).trim() === '' ? 'Not recorded' : String(value)
 const snapshot = (form) => JSON.stringify({ ...form, files: form.files.map((file) => `${file.name}:${file.size}`) })
+
+const formatActivityDate = (value) => {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+}
+
+const formatActivityTime = (value) => {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+}
+
+function ReadOnlyActivityStep({ step, activity, sections, attachments, activityId }) {
+  if (step === 0) {
+    return (
+      <FormSection icon={BookOpen} title="Activity details" description="Read-only activity information.">
+        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          <ReviewItem label="Activity title" value={displayValue(activity?.title)} />
+          <ReviewItem label="Maximum score" value={displayValue(activity?.max_score)} />
+          <ReviewItem label="Description" value={displayValue(activity?.description)} />
+          <ReviewItem label="Cabinet station" value={displayValue(activity?.cabinet_station)} />
+          <div className="sm:col-span-2"><ReviewItem label="Instructions" value={displayValue(activity?.instructions)} /></div>
+        </dl>
+      </FormSection>
+    )
+  }
+
+  if (step === 1) {
+    return (
+      <FormSection icon={Users} title="Assigned sections" description="Classes currently assigned to this activity.">
+        {sections.length ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {sections.map((section) => (
+              <div key={getSectionId(section)} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h4 className="font-semibold text-[#0B1F3A]">{getSectionName(section)}</h4>
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <ReviewItem label="Program" value={displayValue(section.program)} />
+                  <ReviewItem label="Year level" value={displayValue(section.year_level)} />
+                  <div className="col-span-2"><ReviewItem label="Students" value={displayValue(section.student_count)} /></div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        ) : <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No assigned sections are recorded for this activity.</p>}
+      </FormSection>
+    )
+  }
+
+  if (step === 2) {
+    return (
+      <FormSection icon={CalendarClock} title="Deadline & files" description="Due information, requirements, and attached activity files.">
+        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          <ReviewItem label="Due date" value={formatActivityDate(activity?.due_date)} />
+          <ReviewItem label="Deadline / time" value={formatActivityTime(activity?.due_date)} />
+          <ReviewItem label="Activity type" value={displayValue(activity?.activity_type)} />
+          <ReviewItem label="Resubmissions" value={activity?.allow_resubmission === undefined ? 'Not recorded' : activity.allow_resubmission ? 'Allowed' : 'Not allowed'} />
+        </dl>
+        <div className="mt-5">
+          <h4 className="mb-3 text-sm font-semibold text-[#0B1F3A]">Attached files</h4>
+          {attachments.length ? (
+            <ul className="space-y-2">
+              {attachments.map((attachment) => {
+                const name = attachment.filename || attachment.file_name || 'Attachment'
+                const url = attachment.download_url || attachment.url
+                return (
+                  <li key={attachment.id ?? name} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-700"><FileText size={16} className="shrink-0 text-[#28415f]" /><span className="truncate">{name}</span></span>
+                    {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-[#0B1F3A] hover:bg-slate-50"><Download size={14} />Open file</a>}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No activity files are attached.</p>}
+        </div>
+      </FormSection>
+    )
+  }
+
+  if (step === 3) {
+    const status = displayValue(activity?.status)
+    return (
+      <FormSection icon={ClipboardCheck} title="Activity status / review" description="Publication status and audit timestamps from the activity record.">
+        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><dt className="text-xs font-bold uppercase text-slate-500">Status</dt><dd className="mt-2"><StatusBadge status={String(status).toLowerCase()} label={status} /></dd></div>
+          <ReviewItem label="Created date" value={formatActivityDate(activity?.created_at)} />
+          <ReviewItem label="Last updated" value={formatActivityDate(activity?.updated_at)} />
+          <div className="sm:col-span-2"><ReviewItem label="Publication information" value={activity?.status ? `Current publication status: ${activity.status}` : 'Not recorded'} /></div>
+        </dl>
+      </FormSection>
+    )
+  }
+
+  return (
+    <ActivityDiscussion activityId={activityId} />
+  )
+}
 
 function readAssignedSections(data) {
   if (Array.isArray(data.assigned_sections) && data.assigned_sections.length) {
@@ -25,9 +126,11 @@ function readAssignedSections(data) {
   return data.section !== undefined && data.section !== null && data.section !== '' ? [getSectionId(data.section) ?? data.section] : []
 }
 
-export default function ActivityFormWorkflow({ isOpen, activityId, activity, onClose, onUnauthorized, onSaved, mode = 'create' }) {
+export default function ActivityFormWorkflow({ isOpen, activityId, activity, onClose, onEdit, onUnauthorized, onSaved, mode = 'create' }) {
   const resolvedId = activity?.id ?? activityId
   const editing = mode === 'edit'
+  const viewing = mode === 'view'
+  const currentSteps = viewing ? viewSteps : editSteps
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -39,6 +142,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   const [formError, setFormError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [existingAttachments, setExistingAttachments] = useState([])
+  const [activityRecord, setActivityRecord] = useState(activity || null)
   const [deletedAttachmentIds, setDeletedAttachmentIds] = useState([])
 
   const loadSections = useCallback(async () => {
@@ -59,6 +163,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     try {
       const response = await api.get(`/activities/${id}/`)
       const data = response.data || {}
+      setActivityRecord(data)
       const [date = '', time = ''] = data.due_date ? data.due_date.split('T') : []
       const loaded = {
         title: data.title || '', description: data.description || '', instructions: data.instructions || '',
@@ -88,12 +193,13 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       setFormError('')
       setSuccessMessage('')
       setExistingAttachments([])
+      setActivityRecord(null)
       setDeletedAttachmentIds([])
       loadSections()
-      if (editing && resolvedId) loadActivity(resolvedId)
+      if ((editing || viewing) && resolvedId) loadActivity(resolvedId)
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [isOpen, editing, resolvedId, loadSections, loadActivity])
+  }, [isOpen, editing, viewing, resolvedId, loadSections, loadActivity])
 
   const update = (field) => (event) => {
     const value = event?.target ? event.target.value : event
@@ -123,7 +229,11 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   }
 
   const goNext = () => {
-    if (validateStep(step)) setStep((current) => Math.min(current + 1, steps.length - 1))
+    if (viewing) {
+      setStep((current) => Math.min(current + 1, currentSteps.length - 1))
+      return
+    }
+    if (validateStep(step)) setStep((current) => Math.min(current + 1, currentSteps.length - 1))
   }
 
   const handleFiles = (event) => {
@@ -139,7 +249,11 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if (step !== steps.length - 1) return goNext()
+    if (viewing) {
+      onClose?.()
+      return
+    }
+    if (step !== currentSteps.length - 1) return goNext()
     if (saving) return
     const validationResults = [0, 1, 2].map((stepIndex) => validateStep(stepIndex))
     const firstInvalidStep = validationResults.indexOf(false)
@@ -196,18 +310,24 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
 
   return (
     <FormDialog
-      isOpen={isOpen && (!editing || Boolean(resolvedId))}
-      title={editing ? 'Edit Activity' : 'Create New Activity'}
-      description={editing ? 'Update the activity while preserving its submissions and history.' : 'Build an activity in four clear steps.'}
-      onClose={onClose} onSubmit={handleSubmit} dirty={dirty} busy={saving}
-      stepper={<FormStepper steps={steps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Save changes' : form.status === 'Draft' ? 'Save draft' : 'Publish activity'} busy={saving} disabled={loading || loadingSections} dirty={dirty} />}
+      isOpen={isOpen && ((!editing && !viewing) || Boolean(resolvedId))}
+      title={viewing ? 'View Activity' : editing ? 'Edit Activity' : 'Create New Activity'}
+      description={viewing ? 'Read-only activity record and discussion.' : editing ? 'Update the activity while preserving its submissions and history.' : 'Build an activity in four clear steps.'}
+      onClose={onClose} onSubmit={handleSubmit}
+      asForm={!viewing}
+      headerActions={viewing && <button type="button" onClick={onEdit} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400"><PencilLine size={16} />Edit Activity</button>}
+      dirty={viewing ? false : dirty}
+      busy={viewing ? false : saving}
+      stepper={<FormStepper steps={currentSteps} currentStep={step} />}
+      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === currentSteps.length - 1} submitLabel={viewing ? 'Close' : editing ? 'Save changes' : form.status === 'Draft' ? 'Save draft' : 'Publish activity'} busy={viewing ? false : saving} disabled={loading || loadingSections} dirty={viewing ? false : dirty} finalButtonType={viewing ? 'button' : 'submit'} onFinalAction={viewing ? onClose : undefined} />}
       zIndex={editing ? 'z-[99999]' : 'z-[9999]'}
     >
       <div className="space-y-4">
         <InlineFeedback>{formError}</InlineFeedback>
         <InlineFeedback type="success">{successMessage}</InlineFeedback>
-        {loading ? <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">Loading activity…</div> : step === 0 ? (
+        {loading ? <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">Loading activity…</div> : viewing ? (
+          <ReadOnlyActivityStep step={step} activity={activityRecord} sections={selectedSections} attachments={existingAttachments} activityId={resolvedId} />
+        ) : step === 0 ? (
           <FormSection icon={BookOpen} title="Activity details" description="Give students a clear title, purpose, and scoring context.">
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <FormField label="Activity title" required error={errors.title} className="md:col-span-2">{({ id, describedBy, invalid }) => <input id={id} value={form.title} onChange={update('title')} placeholder="e.g., Chapter 5 Assignment" aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>

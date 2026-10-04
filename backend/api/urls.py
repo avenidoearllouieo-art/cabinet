@@ -7,11 +7,13 @@ from .views import (
     ActivityViewSet,
     SubmissionViewSet,
     AccessLogViewSet,
+    CabinetSessionViewSet,
     CabinetEventViewSet,
     ActivityDiscussionViewSet,
     ActivityAnnouncementViewSet,
     NotificationViewSet,
     VerifyNFCView,
+    CabinetWorkflowView,
     NFCEnrollmentValidationView,
     NFCEnrollmentRegistrationView,
     CabinetRegistrationView,
@@ -32,6 +34,7 @@ router.register(r'users', UserViewSet, basename='user')
 router.register(r'activities', ActivityViewSet, basename='activity')
 router.register(r'submissions', SubmissionViewSet, basename='submission')
 router.register(r'access-logs', AccessLogViewSet, basename='accesslog')
+router.register(r'cabinet-sessions', CabinetSessionViewSet, basename='cabinetsession')
 router.register(r'cabinet-events', CabinetEventViewSet, basename='cabinetevent')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'temp-uploads', TemporaryUploadViewSet, basename='tempupload')
@@ -50,6 +53,7 @@ urlpatterns = [
     path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('verify-nfc/', VerifyNFCView.as_view(), name='verify_nfc'),
+    path('cabinet/workflow/', CabinetWorkflowView.as_view(), name='cabinet_workflow'),
     path('cabinet/enrollment/validate/', NFCEnrollmentValidationView.as_view(), name='nfc_enrollment_validate'),
     path('cabinet/enrollment/register/', NFCEnrollmentRegistrationView.as_view(), name='nfc_enrollment_register'),
     path('cabinet/register/', CabinetRegistrationView.as_view(), name='cabinet_register'),

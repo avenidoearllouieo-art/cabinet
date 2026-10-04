@@ -2,6 +2,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework.throttling import AnonRateThrottle
 import os
 import logging
+import hmac
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +42,7 @@ class IsDiscussionAuthorOrInstructor(BasePermission):
 
 class HasDeviceAPIKey(BasePermission):
     """
-    Allows requests that present a valid device API key in the
-    X-API-Key header. Used by ESP32 cabinet hardware to POST
-    NFC verification requests without a JWT token.
+    Allows requests from configured NFC readers or the development device key.
     """
     message = 'Invalid or missing device API key.'
 
@@ -53,6 +53,17 @@ class HasDeviceAPIKey(BasePermission):
             or request.META.get('HTTP_X_API_KEY', '')
         ).strip()
 
+        if settings.DEBUG and request.headers.get('X-TapTrack-Mock-Mode') == 'true':
+            if not expected or not hmac.compare_digest(provided, expected):
+                return False
+            request.nfc_device_context = {
+                'station': '',
+                'cabinet_name': settings.TAPTRACK_CABINET_NAME,
+                'device_id': 'MOCK-LAPTOP',
+                'mock': True,
+            }
+            return True
+
         logger.info(
             'Device API key diagnostics: django_key_configured=%s django_key_length=%d x_api_key_header_received=%s keys_match=%s',
             bool(expected),
@@ -61,9 +72,31 @@ class HasDeviceAPIKey(BasePermission):
             bool(expected) and bool(provided) and provided == expected,
         )
 
-        if not expected:
+        mapped_device = next((
+            device for device in settings.TAPTRACK_NFC_DEVICE_MAP
+            if isinstance(device, dict)
+            and device.get('api_key')
+            and hmac.compare_digest(provided, str(device['api_key']))
+        ), None)
+        if mapped_device and mapped_device.get('active') is True:
+            request.nfc_device_context = {
+                'device_id': str(mapped_device['device_id']).strip(),
+                'station': str(mapped_device.get('station') or '').strip(),
+                'cabinet_name': str(mapped_device.get('cabinet_name') or '').strip(),
+                'mock': False,
+            }
+            return True
+        if mapped_device:
             return False
-        return provided == expected
+        if not expected or not hmac.compare_digest(provided, expected):
+            return False
+        request.nfc_device_context = {
+            'station': '',
+            'cabinet_name': settings.TAPTRACK_CABINET_NAME,
+            'device_id': 'MOCK-LAPTOP',
+            'mock': settings.DEBUG,
+        }
+        return settings.DEBUG
 
 
 class PasswordResetRateThrottle(AnonRateThrottle):

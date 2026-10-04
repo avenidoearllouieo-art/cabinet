@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
       secure: false,
       configure: (proxyServer) => {
         proxyServer.on('proxyReq', (proxyRequest) => {
-          const apiKey = env.DEVICE_API_KEY || env.VITE_DJANGO_API_KEY || backendEnv.DEVICE_API_KEY
+          const apiKey = env.DEVICE_API_KEY || backendEnv.DEVICE_API_KEY
           if (apiKey) proxyRequest.setHeader('X-API-Key', apiKey)
         })
       },

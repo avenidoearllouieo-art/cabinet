@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 
 const statusOptions = [
@@ -42,18 +43,6 @@ function getDisplayStatus(submission) {
   if (status === 'late') return 'Late'
   if (status === 'under_review' || status === 'submitted' || status === 'pending') return 'Under Review'
   return 'Submitted'
-}
-
-function statusBadge(status) {
-  const normalized = String(status || '').toLowerCase()
-  const styles = {
-    submitted: 'bg-sky-100 text-sky-700',
-    under_review: 'bg-amber-100 text-amber-700',
-    graded: 'bg-emerald-100 text-emerald-700',
-    returned_for_revision: 'bg-rose-100 text-rose-700',
-    late: 'bg-orange-100 text-orange-700',
-  }
-  return styles[normalized] || 'bg-slate-100 text-slate-700'
 }
 
 function formatDate(value) {
@@ -143,9 +132,7 @@ export default function StudentSubmissions() {
       render: (_value, row) => {
         const displayStatus = getDisplayStatus(row)
         return (
-          <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${statusBadge(displayStatus)}`}>
-            {displayStatus}
-          </span>
+          <StatusBadge status={displayStatus} label={displayStatus} />
         )
       },
     },
@@ -278,7 +265,6 @@ export default function StudentSubmissions() {
             columns={tableColumns}
             data={submissions}
             loading={loading}
-            mobileCards
             emptyMessage="No submissions yet"
             showActions={false}
             pagination={{

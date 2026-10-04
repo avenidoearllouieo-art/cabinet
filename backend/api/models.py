@@ -346,10 +346,57 @@ class Submission(models.Model):
         ordering = ['-submitted_at']
 
 
+class CabinetSession(models.Model):
+    class StatusChoices(models.TextChoices):
+        OPEN = 'open', 'Open'
+        CLOSED = 'closed', 'Closed'
+
+    class WorkflowStateChoices(models.TextChoices):
+        IDLE = 'idle', 'Idle'
+        OPENING = 'opening', 'Opening'
+        CLOSING = 'closing', 'Closing'
+
+    id = models.AutoField(primary_key=True)
+    station = models.CharField(max_length=100, blank=True, default='')
+    status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.OPEN)
+    workflow_state = models.CharField(max_length=20, choices=WorkflowStateChoices.choices, default=WorkflowStateChoices.IDLE)
+    opened_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    opened_by = models.ManyToManyField(User, blank=True, related_name='opened_cabinet_sessions')
+    closed_by = models.ManyToManyField(User, blank=True, related_name='closed_cabinet_sessions')
+    participant_count = models.PositiveIntegerField(default=0)
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        status_label = self.status or self.StatusChoices.OPEN
+        return f"Cabinet session {self.station or 'unknown'} ({status_label})"
+
+    class Meta:
+        ordering = ['-opened_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['station'],
+                condition=models.Q(status='open') & ~models.Q(station=''),
+                name='uniq_open_cabinetsession_station',
+            ),
+        ]
+
+
 class AccessLog(models.Model):
     class AccessStatusChoices(models.TextChoices):
         SUCCESS = 'success', 'Success'
         FAILED = 'failed', 'Failed'
+        UNREGISTERED = 'unregistered', 'Unregistered'
+        DUPLICATE = 'duplicate', 'Duplicate'
+        REJECTED = 'rejected', 'Rejected'
+
+    class AccessActionChoices(models.TextChoices):
+        SCAN = 'scan', 'Scan'
+        OPEN = 'open', 'Open'
+        CLOSE = 'close', 'Close'
+        REGISTRATION = 'registration', 'Registration'
 
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
@@ -359,13 +406,29 @@ class AccessLog(models.Model):
         blank=True,
         related_name='access_logs'
     )
+    cabinet_session = models.ForeignKey(
+        CabinetSession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='access_logs'
+    )
     access_time = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=20, choices=AccessStatusChoices.choices)
-    rfid_tag = models.CharField(max_length=100, blank=True, default='')
+    status = models.CharField(max_length=20, choices=AccessStatusChoices.choices, default=AccessStatusChoices.SUCCESS)
+    action = models.CharField(max_length=20, choices=AccessActionChoices.choices, default=AccessActionChoices.SCAN)
+    nfc_uid = models.CharField(max_length=100, blank=True, default='')
+    station = models.CharField(max_length=100, blank=True, default='')
     cabinet_name = models.CharField(max_length=100, blank=True, default='')
     reason = models.TextField(blank=True, default='')
-    image = models.FileField(upload_to='access_logs/', null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @staticmethod
+    def normalize_nfc_uid(value):
+        return ''.join(str(value or '').split()).upper()
+
+    def save(self, *args, **kwargs):
+        self.nfc_uid = self.normalize_nfc_uid(self.nfc_uid)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         if self.user:
@@ -374,6 +437,11 @@ class AccessLog(models.Model):
 
     class Meta:
         ordering = ['-access_time']
+        indexes = [
+            models.Index(fields=['nfc_uid', 'status']),
+            models.Index(fields=['cabinet_session', 'status']),
+            models.Index(fields=['station', 'access_time']),
+        ]
 
 
 class Notification(models.Model):
@@ -502,6 +570,8 @@ class NFCEnrollmentSession(models.Model):
         CANCELLED = 'cancelled', 'Cancelled'
 
     nfc_uid = models.CharField(max_length=100)
+    station = models.CharField(max_length=100, blank=True, default='')
+    cabinet_name = models.CharField(max_length=100, blank=True, default='')
     token_digest = models.CharField(max_length=64, unique=True)
     token_hash = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.PENDING)

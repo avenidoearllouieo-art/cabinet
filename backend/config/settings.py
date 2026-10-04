@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -60,6 +61,36 @@ NFC_REGISTRATION_URL_BASE = os.environ.get(
     'TAPTRACK_NFC_REGISTRATION_URL_BASE',
     'http://localhost:5176/register',
 ).rstrip('/')
+TAPTRACK_CABINET_NAME = os.environ.get('TAPTRACK_CABINET_NAME', 'Cabinet 1').strip()
+TAPTRACK_CABINET_STATIONS = env_list(
+    'TAPTRACK_CABINET_STATIONS',
+    ['Station 1', 'Station 2'],
+)
+try:
+    TAPTRACK_NFC_DEVICE_MAP = json.loads(os.environ.get('TAPTRACK_NFC_DEVICE_MAP', '[]'))
+except json.JSONDecodeError as exc:
+    raise ImproperlyConfigured('TAPTRACK_NFC_DEVICE_MAP must be valid JSON.') from exc
+if not isinstance(TAPTRACK_NFC_DEVICE_MAP, list):
+    raise ImproperlyConfigured('TAPTRACK_NFC_DEVICE_MAP must be a JSON list.')
+device_keys = [device.get('api_key') for device in TAPTRACK_NFC_DEVICE_MAP if isinstance(device, dict)]
+if (
+    len(device_keys) != len(TAPTRACK_NFC_DEVICE_MAP)
+    or any(
+        not isinstance(device.get('api_key'), str)
+        or not device.get('api_key').strip()
+        or not isinstance(device.get('device_id'), str)
+        or not device.get('device_id').strip()
+        or not isinstance(device.get('station'), str)
+        or not device.get('station').strip()
+        or not isinstance(device.get('cabinet_name'), str)
+        or not device.get('cabinet_name').strip()
+        or not isinstance(device.get('active'), bool)
+        for device in TAPTRACK_NFC_DEVICE_MAP
+    )
+    or len(device_keys) != len(set(device_keys))
+    or len({device['device_id'] for device in TAPTRACK_NFC_DEVICE_MAP}) != len(TAPTRACK_NFC_DEVICE_MAP)
+):
+    raise ImproperlyConfigured('Each active TAPTRACK_NFC_DEVICE_MAP entry must have a unique device ID and API key, station, and cabinet name.')
 
 
 # Application definition

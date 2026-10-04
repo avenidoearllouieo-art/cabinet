@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
+import StatusBadge from '../../components/StatusBadge'
 import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
@@ -174,30 +175,21 @@ export default function Sections() {
     return [{ value: 'all', label: 'All instructors' }, { value: 'unassigned', label: 'No instructor assigned' }, ...options.map((name) => ({ value: name, label: name }))]
   }, [sections])
 
-  const statusStyles = {
-    active: 'bg-[#ECFDF5] text-[#16A34A]',
-    pending: 'bg-[#FEF3C7] text-[#92400E]',
-    empty: 'bg-[#F3F4F6] text-[#6B7280]',
-    archived: 'bg-[#F3E8FF] text-[#7C3AED]',
-    inactive: 'bg-[#F3F4F6] text-[#6B7280]',
-  }
-
   const getStatusBadge = (status, row) => {
     const normalized = String(status || '').toLowerCase()
     let key = normalized
     if (normalized === 'active' && !row?.instructor_name) key = 'pending'
     if (normalized !== 'active' && !row?.student_count) key = 'empty'
-    const style = statusStyles[key] || 'bg-[#F3F4F6] text-[#6B7280]'
     const label = key === 'pending' ? 'Pending Instructor' : key === 'empty' ? 'Empty' : key === 'archived' ? 'Archived' : 'Active'
-    return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${style}`}>{label}</span>
+    return <StatusBadge status={key} label={label} />
   }
 
   const getInstructorBadge = (row) => {
     const name = String(row.instructor_name || '').trim()
     if (!name) {
-      return <span className="inline-flex rounded-full bg-[#FEF3C7] px-3 py-1 text-xs font-semibold text-[#92400E]">No Instructor Assigned</span>
+      return <StatusBadge label="No Instructor Assigned" tone="warning" />
     }
-    return <span className="inline-flex rounded-full bg-[#DBEAFE] px-3 py-1 text-xs font-semibold text-[#1D4ED8]">{name}</span>
+    return <StatusBadge label={name} tone="info" />
   }
 
   const getSectionSummary = (row) => {
@@ -329,20 +321,20 @@ export default function Sections() {
           <div className="text-sm text-slate-500">{filteredSections.length} result{filteredSections.length === 1 ? '' : 's'}</div>
         </div>
 
-        <div className="overflow-x-auto rounded-[12px] border border-[#E5E7EB]">
-          <table className="min-w-full divide-y divide-[#E5E7EB] text-sm">
+        <div className="overflow-x-hidden rounded-[12px] border border-[#E5E7EB]">
+          <table className="w-full table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
             <thead className="bg-[#F9FAFB]">
               <tr>
-                <th className="px-4 py-3 text-left">
+                <th className="w-[4%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left">
                   <input type="checkbox" checked={filteredSections.length > 0 && filteredSections.every((section) => selectedIds.includes(section.id))} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-[#D1D5DB]" />
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Section</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Instructor</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Students</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Activities</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Assigned Cabinet</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Actions</th>
+                <th className="w-[16%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Section</th>
+                <th className="w-[17%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Instructor</th>
+                <th className="w-[8%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Students</th>
+                <th className="w-[8%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Activities</th>
+                <th className="w-[16%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Assigned Cabinet</th>
+                <th className="w-[14%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Status</th>
+                <th className="w-[14%] border-b border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E5E7EB] bg-white">
@@ -354,14 +346,14 @@ export default function Sections() {
               )}
               {!loading && filteredSections.map((section) => (
                 <tr key={section.id} className="transition hover:bg-[#F9FAFB]">
-                  <td className="px-4 py-4"><input type="checkbox" checked={selectedIds.includes(section.id)} onChange={() => toggleSelection(section.id)} className="h-4 w-4 rounded border-[#D1D5DB]" /></td>
-                  <td className="px-4 py-4">{getSectionSummary(section)}</td>
-                  <td className="px-4 py-4">{getInstructorBadge(section)}</td>
-                  <td className="px-4 py-4 text-[#374151]">{getStudentCountLabel(section)}</td>
-                  <td className="px-4 py-4 text-[#374151]">{getActivityCount(section)}</td>
-                  <td className="px-4 py-4 text-[#374151]">{getAssignedCabinet(section)}</td>
-                  <td className="px-4 py-4">{getStatusBadge(section.status, section)}</td>
-                  <td className="px-4 py-4">
+                  <td className="border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3"><input type="checkbox" checked={selectedIds.includes(section.id)} onChange={() => toggleSelection(section.id)} className="h-4 w-4 rounded border-[#D1D5DB]" /></td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getSectionSummary(section)}</td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getInstructorBadge(section)}</td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getStudentCountLabel(section)}</td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getActivityCount(section)}</td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getAssignedCabinet(section)}</td>
+                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getStatusBadge(section.status, section)}</td>
+                  <td className="px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">
                     <div className="relative" ref={openActionId === section.id ? actionMenuRef : null}>
                       <button type="button" onClick={() => setOpenActionId((current) => (current === section.id ? null : section.id))} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB]" aria-label="Open section actions">
                         <MoreHorizontal size={16} />

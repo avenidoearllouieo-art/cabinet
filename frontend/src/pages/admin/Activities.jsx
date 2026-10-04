@@ -5,6 +5,7 @@ import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
 import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import Modal from '../../components/Modal.jsx'
 import ActivityActionsMenu from '../../components/activities/ActivityActionsMenu.jsx'
 import ActivityDetailDrawer from '../../components/activities/ActivityDetailDrawer.jsx'
@@ -344,24 +345,8 @@ export default function Activities() {
   }
 
   const getStatusBadge = (row) => {
-    const status = String(getActivityStatus(row)).trim().toLowerCase()
-    const badgeMap = {
-      active: { label: 'Active', color: 'bg-[#ECFDF3] text-[#16A34A]' },
-      published: { label: 'Active', color: 'bg-[#ECFDF3] text-[#16A34A]' },
-      scheduled: { label: 'Scheduled', color: 'bg-[#FEF3C7] text-[#92400E]' },
-      draft: { label: 'Draft', color: 'bg-[#DBEAFE] text-[#1D4ED8]' },
-      archived: { label: 'Archived', color: 'bg-[#F3E8FF] text-[#6D28D9]' },
-      closed: { label: 'Closed', color: 'bg-[#FEE2E2] text-[#B91C1C]' },
-      expired: { label: 'Closed', color: 'bg-[#FEE2E2] text-[#B91C1C]' },
-      completed: { label: 'Closed', color: 'bg-[#FEE2E2] text-[#B91C1C]' },
-    }
-
-    const badge = badgeMap[status] || badgeMap.active
-    return (
-      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${badge.color}`}>
-        {badge.label}
-      </span>
-    )
+    const status = getActivityStatus(row)
+    return <StatusBadge status={status} label={status} />
   }
 
   const getSubmissionCount = (row) => {
@@ -377,43 +362,11 @@ export default function Activities() {
     return getSubmissionCount(row)
   }
 
-  const getAssignedStudentCount = (row) => {
-    if (typeof row.assigned_student_count === 'number') return row.assigned_student_count
-    if (typeof row.section_student_count === 'number') return row.section_student_count
-    if (row.section && typeof row.section.student_count === 'number') return row.section.student_count
-    return 0
-  }
-
-  const getSubmissionCompletionPercent = (row) => {
-    const assigned = getAssignedStudentCount(row)
-    if (!assigned) return 0
-    const submitted = getSubmittedStudentCount(row)
-    return Math.min(100, Math.max(0, Math.round((submitted / assigned) * 100)))
-  }
-
-  const renderSubmissionProgress = (row) => {
-    const submitted = getSubmittedStudentCount(row)
-    const assigned = getAssignedStudentCount(row)
-    const percent = getSubmissionCompletionPercent(row)
-
-    return (
-      <div className="min-w-[180px] space-y-2">
-        <div className="flex items-center justify-between text-sm font-semibold text-slate-900">
-          <span>{submitted} / {assigned || '—'}</span>
-          <span className="text-xs font-medium text-slate-500">{percent}%</span>
-        </div>
-        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-          <div className="h-full rounded-full bg-[#2563EB] transition-all duration-200" style={{ width: `${percent}%` }} />
-        </div>
-      </div>
-    )
-  }
-
   const columns = [
     {
       key: 'activity',
       label: 'Activity',
-      className: 'min-w-[260px] max-w-[320px]',
+      className: 'w-[20%]',
       render: (_value, row) => (
         <div className="flex flex-col">
           <span className="font-semibold text-[#111827]">{row.title || '—'}</span>
@@ -424,37 +377,37 @@ export default function Activities() {
     {
       key: 'section',
       label: 'Section',
-      className: 'min-w-[180px]',
+      className: 'w-[11%]',
       render: (_value, row) => row.section_name || row.section || '—',
     },
     {
-      key: 'instructor',
-      label: 'Instructor',
-      className: 'min-w-[180px]',
+      key: 'created_by',
+      label: 'Created By',
+      className: 'w-[14%]',
       render: (_value, row) => row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—',
     },
     {
       key: 'due_date',
       label: 'Due Date',
-      className: 'min-w-[160px]',
+      className: 'w-[14%]',
       render: (value) => formatDate(value),
     },
     {
       key: 'status',
       label: 'Status',
-      className: 'min-w-[140px]',
+      className: 'w-[11%]',
       render: (_value, row) => getStatusBadge(row),
     },
     {
-      key: 'submission_progress',
-      label: 'Submission Progress',
-      className: 'min-w-[220px]',
-      render: (_value, row) => renderSubmissionProgress(row),
+      key: 'submissions',
+      label: 'Submissions',
+      className: 'w-[11%]',
+      render: (_value, row) => getSubmittedStudentCount(row),
     },
     {
       key: 'actions',
-      label: 'Actions',
-      className: 'min-w-[140px]',
+      label: 'Action',
+      className: 'w-[13%]',
       render: (_value, row) => <ActivityActionsMenu activity={row} onAction={handleRowAction} />,
     },
   ]
@@ -525,7 +478,22 @@ export default function Activities() {
         {loading ? (
           <TableSkeleton />
         ) : (
-          <DataTable columns={columns} data={filteredActivities} showActions={false} emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'} />
+          <DataTable
+            columns={columns}
+            data={filteredActivities}
+            showActions={false}
+            expandable
+            variant="admin"
+            renderExpandedRow={(row) => (
+              <dl className="grid gap-2 sm:grid-cols-2">
+                <div><dt className="font-semibold">Activity Type</dt><dd>{getActivityType(row)}</dd></div>
+                <div><dt className="font-semibold">Assigned Instructor</dt><dd>{row.assigned_instructor_name || row.instructor_name || '—'}</dd></div>
+                <div><dt className="font-semibold">Cabinet Station</dt><dd>{row.cabinet_station || '—'}</dd></div>
+                <div className="sm:col-span-2"><dt className="font-semibold">Description</dt><dd className="whitespace-pre-wrap">{row.description || '—'}</dd></div>
+              </dl>
+            )}
+            emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'}
+          />
         )}
       </div>
 

@@ -9,12 +9,11 @@ export default function StatCard({
   bgColor = 'bg-blue-50',
   textColor = 'text-blue-900',
 }) {
-  const trendColor =
-    trend?.direction === 'up'
-      ? 'text-emerald-600'
-      : trend?.direction === 'down'
-        ? 'text-rose-600'
-        : 'text-slate-500'
+  const trendColor = trend?.direction === 'up'
+    ? 'text-emerald-700'
+    : trend?.direction === 'down'
+      ? 'text-rose-700'
+      : 'text-slate-500'
 
   return (
     <SummaryCard

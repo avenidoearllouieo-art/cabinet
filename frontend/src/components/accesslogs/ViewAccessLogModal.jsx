@@ -53,11 +53,19 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
     }
   }
 
+  const formatDuration = (seconds) => {
+    if (seconds == null) return '—'
+    if (seconds < 60) return `${seconds}s`
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes} min`
+  }
+
   const statusColor = (status) => {
     if (!status) return 'text-slate-600'
     const lower = String(status).toLowerCase()
     if (lower === 'success') return 'text-green-600'
-    if (lower === 'failed') return 'text-red-600'
+    if (lower) return 'text-red-600'
     return 'text-slate-600'
   }
 
@@ -67,7 +75,7 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-semibold text-[#0F172A]">Access Log Details</h2>
-            <p className="mt-1 text-sm text-[#6B7280]">View the complete login session information.</p>
+            <p className="mt-1 text-sm text-[#6B7280]">Event #{displayLog.id || resolvedLogId}</p>
           </div>
           <button type="button" onClick={onClose} className="text-xl font-bold text-[#475569] transition hover:text-[#0F172A]" aria-label="Close modal">
             ×
@@ -81,76 +89,19 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
         {loading ? (
           <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading...</div>
         ) : (
-          <div className="space-y-6">
-            {/* User Information */}
-            <div>
-              <h3 className="mb-3 text-sm font-semibold text-[#111827]">User Information</h3>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Username</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.username || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Student ID</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.student_id || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Email</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.email || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Role</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.role || '—'}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Session Information */}
-            <div>
-              <h3 className="mb-3 text-sm font-semibold text-[#111827]">Session Information</h3>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Login Time</p>
-                  <p className="mt-1 text-sm text-slate-900">{formatDate(displayLog.login_time)}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Logout Time</p>
-                  <p className="mt-1 text-sm text-slate-900">{formatDate(displayLog.logout_time) || displayLog.logout_time === null ? 'Active' : '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Status</p>
-                  <p className={`mt-1 text-sm font-medium ${statusColor(displayLog.status)}`}>{displayLog.status || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Duration</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.duration || '—'}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Device & Network Information */}
-            <div>
-              <h3 className="mb-3 text-sm font-semibold text-[#111827]">Device & Network Information</h3>
-              <div className="grid grid-cols-1 gap-3">
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">IP Address</p>
-                  <p className="mt-1 text-sm text-slate-900 font-mono">{displayLog.ip_address || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Device</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.device || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Browser</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.browser || '—'}</p>
-                </div>
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-                  <p className="text-xs font-medium text-slate-600">Operating System</p>
-                  <p className="mt-1 text-sm text-slate-900">{displayLog.operating_system || '—'}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Event ID</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.id || resolvedLogId}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">User</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.student_name || displayLog.username || displayLog.user_name || (displayLog.user ? `User ${displayLog.user}` : 'Unregistered card')}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Role</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.role || '—'}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Station</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.station || '—'}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Access Type</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.access_type || '—'}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Access Method</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.access_method || '—'}</dd></div>
+            {displayLog.nfc_uid && <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">NFC UID</dt><dd className="mt-1 break-all font-mono text-sm text-slate-900">{displayLog.nfc_uid}</dd></div>}
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Result</dt><dd className={`mt-1 text-sm font-medium ${statusColor(displayLog.status)}`}>{displayLog.status || '—'}</dd></div>
+            {String(displayLog.status || '').toLowerCase() !== 'success' && displayLog.reason && <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:col-span-2"><dt className="text-xs font-medium text-slate-600">Failure Reason</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.reason}</dd></div>}
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Date and Time</dt><dd className="mt-1 text-sm text-slate-900">{formatDate(displayLog.access_time)}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Duration</dt><dd className="mt-1 text-sm text-slate-900">{formatDuration(displayLog.duration_seconds)}</dd></div>
+          </dl>
         )}
 
         <div className="mt-6 flex items-center justify-end gap-3">

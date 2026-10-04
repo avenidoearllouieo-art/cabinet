@@ -1,14 +1,14 @@
 export function isSessionMember(session, participant) {
   if (!session || !participant) return false
 
-  const sessionParticipants = session.participants || []
+  const openedBy = session.opened_by || []
   const sessionStudentIds = new Set([
-    ...(session.participantIds || []),
-    ...sessionParticipants.map((member) => member.studentId),
+    ...(session.openedByStudentIds || []),
+    ...openedBy.map((member) => member.studentId),
   ])
   const sessionUids = new Set([
-    ...(session.participantUids || []),
-    ...sessionParticipants.map((member) => member.uid),
+    ...(session.openedByUids || []),
+    ...openedBy.map((member) => member.uid),
   ])
 
   return Boolean(

@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
+import CabinetStationStatus from '../../components/CabinetStationStatus'
 
 export default function StudentDashboard() {
   const [loading, setLoading] = useState(true)
@@ -108,6 +109,7 @@ export default function StudentDashboard() {
         title="Student Dashboard"
         description="Track your activities, submissions, and cabinet access activity"
       />
+      <CabinetStationStatus detailLevel="student" />
 
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">
@@ -180,15 +182,15 @@ export default function StudentDashboard() {
                   </div>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
+                <div className="overflow-x-hidden">
+                  <table className="w-full table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
                     <thead>
-                      <tr className="border-b border-slate-200">
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-700">Activity</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-700">Subject / Section</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-700">Due Date</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-700">Status</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-700">Remaining</th>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="w-[28%] border-r border-slate-200 px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Activity</th>
+                        <th className="w-[20%] border-r border-slate-200 px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Subject / Section</th>
+                        <th className="w-[22%] border-r border-slate-200 px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Due Date</th>
+                        <th className="w-[14%] border-r border-slate-200 px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Status</th>
+                        <th className="w-[16%] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Remaining</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -196,12 +198,12 @@ export default function StudentDashboard() {
                         .slice()
                         .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0))
                         .map((activity) => (
-                        <tr key={activity.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-6 py-4 text-sm text-slate-900">{activity.title}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{activity.section_name || activity.subject || '—'}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{formatDate(activity.due_date)} {dueBadge(activity.due_date)}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{activity.status || 'Active'}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{timeRemaining(activity.due_date)}</td>
+                        <tr key={activity.id} className="border-b border-slate-100 even:bg-slate-50 hover:bg-slate-100">
+                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-900 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.title}</td>
+                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.section_name || activity.subject || '—'}</td>
+                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{formatDate(activity.due_date)} {dueBadge(activity.due_date)}</td>
+                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.status || 'Active'}</td>
+                          <td className="break-words px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{timeRemaining(activity.due_date)}</td>
                         </tr>
                       ))}
                     </tbody>

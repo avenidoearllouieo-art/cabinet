@@ -146,6 +146,13 @@ export default function Header() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => { setProfileOpen(false); navigate('/student/profile#my-instructor') }}
+                      className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      My Instructor
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => { setProfileOpen(false); navigate('/student/profile/change-password') }}
                       className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50"
                     >

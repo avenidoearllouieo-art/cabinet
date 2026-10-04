@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Camera, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, BookOpen, Camera, Mail, Phone, Trash2, UploadCloud } from 'lucide-react'
 import api from '../../services/api.js'
 import Modal from '../../components/Modal.jsx'
 import PageHeader from '../../components/PageHeader'
+import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
+import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
+import { controlClass } from '../../components/forms/formStyles.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
+const emptyProfileForm = { first_name: '', last_name: '', instructor_id: '', username: '', email: '', contact_number: '' }
 
 const publishProfileUpdate = (nextProfile) => {
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -16,7 +20,8 @@ const publishProfileUpdate = (nextProfile) => {
 export default function InstructorProfile() {
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
-  const [form, setForm] = useState({ first_name: '', last_name: '', instructor_id: '', username: '', email: '', contact_number: '' })
+  const [form, setForm] = useState(emptyProfileForm)
+  const [initialForm, setInitialForm] = useState(emptyProfileForm)
   const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -35,14 +40,16 @@ export default function InstructorProfile() {
         const response = await api.get('/users/profile/')
         setProfile(response.data)
         publishProfileUpdate(response.data)
-        setForm({
+        const nextForm = {
           first_name: response.data.first_name || '',
           last_name: response.data.last_name || '',
           instructor_id: response.data.instructor_id || '',
           username: response.data.username || '',
           email: response.data.email || '',
           contact_number: response.data.contact_number || '',
-        })
+        }
+        setForm(nextForm)
+        setInitialForm(nextForm)
         setError('')
       } catch (err) {
         console.error('Unable to load profile', err)
@@ -124,14 +131,16 @@ export default function InstructorProfile() {
       const response = await api.patch('/users/update_profile/', trimmedForm)
       setProfile(response.data)
       publishProfileUpdate(response.data)
-      setForm({
+      const nextForm = {
         first_name: response.data.first_name || '',
         last_name: response.data.last_name || '',
         instructor_id: response.data.instructor_id || '',
         username: response.data.username || '',
         email: response.data.email || '',
         contact_number: response.data.contact_number || '',
-      })
+      }
+      setForm(nextForm)
+      setInitialForm(nextForm)
       setIsEditing(false)
       setToastMessage('Profile details updated successfully.')
       window.setTimeout(() => setToastMessage(''), 4000)
@@ -144,16 +153,10 @@ export default function InstructorProfile() {
   }
 
   const handleCancelEdit = () => {
-    setForm({
-      first_name: profile?.first_name || '',
-      last_name: profile?.last_name || '',
-      instructor_id: profile?.instructor_id || '',
-      username: profile?.username || '',
-      email: profile?.email || '',
-      contact_number: profile?.contact_number || '',
-    })
+    setForm(initialForm)
     setSelectedImage(null)
     setImageError('')
+    setIsPreviewOpen(false)
     if (previewSrc) {
       URL.revokeObjectURL(previewSrc)
       setPreviewSrc(null)
@@ -216,215 +219,155 @@ export default function InstructorProfile() {
   }
 
   const assignedSectionList = profile?.assigned_sections || []
+  const profileDirty = Object.keys(form).some((field) => form[field] !== initialForm[field])
+  const fullName = `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || profile?.username || 'Instructor'
+  const initials = fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
 
   if (loading) {
-    return (
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-700 shadow-sm">
-        Loading profile...
-      </div>
-    )
+    return <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600 shadow-sm">Loading profile…</div>
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <PageHeader
-          title="My Profile"
-          description="Review and update your instructor profile details."
-        />
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-        >
-          <ArrowLeft size={16} />
-          Back
-        </button>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="My Profile"
+        description="Manage your instructor account and contact information."
+        action={<button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] transition hover:bg-slate-50"><ArrowLeft size={16} />Back</button>}
+      />
 
-      {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
+      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+      {toastMessage && <div role="status" className="fixed bottom-6 right-6 z-50 rounded-xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">{toastMessage}</div>}
+
+      <ProfileSummaryCard
+        imageUrl={profileImageUrl}
+        fullName={fullName}
+        initials={initials || 'I'}
+        role={profile?.role === 'instructor' ? 'Instructor' : profile?.role || 'Not recorded'}
+        identity={[
+          { label: 'Username', value: profile?.username },
+          { label: 'Employee ID', value: profile?.instructor_id },
+        ]}
+        facts={[
+          { icon: Mail, label: 'Email Address', value: profile?.email },
+          { icon: Phone, label: 'Contact Number', value: profile?.contact_number },
+        ]}
+        action={<button type="button" onClick={() => { setError(''); setImageError(''); setIsEditing(true) }} className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-[#0B2A4A]">Edit Profile</button>}
+      />
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#eef4fa] text-[#0B2A4A]"><BookOpen size={18} /></div>
+          <div>
+            <h2 className="text-base font-semibold text-[#0B2A4A]">Assigned Sections</h2>
+            <p className="text-sm text-slate-500">{assignedSectionList.length} section{assignedSectionList.length === 1 ? '' : 's'}</p>
+          </div>
         </div>
-      )}
+        {assignedSectionList.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">No assigned sections yet.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {assignedSectionList.map((section) => (
+              <article key={section.section_id || section.id || section.section_name} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="font-semibold text-slate-900">{section.section_name || 'Section not recorded'}</h3>
+                {section.subject_code && <p className="mt-0.5 text-xs font-medium text-slate-500">{section.subject_code}</p>}
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div><dt className="text-xs text-slate-500">Program</dt><dd className="mt-1 font-medium text-slate-700">{section.program || 'Not recorded'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Year level</dt><dd className="mt-1 font-medium text-slate-700">{section.year_level || 'Not recorded'}</dd></div>
+                  {section.academic_year && <div className="col-span-2"><dt className="text-xs text-slate-500">Academic year</dt><dd className="mt-1 font-medium text-slate-700">{section.academic_year}</dd></div>}
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
-      {toastMessage && (
-        <div role="status" className="fixed bottom-6 right-6 z-50 rounded-xl bg-green-100 px-4 py-3 text-sm font-medium text-green-800 shadow-lg">
-          {toastMessage}
+      <section className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div>
+          <h2 className="text-base font-semibold text-[#0B2A4A]">Security</h2>
+          <p className="mt-1 text-sm text-slate-500">Update your account password through the secure password flow.</p>
         </div>
-      )}
+        <button type="button" onClick={() => navigate('/instructor/profile/change-password')} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] transition hover:border-[#F5B700] hover:bg-slate-50">Change Password</button>
+      </section>
 
-      <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-        <div className="rounded-[20px] border border-[#E5E7EB] bg-white p-5 shadow-sm sm:p-6">
-          <form onSubmit={handleSaveProfile} className="flex flex-col gap-5">
-            <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Profile Information</h2>
-                <p className="text-sm text-slate-500">Manage your instructor credentials and profile picture.</p>
+      <FormDialog
+        isOpen={isEditing}
+        title="Edit Profile"
+        description="Update your account details and profile picture."
+        onClose={handleCancelEdit}
+        onSubmit={handleSaveProfile}
+        dirty={profileDirty || Boolean(selectedImage)}
+        busy={saving}
+        actions={<FormActions onCancel={handleCancelEdit} submitLabel="Save Changes" busy={saving} dirty={profileDirty || Boolean(selectedImage)} />}
+      >
+        <div className="space-y-4">
+          <InlineFeedback>{error}</InlineFeedback>
+          <FormSection icon={BadgeCheck} title="Account & contact" description="Keep your instructor identity and contact details up to date.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="First name" required>
+                {({ id, invalid }) => (
+                  <input id={id} value={form.first_name} onChange={handleInputChange('first_name')} className={controlClass(invalid)} autoComplete="given-name" />
+                )}
+              </FormField>
+              <FormField label="Last name" required>
+                {({ id, invalid }) => (
+                  <input id={id} value={form.last_name} onChange={handleInputChange('last_name')} className={controlClass(invalid)} autoComplete="family-name" />
+                )}
+              </FormField>
+              <FormField label="Employee ID" required>
+                {({ id, invalid }) => (
+                  <input id={id} value={form.instructor_id} onChange={handleInputChange('instructor_id')} className={controlClass(invalid)} />
+                )}
+              </FormField>
+              <FormField label="Username" required>
+                {({ id, invalid }) => (
+                  <input id={id} value={form.username} onChange={handleInputChange('username')} className={controlClass(invalid)} autoComplete="username" />
+                )}
+              </FormField>
+              <FormField label="Email Address" required>
+                {({ id, invalid }) => (
+                  <input id={id} type="email" value={form.email} onChange={handleInputChange('email')} className={controlClass(invalid)} autoComplete="email" />
+                )}
+              </FormField>
+              <FormField label="Contact Number" optional>
+                {({ id, invalid }) => (
+                  <input id={id} type="tel" value={form.contact_number} onChange={handleInputChange('contact_number')} className={controlClass(invalid)} autoComplete="tel" />
+                )}
+              </FormField>
+            </div>
+          </FormSection>
+
+          <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                {profileImageUrl ? <img src={profileImageUrl} alt={`${fullName} profile preview`} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-2xl font-bold text-[#0B2A4A]">{initials || 'I'}</div>}
               </div>
-              {!isEditing && (
-                <button type="button" onClick={() => setIsEditing(true)} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900">
-                  Edit Profile
+              <div className="flex flex-wrap gap-2">
+                <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">
+                  <Camera size={16} />Choose Photo
+                  <input type="file" accept="image/jpeg,image/jpg,image/png" className="sr-only" onChange={handleImageSelect} />
+                </label>
+                <button type="button" onClick={handleUploadImage} disabled={imageSaving || !selectedImage} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                  <UploadCloud size={16} />{imageSaving ? 'Uploading…' : 'Upload'}
                 </button>
-              )}
-            </div>
-            <div className="grid gap-5 lg:grid-cols-[220px_1fr]">
-              <div className="rounded-[20px] border border-slate-200 p-4 text-center sm:p-5">
-                <div className="relative mx-auto mb-5 h-28 w-28 overflow-hidden rounded-full bg-slate-100">
-                  {profileImageUrl ? (
-                    <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-slate-200 text-3xl font-semibold text-slate-700">
-                      {profile?.first_name?.charAt(0)?.toUpperCase() || profile?.username?.charAt(0)?.toUpperCase() || 'I'}
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-3 text-sm text-slate-600">
-                  <p className="font-semibold text-slate-900">Profile Picture</p>
-                  <p>Upload JPG, JPEG, or PNG. Max 5 MB.</p>
-                  {isEditing && (
-                    <>
-                      <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus-within:ring-2 focus-within:ring-blue-900">
-                        <Camera size={16} />
-                        Choose Photo
-                        <input type="file" accept="image/jpeg,image/jpg,image/png" className="hidden" onChange={handleImageSelect} />
-                      </label>
-                      {selectedImage && <p className="break-all rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">{selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
-                      <button type="button" onClick={handleUploadImage} disabled={imageSaving || !selectedImage} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100 disabled:opacity-60">
-                        <UploadCloud size={16} />
-                        {imageSaving ? 'Uploading...' : 'Upload'}
-                      </button>
-                      {(profile?.profile_image_url || profile?.profile_image) && (
-                        <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60">
-                          <Trash2 size={16} />
-                          {imageSaving ? 'Removing...' : 'Remove'}
-                        </button>
-                      )}
-                    </>
-                  )}
-                  <button type="button" onClick={() => setIsPreviewOpen(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-900">
-                    <Camera size={16} />
-                    Preview
-                  </button>
-                </div>
-                {imageError && <p className="mt-3 text-sm text-red-600">{imageError}</p>}
-              </div>
-
-              <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Full Name</label>
-                    {isEditing ? <input value={`${form.first_name} ${form.last_name}`.trim()} onChange={(event) => { const [firstName = '', ...lastNames] = event.target.value.split(' '); setForm((prev) => ({ ...prev, first_name: firstName, last_name: lastNames.join(' ') })) }} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile ? `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : '—'}</div>}
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Employee ID</label>
-                    {isEditing ? <input value={form.instructor_id} onChange={handleInputChange('instructor_id')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.instructor_id || '—'}</div>}
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Username</label>
-                    {isEditing ? <input value={form.username} onChange={handleInputChange('username')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.username || '—'}</div>}
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Role</label>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">
-                      {profile?.role === 'instructor' ? 'Instructor' : profile?.role || '—'}
-                    </div>
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Email Address</label>
-                    {isEditing ? <input type="email" value={form.email} onChange={handleInputChange('email')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.email || '—'}</div>}
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Contact Number</label>
-                    {isEditing ? <input value={form.contact_number} onChange={handleInputChange('contact_number')} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-transparent focus:ring-2 focus:ring-blue-900" /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900">{profile?.contact_number || '—'}</div>}
-                  </div>
-                </div>
+                {(profile?.profile_image_url || profile?.profile_image) && <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} />Remove</button>}
+                <button type="button" onClick={() => setIsPreviewOpen(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50"><Camera size={16} />Preview</button>
               </div>
             </div>
-            {isEditing && <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end"><button type="button" onClick={handleCancelEdit} className="min-h-11 rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button><button type="submit" disabled={saving} className="min-h-11 rounded-xl bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] hover:bg-amber-400 disabled:opacity-60">{saving ? 'Saving...' : 'Save Changes'}</button></div>}
-          </form>
+            {selectedImage && <p className="mt-3 break-all text-xs text-slate-500">Selected: {selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
+            {imageError && <InlineFeedback className="mt-3">{imageError}</InlineFeedback>}
+          </FormSection>
         </div>
-
-        <div className="space-y-6">
-          <div className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">About</h3>
-            <div className="mt-5 space-y-4 text-sm text-slate-700">
-              <div>
-                <p className="text-slate-500">Name</p>
-                <p className="mt-1 text-slate-900">{profile ? `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : '—'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500">Username</p>
-                <p className="mt-1 text-slate-900">{profile?.username || '—'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500">Employee ID</p>
-                <p className="mt-1 text-slate-900">{profile?.instructor_id || '—'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500">Role</p>
-                <p className="mt-1 text-slate-900">{profile?.role === 'instructor' ? 'Instructor' : profile?.role || '—'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500">Contact Number</p>
-                <p className="mt-1 text-slate-900">{profile?.contact_number || '—'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500">Email</p>
-                <p className="mt-1 text-slate-900">{profile?.email || '—'}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Assigned Sections</h3>
-            {assignedSectionList.length === 0 ? (
-              <p className="mt-4 text-sm text-slate-500">No assigned sections yet.</p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {assignedSectionList.map((section) => (
-                  <div key={section.section_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                    <p className="font-semibold text-slate-900">{section.section_name}</p>
-                    <p>{section.academic_year} · {section.year_level}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Security</h3>
-            <p className="mt-3 text-sm text-slate-600">Update your password using the secure account password flow.</p>
-            <button type="button" onClick={() => navigate('/instructor/profile/change-password')} className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900">
-              Change Password
-            </button>
-          </div>
-        </div>
-      </div>
+      </FormDialog>
 
       <Modal isOpen={isPreviewOpen} onClose={() => setIsPreviewOpen(false)} title="Profile Picture Preview">
         <div className="flex flex-col items-center gap-4">
-          <div className="h-[280px] w-full overflow-hidden rounded-[20px] bg-slate-100">
-            {profileImageUrl ? (
-              <img src={profileImageUrl} alt="Preview" className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>
-            )}
+          <div className="h-[280px] w-full overflow-hidden rounded-xl bg-slate-100">
+            {profileImageUrl ? <img src={profileImageUrl} alt="Profile preview" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>}
           </div>
-          <button
-            type="button"
-            onClick={() => setIsPreviewOpen(false)}
-            className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Close Preview
-          </button>
+          <button type="button" onClick={() => setIsPreviewOpen(false)} className="min-h-11 rounded-lg bg-[#0B2A4A] px-5 py-2 text-sm font-semibold text-white hover:bg-[#153c63]">Close Preview</button>
         </div>
       </Modal>
     </div>
   )
 }
+

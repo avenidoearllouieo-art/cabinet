@@ -1,8 +1,8 @@
 from django.db import models
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from datetime import timedelta
-from rest_framework import viewsets, status, serializers
+from rest_framework import mixins, viewsets, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import (
@@ -23,16 +23,18 @@ from django.conf import settings
 from urllib.parse import quote
 import hashlib
 
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
 from .models import PasswordResetRequest, NFCEnrollmentSession
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
+    SectionInstructorSerializer,
     UserSerializer,
     ActivitySerializer,
     SubmissionSerializer,
     AccessLogSerializer,
+    CabinetSessionSerializer,
     CabinetEventSerializer,
     NotificationSerializer,
     CustomTokenObtainPairSerializer,
@@ -66,7 +68,7 @@ class SectionViewSet(viewsets.ModelViewSet):
     ordering = ['section_name']
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'overview']:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminRole()]
 
@@ -85,12 +87,78 @@ class SectionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        queryset = Section.objects.annotate(actual_student_count=models.Count('users', distinct=True))
+        queryset = Section.objects.annotate(
+            actual_student_count=models.Count(
+                'users',
+                filter=models.Q(users__role=User.RoleChoices.STUDENT),
+                distinct=True,
+            )
+        )
         if user.role == 'admin':
             return queryset
         if user.role == 'instructor':
-            return queryset.filter(instructor=user)
+            return queryset.filter(models.Q(instructor=user) | models.Q(assigned_instructors=user)).distinct()
         return Section.objects.none()
+
+    @action(detail=True, methods=['get'], url_path='overview')
+    def overview(self, request, pk=None):
+        section = self.get_object()
+        students = User.objects.filter(
+            role=User.RoleChoices.STUDENT,
+            section=section,
+        ).order_by('last_name', 'first_name')
+        activities = Activity.objects.filter(
+            models.Q(section=section) | models.Q(assigned_sections=section)
+        ).select_related('created_by', 'section').distinct().order_by('-updated_at', '-created_at')
+        submissions = Submission.objects.filter(
+            student__role=User.RoleChoices.STUDENT,
+            student__section=section,
+            activity__in=activities,
+        ).select_related('student', 'activity').order_by('-submitted_at')
+        access_logs = AccessLog.objects.filter(
+            user__role=User.RoleChoices.STUDENT,
+            user__section=section,
+        ).select_related('user', 'cabinet_session').order_by('-access_time')
+
+        student_count = students.count()
+        activity_count = activities.count()
+        submitted_count = submissions.values('student_id', 'activity_id').distinct().count()
+        expected_count = student_count * activity_count
+        late_count = submissions.filter(submitted_at__gt=models.F('activity__due_date')).values(
+            'student_id', 'activity_id'
+        ).distinct().count()
+
+        assigned_stations = list(
+            activities.exclude(cabinet_station='').values_list('cabinet_station', flat=True).distinct()
+        )
+        cabinet_stations = []
+        for station in assigned_stations:
+            current_session = CabinetSession.objects.filter(
+                station=station,
+                status=CabinetSession.StatusChoices.OPEN,
+            ).order_by('-opened_at').first()
+            cabinet_stations.append({
+                'station': station,
+                'status': 'Occupied' if current_session else 'Available',
+            })
+
+        context = {'request': request}
+        return Response({
+            'section': self.get_serializer(section).data,
+            'counts': {
+                'students': student_count,
+                'activities': activity_count,
+                'submitted': submitted_count,
+                'expected': expected_count,
+                'missing': max(0, expected_count - submitted_count),
+                'late': late_count,
+                'pending_review': submissions.filter(score__isnull=True).count(),
+            },
+            'students': UserSerializer(students[:5], many=True, context=context).data,
+            'activities': ActivitySerializer(activities[:4], many=True, context=context).data,
+            'access_logs': AccessLogSerializer(access_logs[:5], many=True, context=context).data,
+            'cabinet_stations': cabinet_stations,
+        })
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -103,14 +171,14 @@ class UserViewSet(viewsets.ModelViewSet):
     authentication_classes = [JWTAuthentication]
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'profile', 'update', 'partial_update', 'update_profile', 'change_password', 'upload_profile_image', 'remove_profile_image']:
+        if self.action in ['list', 'retrieve', 'profile', 'access_logs', 'update', 'partial_update', 'update_profile', 'change_password', 'upload_profile_image', 'remove_profile_image']:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminRole()]
 
     def _instructor_student_filter(self):
         user = self.request.user
         filters = Q(role='student')
-        instructor_filters = Q(section__instructor=user)
+        instructor_filters = Q(section__instructor=user) | Q(section__assigned_instructors=user)
         return User.objects.filter(filters & instructor_filters).distinct()
 
     def get_queryset(self):
@@ -118,7 +186,9 @@ class UserViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             return User.objects.all()
         if user.role == 'instructor':
-            return self._instructor_student_filter()
+            queryset = self._instructor_student_filter()
+            section_id = self.request.query_params.get('section')
+            return queryset.filter(section_id=section_id) if section_id else queryset
         if user.role == 'student':
             return User.objects.filter(pk=user.pk)
         return User.objects.none()
@@ -126,7 +196,93 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def profile(self, request):
         serializer = self.get_serializer(request.user, context={'request': request})
-        return Response(serializer.data)
+        profile_data = serializer.data
+        if request.user.role == User.RoleChoices.STUDENT:
+            section = request.user.section
+            instructors = []
+            if section:
+                primary = section.instructor
+                if primary and primary.role == User.RoleChoices.INSTRUCTOR:
+                    instructors.append(primary)
+                assigned = section.assigned_instructors.filter(role=User.RoleChoices.INSTRUCTOR).exclude(
+                    pk__in=[instructor.pk for instructor in instructors]
+                ).order_by('last_name', 'first_name', 'pk')
+                instructors.extend(assigned)
+            profile_data['section_instructors'] = SectionInstructorSerializer(
+                instructors,
+                many=True,
+                context={'request': request},
+            ).data
+        return Response(profile_data)
+
+    def _profile_activities(self, profile_user):
+        activities = Activity.objects.select_related('created_by', 'section')
+        if profile_user.role == User.RoleChoices.STUDENT:
+            return activities.filter(
+                Q(section__users=profile_user) | Q(assigned_sections__users=profile_user)
+            ).distinct().order_by('-created_at', '-pk')
+        if profile_user.role == User.RoleChoices.INSTRUCTOR:
+            return activities.filter(
+                Q(created_by=profile_user)
+                | Q(assigned_instructor=profile_user)
+                | Q(section__instructor=profile_user)
+                | Q(assigned_sections__assigned_instructors=profile_user)
+            ).distinct().order_by('-created_at', '-pk')
+        return activities.filter(created_by=profile_user).order_by('-created_at', '-pk')
+
+    @action(detail=True, methods=['get'], url_path='access-logs')
+    def access_logs(self, request, pk=None):
+        profile_user = self.get_object()
+        logs = AccessLog.objects.filter(user=profile_user).select_related('user', 'cabinet_session').order_by('-access_time', '-pk')
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        paginator.page_size_query_param = 'page_size'
+        paginator.max_page_size = 100
+        page = paginator.paginate_queryset(logs, request, view=self)
+        serializer = AccessLogSerializer(page, many=True, context={'request': request})
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='profile-details')
+    def profile_details(self, request, pk=None):
+        profile_user = self.get_object()
+        access_logs = AccessLog.objects.filter(user=profile_user).select_related('user', 'cabinet_session').order_by('-access_time', '-pk')
+        activities = self._profile_activities(profile_user)
+        submissions = Submission.objects.filter(student=profile_user).select_related('student', 'activity').order_by('-submitted_at', '-pk')
+
+        return Response({
+            'counts': {
+                'access_logs': access_logs.count(),
+                'activities': activities.count(),
+                'submissions': submissions.count(),
+            },
+            'access_logs': AccessLogSerializer(access_logs[:5], many=True, context={'request': request}).data,
+            'activities': ActivitySerializer(activities[:5], many=True, context={'request': request}).data,
+            'submissions': SubmissionSerializer(submissions[:5], many=True, context={'request': request}).data,
+        })
+
+    @action(detail=True, methods=['get'], url_path='activities')
+    def user_activities(self, request, pk=None):
+        profile_user = self.get_object()
+        activities = self._profile_activities(profile_user)
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        paginator.page_size_query_param = 'page_size'
+        paginator.max_page_size = 100
+        page = paginator.paginate_queryset(activities, request, view=self)
+        serializer = ActivitySerializer(page, many=True, context={'request': request})
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='submissions')
+    def user_submissions(self, request, pk=None):
+        profile_user = self.get_object()
+        submissions = Submission.objects.filter(student=profile_user).select_related('student', 'activity').order_by('-submitted_at', '-pk')
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        paginator.page_size_query_param = 'page_size'
+        paginator.max_page_size = 100
+        page = paginator.paginate_queryset(submissions, request, view=self)
+        serializer = SubmissionSerializer(page, many=True, context={'request': request})
+        return paginator.get_paginated_response(serializer.data)
 
     @action(detail=False, methods=['patch'])
     def update_profile(self, request):
@@ -380,6 +536,7 @@ def create_deadline_notifications_for_instructor(instructor):
 
 
 class ActivityFilter(filters.FilterSet):
+    section = filters.NumberFilter(method='filter_section')
     status = filters.CharFilter(method='filter_status')
 
     class Meta:
@@ -406,6 +563,9 @@ class ActivityFilter(filters.FilterSet):
         if value == 'overdue':
             return queryset.exclude(id__in=submission_ids).filter(due_date__lt=now)
         return queryset
+
+    def filter_section(self, queryset, name, value):
+        return queryset.filter(Q(section_id=value) | Q(assigned_sections__section_id=value)).distinct()
 
 
 class ActivityViewSet(viewsets.ModelViewSet):
@@ -436,6 +596,16 @@ class ActivityViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             return annotated_qs
         elif user.role == 'instructor':
+            section_id = self.request.query_params.get('section')
+            if section_id:
+                section = Section.objects.filter(pk=section_id).filter(
+                    models.Q(instructor=user) | models.Q(assigned_instructors=user)
+                ).first()
+                if not section:
+                    return Activity.objects.none()
+                return annotated_qs.filter(
+                    models.Q(section=section) | models.Q(assigned_sections=section)
+                ).distinct()
             return annotated_qs.filter(created_by=user)
         elif user.role == 'student':
             # Return activities assigned to the student's section. Do not
@@ -733,7 +903,11 @@ class SubmissionViewSet(viewsets.ModelViewSet):
 
     def _instructor_submission_filters(self):
         user = self.request.user
-        filters = Q(activity__created_by=user) | Q(student__section__instructor=user)
+        filters = (
+            Q(activity__created_by=user)
+            | Q(student__section__instructor=user)
+            | Q(student__section__assigned_instructors=user)
+        )
         return filters
 
     def get_queryset(self):
@@ -741,6 +915,21 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             return Submission.objects.all()
         elif user.role == 'instructor':
+            section_id = self.request.query_params.get('section') or self.request.query_params.get('student__section')
+            if section_id:
+                section = Section.objects.filter(pk=section_id).filter(
+                    Q(instructor=user) | Q(assigned_instructors=user)
+                ).first()
+                if not section:
+                    return Submission.objects.none()
+                section_activities = Activity.objects.filter(
+                    Q(section=section) | Q(assigned_sections=section)
+                )
+                return Submission.objects.filter(
+                    student__role=User.RoleChoices.STUDENT,
+                    student__section=section,
+                    activity__in=section_activities,
+                ).select_related('student', 'activity').distinct()
             return Submission.objects.filter(self._instructor_submission_filters()).select_related('student', 'activity').distinct()
         elif user.role == 'student':
             return Submission.objects.filter(student=user).select_related('activity')
@@ -753,7 +942,10 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             return True
 
         if submission.student and submission.student.section:
-            return submission.student.section.instructor == user
+            return (
+                submission.student.section.instructor == user
+                or submission.student.section.assigned_instructors.filter(pk=user.pk).exists()
+            )
 
         return False
 
@@ -979,32 +1171,240 @@ class StudentSubmissionUpload(APIView):
 
 
 class AccessLogFilter(filters.FilterSet):
-    status = filters.CharFilter(field_name='status', lookup_expr='iexact')
+    status = filters.CharFilter(method='filter_access_result')
+    action = filters.CharFilter(field_name='action', lookup_expr='iexact')
     user__section = filters.ModelChoiceFilter(field_name='user__section', queryset=Section.objects.all())
+    station = filters.CharFilter(field_name='station', lookup_expr='iexact')
+    nfc_uid = filters.CharFilter(field_name='nfc_uid', lookup_expr='icontains')
     cabinet_name = filters.CharFilter(field_name='cabinet_name', lookup_expr='iexact')
     access_time = filters.DateFromToRangeFilter(field_name='access_time')
 
     class Meta:
         model = AccessLog
-        fields = ['status', 'user__section', 'cabinet_name', 'access_time']
+        fields = ['status', 'action', 'station', 'nfc_uid', 'user__section', 'cabinet_name', 'access_time']
+
+    def filter_access_result(self, queryset, name, value):
+        result = str(value or '').strip().lower()
+        request_user = getattr(getattr(self, 'request', None), 'user', None)
+        if getattr(request_user, 'role', None) != User.RoleChoices.INSTRUCTOR:
+            return queryset.filter(status__iexact=value)
+        if result == 'success':
+            return queryset.filter(status=AccessLog.AccessStatusChoices.SUCCESS)
+        if result == 'failed':
+            return queryset.exclude(status=AccessLog.AccessStatusChoices.SUCCESS)
+        return queryset.filter(status__iexact=value)
 
 
-class AccessLogViewSet(viewsets.ModelViewSet):
+class AccessLogPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class AccessLogSearchFilter(SearchFilter):
+    def get_search_fields(self, view, request):
+        fields = super().get_search_fields(view, request)
+        if request.user.role == User.RoleChoices.INSTRUCTOR:
+            return [*fields, 'cabinet_name']
+        return fields
+
+
+class CabinetWorkflowView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+
+    def get_context(self, request):
+        context = getattr(request, 'nfc_device_context', {})
+        if context.get('mock'):
+            return context
+        if not context.get('station') or not context.get('cabinet_name'):
+            return None
+        return context
+
+    def active_session(self, station, lock=False):
+        queryset = CabinetSession.objects.filter(station=station, status=CabinetSession.StatusChoices.OPEN)
+        if lock:
+            queryset = queryset.select_for_update()
+        return queryset.order_by('-opened_at').first()
+
+    def get(self, request, *args, **kwargs):
+        context = self.get_context(request)
+        if not context:
+            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+        if context.get('mock'):
+            stations = []
+            for station in settings.TAPTRACK_CABINET_STATIONS:
+                session = self.active_session(station)
+                stations.append({
+                    'name': station,
+                    'cabinet_name': settings.TAPTRACK_CABINET_NAME,
+                    'status': 'occupied' if session else 'available',
+                    'session': CabinetSessionSerializer(session).data if session else None,
+                })
+            return Response({'mode': 'mock', 'stations': stations})
+        if not context.get('station') or not context.get('cabinet_name'):
+            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+        session = self.active_session(context['station'])
+        return Response({
+            'mode': 'hardware',
+            'station': context['station'],
+            'cabinet_name': context['cabinet_name'],
+            'session': CabinetSessionSerializer(session).data if session else None,
+        })
+
+    def post(self, request, *args, **kwargs):
+        context = self.get_context(request)
+        if not context:
+            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if context.get('mock'):
+            station = str(request.data.get('station') or '').strip()
+            if station not in settings.TAPTRACK_CABINET_STATIONS:
+                return Response({'error': 'Select a configured mock station.'}, status=status.HTTP_400_BAD_REQUEST)
+            context = {
+                **context,
+                'station': station,
+                'cabinet_name': settings.TAPTRACK_CABINET_NAME,
+            }
+        elif not context.get('station') or not context.get('cabinet_name'):
+            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+
+        command = str(request.data.get('command') or '').strip().lower()
+        with transaction.atomic():
+            session = self.active_session(context['station'], lock=True)
+            if command == 'open':
+                if session:
+                    return Response({'error': 'This station already has an active session.'}, status=status.HTTP_409_CONFLICT)
+                try:
+                    with transaction.atomic():
+                        session = CabinetSession.objects.create(
+                            station=context['station'],
+                            status=CabinetSession.StatusChoices.OPEN,
+                            workflow_state=CabinetSession.WorkflowStateChoices.OPENING,
+                        )
+                except IntegrityError:
+                    return Response({'error': 'This station already has an active session.'}, status=status.HTTP_409_CONFLICT)
+            elif command == 'finish_open':
+                if not session or session.workflow_state != CabinetSession.WorkflowStateChoices.OPENING:
+                    return Response({'error': 'There is no opening workflow to finish.'}, status=status.HTTP_409_CONFLICT)
+                if not session.opened_by.exists():
+                    return Response({'error': 'Scan at least one participant before opening.'}, status=status.HTTP_409_CONFLICT)
+                session.workflow_state = CabinetSession.WorkflowStateChoices.IDLE
+                session.save(update_fields=['workflow_state', 'updated_at'])
+            elif command == 'start_close':
+                if not session or session.workflow_state != CabinetSession.WorkflowStateChoices.IDLE:
+                    return Response({'error': 'There is no active session available to close.'}, status=status.HTTP_409_CONFLICT)
+                session.closed_by.clear()
+                session.workflow_state = CabinetSession.WorkflowStateChoices.CLOSING
+                session.save(update_fields=['workflow_state', 'updated_at'])
+            elif command == 'finish_close':
+                if not session or session.workflow_state != CabinetSession.WorkflowStateChoices.CLOSING:
+                    return Response({'error': 'There is no closing workflow to finish.'}, status=status.HTTP_409_CONFLICT)
+                if not session.closed_by.exists():
+                    return Response({'error': 'Scan at least one participant before closing.'}, status=status.HTTP_409_CONFLICT)
+                session.status = CabinetSession.StatusChoices.CLOSED
+                session.workflow_state = CabinetSession.WorkflowStateChoices.IDLE
+                session.closed_at = timezone.now()
+                session.save(update_fields=['status', 'workflow_state', 'closed_at', 'updated_at'])
+            elif command == 'cancel':
+                if not session or session.workflow_state == CabinetSession.WorkflowStateChoices.IDLE:
+                    return Response({'error': 'There is no active workflow to cancel.'}, status=status.HTTP_409_CONFLICT)
+                if session.workflow_state == CabinetSession.WorkflowStateChoices.OPENING:
+                    session.status = CabinetSession.StatusChoices.CLOSED
+                    session.closed_at = timezone.now()
+                    session.save(update_fields=['status', 'workflow_state', 'closed_at', 'updated_at'])
+                else:
+                    session.closed_by.clear()
+                    session.workflow_state = CabinetSession.WorkflowStateChoices.IDLE
+                    session.save(update_fields=['workflow_state', 'updated_at'])
+            else:
+                return Response({'error': 'Unsupported cabinet workflow command.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'mode': 'mock' if context.get('mock') else 'hardware',
+            'station': context['station'],
+            'cabinet_name': context['cabinet_name'],
+            'session': CabinetSessionSerializer(session).data,
+        })
+
+
+class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = CabinetSession.objects.all()
+    serializer_class = CabinetSessionSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status', 'station', 'opened_by', 'closed_by']
+    search_fields = ['station', 'opened_by__student_id', 'closed_by__student_id', 'notes']
+    ordering_fields = ['opened_at', 'closed_at', 'station']
+    ordering = ['-opened_at']
+    pagination_class = PageNumberPagination
+
+    @action(detail=False, methods=['get'], url_path='station-status')
+    def station_status(self, request):
+        station_names = list(dict.fromkeys(settings.TAPTRACK_CABINET_STATIONS))
+        active_sessions = CabinetSession.objects.filter(
+            status=CabinetSession.StatusChoices.OPEN,
+            station__in=station_names,
+        ).prefetch_related('opened_by').order_by('-opened_at')
+        sessions_by_station = {}
+        for session in active_sessions:
+            sessions_by_station.setdefault(session.station, session)
+
+        include_session_details = request.user.role in (User.RoleChoices.ADMIN, User.RoleChoices.INSTRUCTOR)
+        stations = []
+        for station in station_names:
+            session = sessions_by_station.get(station)
+            session_details = None
+            if session and include_session_details:
+                session_details = {
+                    'id': session.pk,
+                    'station': session.station,
+                    'participant_count': session.opened_by.count(),
+                    'opened_at': session.opened_at,
+                }
+            stations.append({
+                'station': station,
+                'status': 'OCCUPIED' if session else 'AVAILABLE',
+                'active_session': session_details,
+            })
+
+        return Response({'stations': stations})
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'admin':
+            return CabinetSession.objects.all()
+        if user.role == 'instructor':
+            return CabinetSession.objects.filter(station__isnull=False) if user.is_authenticated else CabinetSession.objects.none()
+        if user.role == 'student':
+            return CabinetSession.objects.filter(access_logs__user=user).distinct()
+        return CabinetSession.objects.none()
+
+
+class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for managing Access Logs.
     Returns latest access logs first with filtering by status, section, cabinet, and instructor-owned students.
     """
-    queryset = AccessLog.objects.all()
+    queryset = AccessLog.objects.select_related('user', 'cabinet_session').all()
     serializer_class = AccessLogSerializer
     authentication_classes = [JWTAuthentication]
-    filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, AccessLogSearchFilter, OrderingFilter]
     filterset_class = AccessLogFilter
-    search_fields = ['user__student_id', 'user__first_name', 'user__last_name', 'rfid_tag']
-    ordering_fields = ['access_time', 'user__student_id', 'user__last_name', 'cabinet_name']
+    search_fields = ['user__student_id', 'user__first_name', 'user__last_name', 'nfc_uid', 'station']
+    ordering_fields = ['access_time', 'user__student_id', 'user__last_name', 'station', 'cabinet_name']
     ordering = ['-access_time']
     pagination_class = PageNumberPagination
 
+    def paginate_queryset(self, queryset):
+        if self.request.user.role == User.RoleChoices.INSTRUCTOR:
+            self._paginator = AccessLogPagination()
+        return super().paginate_queryset(queryset)
+
     def get_permissions(self):
+        if self.action == 'filter_options':
+            return [IsInstructorRole()]
         if self.action in ['list', 'retrieve', 'stats']:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminRole()]
@@ -1012,14 +1412,23 @@ class AccessLogViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin':
-            return AccessLog.objects.all()
+            return AccessLog.objects.select_related('user', 'cabinet_session').all()
         if user.role == 'student':
-            return AccessLog.objects.filter(user=user)
+            return AccessLog.objects.filter(user=user).select_related('user', 'cabinet_session')
         if user.role == 'instructor':
             student_filters = Q(user__role=User.RoleChoices.STUDENT)
-            instructor_filters = Q(user__section__instructor=user)
-            return AccessLog.objects.filter(student_filters & instructor_filters).distinct()
+            instructor_filters = Q(user__section__instructor=user) | Q(user__section__assigned_instructors=user)
+            return AccessLog.objects.filter(student_filters & instructor_filters).select_related('user', 'cabinet_session').distinct()
         return AccessLog.objects.none()
+
+    @action(detail=False, methods=['get'], url_path='filter-options')
+    def filter_options(self, request):
+        queryset = self.get_queryset()
+        section_id = request.query_params.get('user__section')
+        if section_id:
+            queryset = queryset.filter(user__section_id=section_id)
+        cabinet_names = queryset.exclude(cabinet_name='').order_by('cabinet_name').values_list('cabinet_name', flat=True).distinct()
+        return Response({'cabinets': list(cabinet_names)})
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -1034,16 +1443,19 @@ class AccessLogViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             base_qs = AccessLog.objects.filter(access_time__date=today)
         elif user.role == 'instructor':
-            # self.get_queryset() already filters to instructor-owned students
-            base_qs = self.get_queryset().filter(access_time__date=today)
+            base_qs = self.filter_queryset(self.get_queryset()).filter(access_time__date=today)
         elif user.role == 'student':
-            base_qs = self.get_queryset().filter(access_time__date=today)
+            base_qs = self.filter_queryset(self.get_queryset()).filter(access_time__date=today)
         else:
             return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
 
         total_accesses = base_qs.count()
         successful = base_qs.filter(status=AccessLog.AccessStatusChoices.SUCCESS).count()
-        failed = base_qs.filter(status=AccessLog.AccessStatusChoices.FAILED).count()
+        failed = (
+            base_qs.exclude(status=AccessLog.AccessStatusChoices.SUCCESS).count()
+            if user.role == User.RoleChoices.INSTRUCTOR
+            else base_qs.filter(status=AccessLog.AccessStatusChoices.FAILED).count()
+        )
         active_students = base_qs.filter(user__isnull=False).values('user').distinct().count()
 
         return Response({
@@ -1096,12 +1508,17 @@ class NotificationViewSet(viewsets.ModelViewSet):
         return Response({'unread_count': count})
 
 
-class CabinetEventViewSet(viewsets.ModelViewSet):
+class CabinetEventViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
     """
     ViewSet for managing Cabinet Events.
     Returns latest events first with filtering by event type.
     """
-    queryset = CabinetEvent.objects.all()
+    queryset = CabinetEvent.objects.select_related('user', 'user__section').all()
     serializer_class = CabinetEventSerializer
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated, IsAdminRole]
@@ -1145,10 +1562,139 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 class VerifyNFCView(APIView):
-    authentication_classes = []                    # No JWT — ESP32 can't do JWT
+    authentication_classes = []
     permission_classes = [HasDeviceAPIKey]         # API key instead
 
-    def _unregistered_response(self, nfc_uid):
+    def _active_session_for_user(self, user, device_context):
+        sessions_query = CabinetSession.objects.filter(status=CabinetSession.StatusChoices.OPEN)
+        if device_context.get('station'):
+            sessions_query = sessions_query.filter(station=device_context['station'])
+        elif user:
+            sessions_query = sessions_query.filter(opened_by=user)
+        else:
+            return None
+        sessions = list(sessions_query.order_by('-opened_at')[:2])
+        return sessions[0] if len(sessions) == 1 else None
+
+    def _create_scan_log(self, nfc_uid, user, access_status, reason, device_context):
+        cabinet_session = self._active_session_for_user(user, device_context)
+        status_value = access_status
+        reason_value = reason
+        action = AccessLog.AccessActionChoices.SCAN
+        if cabinet_session and cabinet_session.workflow_state == CabinetSession.WorkflowStateChoices.OPENING:
+            if status_value == AccessLog.AccessStatusChoices.SUCCESS:
+                if user.role != User.RoleChoices.STUDENT:
+                    status_value = AccessLog.AccessStatusChoices.REJECTED
+                    reason_value = 'Only students can join a cabinet session'
+                elif cabinet_session.opened_by.filter(pk=user.pk).exists():
+                    status_value = AccessLog.AccessStatusChoices.DUPLICATE
+                    reason_value = 'Duplicate participant scan'
+                else:
+                    action = (
+                        AccessLog.AccessActionChoices.OPEN
+                        if not cabinet_session.access_logs.filter(action=AccessLog.AccessActionChoices.OPEN).exists()
+                        else AccessLog.AccessActionChoices.SCAN
+                    )
+                    cabinet_session.opened_by.add(user)
+        elif cabinet_session and cabinet_session.workflow_state == CabinetSession.WorkflowStateChoices.CLOSING:
+            action = AccessLog.AccessActionChoices.CLOSE
+            if status_value == AccessLog.AccessStatusChoices.SUCCESS:
+                if not cabinet_session.opened_by.filter(pk=user.pk).exists():
+                    status_value = AccessLog.AccessStatusChoices.REJECTED
+                    reason_value = 'Participant is not part of this cabinet session'
+                elif cabinet_session.closed_by.filter(pk=user.pk).exists():
+                    status_value = AccessLog.AccessStatusChoices.DUPLICATE
+                    reason_value = 'Duplicate participant scan'
+                else:
+                    cabinet_session.closed_by.add(user)
+                    reason_value = 'Cabinet close attendance recorded'
+        elif (
+            status_value == AccessLog.AccessStatusChoices.SUCCESS
+            and cabinet_session
+            and AccessLog.objects.filter(
+                user=user,
+                cabinet_session=cabinet_session,
+                action=AccessLog.AccessActionChoices.SCAN,
+                status=AccessLog.AccessStatusChoices.SUCCESS,
+            ).exists()
+        ):
+            status_value = AccessLog.AccessStatusChoices.DUPLICATE
+            reason_value = 'Duplicate participant scan'
+
+        access_log = AccessLog.objects.create(
+            user=user,
+            cabinet_session=cabinet_session,
+            status=status_value,
+            action=action,
+            nfc_uid=nfc_uid,
+            station=cabinet_session.station if cabinet_session else device_context.get('station', ''),
+            cabinet_name=device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME,
+            reason=reason_value,
+        )
+        if user:
+            if status_value == AccessLog.AccessStatusChoices.SUCCESS:
+                if action == AccessLog.AccessActionChoices.OPEN:
+                    event_type = 'cabinet_opened'
+                elif action == AccessLog.AccessActionChoices.CLOSE:
+                    event_type = 'cabinet_closed'
+                else:
+                    event_type = 'access_granted'
+            elif 'timeout' in reason_value.lower():
+                event_type = 'session_timeout'
+            elif 'unlock' in reason_value.lower():
+                event_type = 'unlock_failed'
+            else:
+                event_type = 'access_denied'
+
+            CabinetEvent.objects.create(
+                user=user,
+                event_type=event_type,
+                details={
+                    'access_log_id': access_log.pk,
+                    'cabinet_session_id': cabinet_session.pk if cabinet_session else None,
+                    'event_type': event_type,
+                    'action': access_log.action,
+                    'station': access_log.station,
+                    'cabinet_id': access_log.cabinet_name,
+                    'nfc_uid': access_log.nfc_uid,
+                    'access_method': 'NFC',
+                    'result': access_log.status,
+                    'failure_reason': access_log.reason if access_log.status != AccessLog.AccessStatusChoices.SUCCESS else '',
+                },
+            )
+        return access_log
+
+    def _event_payload(self, access_log):
+        user = access_log.user
+        return {
+            'event_id': access_log.id,
+            'success': access_log.status == AccessLog.AccessStatusChoices.SUCCESS,
+            'status': access_log.status,
+            'action': access_log.action,
+            'nfc_uid': access_log.nfc_uid,
+            'user': {
+                'id': user.id,
+                'student_id': user.student_id,
+                'name': user.get_full_name().strip(),
+                'role': user.role,
+            } if user else None,
+            'cabinet': {'name': access_log.cabinet_name} if access_log.cabinet_name else None,
+            'station': {'name': access_log.station} if access_log.station else None,
+            'cabinet_session_id': access_log.cabinet_session_id,
+            'reason': access_log.reason,
+            'name': user.get_full_name().strip() if user else None,
+            'role': user.role if user else None,
+            'student_id': user.student_id if user else None,
+        }
+
+    def _unregistered_response(self, nfc_uid, device_context):
+        access_log = self._create_scan_log(
+            nfc_uid,
+            user=None,
+            access_status=AccessLog.AccessStatusChoices.UNREGISTERED,
+            reason='NFC UID is not registered',
+            device_context=device_context,
+        )
         token = secrets.token_urlsafe(32)
         expires_at = timezone.now() + timedelta(minutes=15)
         with transaction.atomic():
@@ -1169,11 +1715,14 @@ class VerifyNFCView(APIView):
                 )
             else:
                 enrollment.expires_at = expires_at
+            enrollment.station = device_context.get('station', '')
+            enrollment.cabinet_name = device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME
             enrollment.set_token(token)
             enrollment.save()
         registration_url = f'{settings.NFC_REGISTRATION_URL_BASE}?token={quote(token, safe="")}'
         return Response(
             {
+                **self._event_payload(access_log),
                 'success': False,
                 'registered': False,
                 'registration_required': True,
@@ -1186,12 +1735,30 @@ class VerifyNFCView(APIView):
 
     def post(self, request, *args, **kwargs):
         received_nfc_uid = str(request.data.get('nfc_uid') or '')
-        nfc_uid = received_nfc_uid.strip().upper()
+        nfc_uid = AccessLog.normalize_nfc_uid(received_nfc_uid)
+        device_context = getattr(request, 'nfc_device_context', {})
         logger.info('NFC verification request received: raw_uid=%r normalized_uid=%r', received_nfc_uid, nfc_uid)
         if not nfc_uid:
             return Response(
                 {'success': False, 'error': 'NFC UID is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        if device_context.get('mock'):
+            mock_station = str(request.data.get('station') or '').strip()
+            if mock_station not in settings.TAPTRACK_CABINET_STATIONS:
+                return Response(
+                    {'success': False, 'error': 'Select a configured mock station.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            device_context = {
+                **device_context,
+                'station': mock_station,
+                'cabinet_name': settings.TAPTRACK_CABINET_NAME,
+            }
+        elif not device_context.get('station') or not device_context.get('cabinet_name'):
+            return Response(
+                {'success': False, 'error': 'This NFC reader is not mapped to a station and cabinet.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         user = User.objects.filter(nfc_uid=nfc_uid).first()
@@ -1205,34 +1772,42 @@ class VerifyNFCView(APIView):
         )
 
         if user and user.is_active:
-            access_log = AccessLog.objects.create(user=user, status=AccessLog.AccessStatusChoices.SUCCESS)
-            CabinetEvent.objects.create(
-                user=user,
-                event_type=CabinetEvent.EventTypeChoices.CABINET_OPENED,
+            access_log = self._create_scan_log(
+                nfc_uid,
+                user,
+                AccessLog.AccessStatusChoices.SUCCESS,
+                'NFC verified successfully',
+                device_context,
             )
+            if access_log.status in (AccessLog.AccessStatusChoices.DUPLICATE, AccessLog.AccessStatusChoices.REJECTED):
+                return Response(
+                    {**self._event_payload(access_log), 'success': False, 'error': access_log.reason},
+                    status=(
+                        status.HTTP_409_CONFLICT
+                        if access_log.status == AccessLog.AccessStatusChoices.DUPLICATE
+                        else status.HTTP_403_FORBIDDEN
+                    ),
+                )
             create_access_log_notifications(access_log)
             return Response(
-                {
-                    'success': True,
-                    'name': f'{user.first_name} {user.last_name}',
-                    'role': user.role,
-                    'student_id': user.student_id,
-                },
+                self._event_payload(access_log),
                 status=status.HTTP_200_OK,
             )
 
         if user and not user.is_active:
-            AccessLog.objects.create(user=user, status=AccessLog.AccessStatusChoices.FAILED)
+            access_log = self._create_scan_log(
+                nfc_uid,
+                user,
+                AccessLog.AccessStatusChoices.FAILED,
+                'User account is inactive',
+                device_context,
+            )
             return Response(
-                {
-                    'success': False,
-                    'error': 'User account is inactive.',
-                },
+                {**self._event_payload(access_log), 'success': False, 'error': 'User account is inactive.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        AccessLog.objects.create(user=None, status=AccessLog.AccessStatusChoices.FAILED)
-        return self._unregistered_response(nfc_uid)
+        return self._unregistered_response(nfc_uid, device_context)
 
 
 class NFCEnrollmentValidationView(APIView):
@@ -1337,6 +1912,15 @@ class NFCEnrollmentRegistrationView(APIView):
             enrollment.completed_at = timezone.now()
             enrollment.completed_by = user
             enrollment.save(update_fields=['status', 'completed_at', 'completed_by'])
+            AccessLog.objects.create(
+                user=user,
+                status=AccessLog.AccessStatusChoices.SUCCESS,
+                action=AccessLog.AccessActionChoices.REGISTRATION,
+                nfc_uid=enrollment.nfc_uid,
+                station=enrollment.station,
+                cabinet_name=enrollment.cabinet_name,
+                reason='NFC card registered successfully',
+            )
 
         return Response(
             {

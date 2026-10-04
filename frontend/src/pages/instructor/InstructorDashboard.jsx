@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
+import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
+import CabinetStationStatus from '../../components/CabinetStationStatus'
 import { 
   ClipboardList, 
   CheckCircle2, 
@@ -10,8 +13,6 @@ import {
   AlertCircle,
   TrendingUp,
   Award,
-  Calendar,
-  User
 } from 'lucide-react'
 
 export default function InstructorDashboard() {
@@ -109,20 +110,12 @@ export default function InstructorDashboard() {
   }
 
   const getSubmissionStatusBadge = (submission) => {
-    if (!submission) return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Not Submitted</span>
+    if (!submission) return <StatusBadge status="not submitted" label="Not Submitted" />
     const status = submission.submission_status || submission.status || ''
     const statusLower = String(status).toLowerCase()
-    
-    if (statusLower.includes('graded')) {
-      return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"><CheckCircle2 size={14} /> Graded</span>
-    } else if (statusLower.includes('late')) {
-      return <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-800"><AlertCircle size={14} /> Late</span>
-    }
-    return <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800"><Clock size={14} /> Submitted</span>
-  }
-
-  const isActivityOverdue = (dueDate) => {
-    return dueDate && new Date(dueDate) < new Date()
+    if (statusLower.includes('graded')) return <StatusBadge status="graded" icon={CheckCircle2} />
+    if (statusLower.includes('late')) return <StatusBadge status="late" icon={AlertCircle} />
+    return <StatusBadge status="submitted" icon={Clock} />
   }
 
   const getDaysUntilDue = (dueDate) => {
@@ -134,8 +127,41 @@ export default function InstructorDashboard() {
     return `Due in ${days}d`
   }
 
+  const recentActivityColumns = [
+    { key: 'title', label: 'Activity', className: 'min-w-[220px]', render: (value) => value || 'Untitled activity' },
+    { key: 'section_name', label: 'Section', className: 'min-w-[140px]', render: (value) => value || 'No section' },
+    { key: 'created_at', label: 'Created', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
+    { key: 'due_date', label: 'Due Date', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
+    {
+      key: 'due_status',
+      label: 'Due Status',
+      className: 'min-w-[130px]',
+      render: (_value, activity) => activity.due_date ? getDaysUntilDue(activity.due_date) : 'No due date',
+    },
+  ]
+
+  const upcomingDeadlineColumns = [
+    { key: 'title', label: 'Activity', className: 'min-w-[220px]', render: (value) => value || 'Untitled activity' },
+    { key: 'section_name', label: 'Section', className: 'min-w-[140px]', render: (value) => value || 'No section' },
+    { key: 'due_date', label: 'Due Date', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
+    { key: 'time_remaining', label: 'Time Remaining', className: 'min-w-[150px]', render: (_value, activity) => getDaysUntilDue(activity.due_date) },
+  ]
+
+  const recentSubmissionColumns = [
+    {
+      key: 'student_name',
+      label: 'Student',
+      className: 'min-w-[180px]',
+      render: (value, submission) => `${value || ''} ${submission.student_last_name || ''}`.trim() || '—',
+    },
+    { key: 'activity_title', label: 'Activity', className: 'min-w-[220px]', render: (value) => value || '—' },
+    { key: 'submitted_at', label: 'Submitted', className: 'min-w-[170px]', render: (value) => formatDate(value) },
+    { key: 'status', label: 'Status', className: 'min-w-[120px]', render: (_value, submission) => getSubmissionStatusBadge(submission) },
+    { key: 'score', label: 'Score', className: 'min-w-[90px]', render: (value) => value ?? 'Pending' },
+  ]
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <div>
         <PageHeader
           title="Instructor Dashboard"
@@ -147,6 +173,7 @@ export default function InstructorDashboard() {
           </p>
         )}
       </div>
+      <CabinetStationStatus detailLevel="instructor" />
 
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">
@@ -155,202 +182,62 @@ export default function InstructorDashboard() {
       ) : (
         <>
           {/* Statistics Cards */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard 
               icon={<ClipboardList size={20} />} 
               label="Total Activities" 
               value={stats.totalActivities} 
-              subtitle="Activities created"
-              bgColor="bg-blue-50"
-              textColor="text-blue-600"
-              borderColor="border-blue-200"
+              subtitle="Created by you"
+              bgColor="bg-amber-50"
+              textColor="text-amber-700"
             />
             <StatCard 
               icon={<TrendingUp size={20} />} 
               label="Active Activities" 
               value={stats.activeActivities} 
-              subtitle="Currently active"
+              subtitle="Open now"
               bgColor="bg-emerald-50"
-              textColor="text-emerald-600"
-              borderColor="border-emerald-200"
+              textColor="text-emerald-700"
             />
             <StatCard 
               icon={<Send size={20} />} 
-              label="Total Submissions" 
+              label="Submissions"
               value={stats.totalSubmissions} 
-              subtitle="Submitted by students"
-              bgColor="bg-purple-50"
-              textColor="text-purple-600"
-              borderColor="border-purple-200"
+              subtitle="Received from students"
+              bgColor="bg-blue-50"
+              textColor="text-blue-700"
             />
             <StatCard 
               icon={<Award size={20} />} 
               label="Pending Grading" 
               value={stats.pendingGrading} 
-              subtitle="Awaiting your review"
-              bgColor="bg-orange-50"
-              textColor="text-orange-600"
-              borderColor="border-orange-200"
+              subtitle="Awaiting grading"
+              bgColor="bg-amber-50"
+              textColor="text-amber-700"
             />
           </div>
 
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-            {/* Left Column - Recent Activities and Upcoming Deadlines */}
-            <div className="lg:col-span-2 space-y-8">
-              {/* Recent Activities Section */}
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-                <div className="mb-6 flex items-center gap-3">
-                  <ClipboardList size={24} className="text-blue-600" />
-                  <h2 className="text-lg font-semibold text-[#111827]">Recent Activities</h2>
-                </div>
-                {recentActivities.length === 0 ? (
-                  <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-12 text-center">
-                    <div className="mb-3 flex justify-center text-4xl text-[#9CA3AF]">
-                      <ClipboardList size={40} />
-                    </div>
-                    <p className="font-medium text-[#6B7280]">No activities created yet</p>
-                    <p className="mt-1 text-sm text-[#9CA3AF]">Start by creating a new activity to get began.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {recentActivities.map((activity) => (
-                      <div key={activity.id} className="flex items-start justify-between rounded-lg border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition">
-                        <div className="flex-1">
-                          <h3 className="font-medium text-slate-900">{activity.title}</h3>
-                          <p className="mt-1 text-sm text-slate-600">{activity.section_name || 'No section'}</p>
-                          <div className="mt-2 flex items-center gap-4 text-xs text-slate-600">
-                            <span className="flex items-center gap-1">
-                              <Calendar size={14} /> {formatDateShort(activity.due_date) || 'No due date'}
-                            </span>
-                            {activity.due_date && (
-                              <span className={`font-semibold ${isActivityOverdue(activity.due_date) ? 'text-red-600' : 'text-emerald-600'}`}>
-                                {getDaysUntilDue(activity.due_date)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+          <div className="space-y-5">
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold text-[#102a4c]">Recent Activities</h2>
+              <DataTable columns={recentActivityColumns} rows={recentActivities} variant="instructor" showActions={false} emptyMessage="No activities created yet." />
+            </section>
 
-              {/* Upcoming Deadlines Section */}
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-                <div className="mb-6 flex items-center gap-3">
-                  <Clock size={24} className="text-orange-600" />
-                  <h2 className="text-lg font-semibold text-[#111827]">Upcoming Deadlines</h2>
-                </div>
-                {upcomingDeadlines.length === 0 ? (
-                  <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-12 text-center">
-                    <div className="mb-3 flex justify-center text-4xl text-[#9CA3AF]">
-                      <Calendar size={40} />
-                    </div>
-                    <p className="font-medium text-[#6B7280]">No upcoming deadlines</p>
-                    <p className="mt-1 text-sm text-[#9CA3AF]">All your activities have passed their due dates.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {upcomingDeadlines.map((activity) => (
-                      <div key={activity.id} className="flex items-center justify-between rounded-lg border-l-4 border-l-orange-500 border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition">
-                        <div className="flex-1">
-                          <h3 className="font-medium text-slate-900">{activity.title}</h3>
-                          <p className="mt-1 text-sm text-slate-600">{activity.section_name || 'No section'}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold text-orange-600">{getDaysUntilDue(activity.due_date)}</p>
-                          <p className="mt-1 text-xs text-slate-600">{formatDateShort(activity.due_date)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold text-[#102a4c]">Upcoming Deadlines</h2>
+              <DataTable columns={upcomingDeadlineColumns} rows={upcomingDeadlines} variant="instructor" showActions={false} emptyMessage="No upcoming deadlines." />
+            </section>
 
-            {/* Right Column - Recent Submissions and Quick Actions */}
-            <div className="space-y-8">
-              {/* Recent Submissions Section */}
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-                <div className="mb-6 flex items-center gap-3">
-                  <Send size={24} className="text-purple-600" />
-                  <h2 className="text-lg font-semibold text-[#111827]">Recent Submissions</h2>
-                </div>
-                {recentSubmissions.length === 0 ? (
-                  <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-8 text-center">
-                    <div className="mb-3 flex justify-center text-4xl text-[#9CA3AF]">
-                      <Send size={36} />
-                    </div>
-                    <p className="font-medium text-[#6B7280]">No submissions yet</p>
-                    <p className="mt-1 text-xs text-[#9CA3AF]">Submissions from students will appear here.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {recentSubmissions.map((submission) => (
-                      <div key={submission.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 hover:bg-slate-100 transition">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate font-medium text-slate-900 text-sm">{submission.activity_title}</p>
-                            <p className="mt-1 truncate text-xs text-slate-600">{submission.student_name} {submission.student_last_name}</p>
-                          </div>
-                          <div className="ml-2 flex-shrink-0">
-                            {getSubmissionStatusBadge(submission)}
-                          </div>
-                        </div>
-                        <p className="mt-2 text-xs text-slate-500">{formatDate(submission.submitted_at)}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold text-[#102a4c]">Recent Submissions</h2>
+              <DataTable columns={recentSubmissionColumns} rows={recentSubmissions} variant="instructor" showActions={false} emptyMessage="No submissions yet." />
+            </section>
 
-              {/* Quick Actions */}
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 shadow-sm">
-                <div className="mb-6 flex items-center gap-3">
-                  <TrendingUp size={24} className="text-emerald-600" />
-                  <h2 className="text-lg font-semibold text-[#111827]">Quick Actions</h2>
-                </div>
-                <div className="space-y-3">
-                  <a 
-                    href="/instructor/activities" 
-                    className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 transition hover:bg-blue-100 hover:border-blue-300"
-                  >
-                    <div className="rounded-lg bg-blue-600 p-2 text-white">
-                      <ClipboardList size={18} />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-slate-900">Manage Activities</h3>
-                      <p className="text-xs text-slate-600">Create, edit, or publish</p>
-                    </div>
-                  </a>
-                  <a 
-                    href="/instructor/submissions" 
-                    className="flex items-center gap-3 rounded-lg border border-purple-200 bg-purple-50 p-4 transition hover:bg-purple-100 hover:border-purple-300"
-                  >
-                    <div className="rounded-lg bg-purple-600 p-2 text-white">
-                      <Send size={18} />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-slate-900">Grade Submissions</h3>
-                      <p className="text-xs text-slate-600">Review and grade work</p>
-                    </div>
-                  </a>
-                  <a 
-                    href="/instructor/sections" 
-                    className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 transition hover:bg-emerald-100 hover:border-emerald-300"
-                  >
-                    <div className="rounded-lg bg-emerald-600 p-2 text-white">
-                      <User size={18} />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-slate-900">Manage Sections</h3>
-                      <p className="text-xs text-slate-600">View and manage students</p>
-                    </div>
-                  </a>
-                </div>
-              </div>
-            </div>
+            <nav className="flex flex-wrap gap-x-6 gap-y-2 border-t border-[#dbe5f0] pt-4" aria-label="Instructor management pages">
+              <a href="/instructor/sections" className="text-sm font-semibold text-[#002b5b] hover:text-[#1d5b91]">View Sections</a>
+              <a href="/instructor/activities" className="text-sm font-semibold text-[#002b5b] hover:text-[#1d5b91]">View Activities</a>
+              <a href="/instructor/submissions" className="text-sm font-semibold text-[#002b5b] hover:text-[#1d5b91]">View Submissions</a>
+            </nav>
           </div>
         </>
       )}

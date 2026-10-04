@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
-import { fetchScanEvents } from './services/nfc/scanResultBridge'
+import { fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
 const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
@@ -9,7 +9,6 @@ const NFC_MODE = (import.meta.env.VITE_NFC_MODE || (import.meta.env.DEV ? 'mock'
 const WEB_APP_BASE_URL = (import.meta.env.VITE_WEB_APP_BASE_URL || '').replace(/\/$/, '')
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
-const CABINET_STATE_KEY = 'taptrack_cabinet_session_state'
 
 function buildRegistrationUrl(serverUrl) {
   if (!WEB_APP_BASE_URL) return serverUrl
@@ -100,11 +99,7 @@ function formatSessionTime(date) {
 }
 
 function getParticipantCount(session) {
-  return session?.participants?.length || session?.participantIds?.length || session?.participantUids?.length || 0
-}
-
-function makeSessionId() {
-  return `SESSION-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+  return session?.opened_by?.length || session?.openedByStudentIds?.length || session?.openedByUids?.length || 0
 }
 
 function loadNfcScanCursor() {
@@ -116,18 +111,26 @@ function loadNfcScanCursor() {
   }
 }
 
-function loadCabinetState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(CABINET_STATE_KEY) || '{}')
-    const sessions = Array.isArray(saved.sessions) ? saved.sessions : []
-    const legacyActiveSession = saved.activeSession?.status === 'open' ? saved.activeSession : null
-    if (legacyActiveSession && !sessions.some((session) => session.id === legacyActiveSession.id)) {
-      sessions.unshift(legacyActiveSession)
-    }
-    return { sessions }
-  } catch {
-    return { sessions: [] }
+function normalizeServerSession(session) {
+  if (!session) return null
+  const openedBy = session.opened_by || []
+  const closedBy = session.closed_by || []
+  return {
+    ...session,
+    openedAt: session.opened_at,
+    closedAt: session.closed_at,
+    openedByStudentIds: openedBy.map((student) => student.studentId),
+    openedByUids: openedBy.map((student) => student.uid),
+    closedBy,
+    closedByStudentIds: closedBy.map((student) => student.studentId),
+    closedByUids: closedBy.map((student) => student.uid),
   }
+}
+
+function stationLabel(station) {
+  const value = String(station || '').trim()
+  if (!value) return 'Station unavailable'
+  return /^station\s/i.test(value) ? value : `Station ${value}`
 }
 
 function formatDuration(start, end = new Date()) {
@@ -153,8 +156,10 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
   const [errorMessage, setErrorMessage] = useState('')
   const [clock, setClock] = useState(() => new Date())
-  const [cabinetState, setCabinetState] = useState(loadCabinetState)
+  const [cabinetState, setCabinetState] = useState({ sessions: [] })
   const { sessions } = cabinetState
+  const [readerContext, setReaderContext] = useState(null)
+  const [workflowLoaded, setWorkflowLoaded] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [form, setForm] = useState({ fullName: '', studentId: '', email: '', section: '' })
   const [nfcUid, setNfcUid] = useState('')
@@ -169,17 +174,32 @@ export default function App() {
   const bridgeAbortControllerRef = useRef(null)
   const bridgeErrorRef = useRef('')
 
-  function saveCabinetState(nextSessions) {
-    const nextState = { sessions: nextSessions }
-    try {
-      localStorage.setItem(CABINET_STATE_KEY, JSON.stringify(nextState))
-    } catch {
-      setErrorMessage('The cabinet session could not be saved in this browser.')
-      return false
-    }
-    setCabinetState(nextState)
-    return true
-  }
+  useEffect(() => {
+    let cancelled = false
+    fetchCabinetWorkflow({ mode: NFC_MODE })
+      .then((data) => {
+        if (cancelled) return
+        const stations = (data.stations || []).map((item) => item.name)
+        setReaderContext({
+          mode: data.mode || NFC_MODE,
+          station: data.station,
+          cabinetName: data.cabinet_name,
+          stations,
+        })
+        const sessions = data.mode === 'mock'
+          ? data.stations.map((item) => normalizeServerSession(item.session)).filter(Boolean)
+          : [normalizeServerSession(data.session)].filter(Boolean)
+        setCabinetState({ sessions })
+        setWorkflowLoaded(true)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setErrorMessage(error.message || 'Unable to load the cabinet session from Django.')
+          setWorkflowLoaded(true)
+        }
+      })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setClock(new Date()), 1000)
@@ -228,9 +248,9 @@ export default function App() {
         } else if (view === 'close-scan') {
           pauseAfterDecision = true
           const isMember = role === 'student' && (
-            selectedSession?.participants?.some((participant) => participant.studentId === studentId || participant.uid === uid)
-            || selectedSession?.participantIds?.includes(studentId)
-            || selectedSession?.participantUids?.includes(uid)
+            selectedSession?.opened_by?.some((student) => student.studentId === studentId || student.uid === uid)
+            || selectedSession?.openedByStudentIds?.includes(studentId)
+            || selectedSession?.openedByUids?.includes(uid)
           )
           if (isMember) {
             const participant = { uid, fullName: name, studentId, section: String(event.section || '') }
@@ -386,8 +406,22 @@ export default function App() {
       .filter((session) => session.status === 'open')
       .map((session) => session.station)
   }, [sessions])
+  const readerStations = readerContext?.mode === 'mock'
+    ? readerContext.stations || []
+    : readerContext?.station ? [readerContext.station] : []
 
   function resetToHome() {
+    if (selectedSession && selectedSession.workflow_state !== 'idle') {
+      void sendCabinetWorkflow('cancel', { mode: NFC_MODE, station: selectedStation }).then((data) => {
+        if (data.mode === 'mock') {
+          return fetchCabinetWorkflow({ mode: NFC_MODE }).then((state) => {
+            setCabinetState({ sessions: state.stations.map((item) => normalizeServerSession(item.session)).filter(Boolean) })
+          })
+        }
+        const session = normalizeServerSession(data.session)
+        setCabinetState({ sessions: session ? [session] : [] })
+      }).catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
+    }
     setView('home')
     setPendingAction('open')
     setSelectedStation(null)
@@ -414,7 +448,12 @@ export default function App() {
     participantsByUidRef.current.clear()
     setScanFeedback(null)
     setErrorMessage('')
-    setStatusMessage('Choose an available station to begin.')
+    if (NFC_MODE === 'hardware') {
+      if (readerContext?.station) void handleStationSelect(readerContext.station)
+      else setErrorMessage('The NFC reader station is not configured.')
+      return
+    }
+    setStatusMessage(NFC_MODE === 'mock' ? 'Choose an available mock station to begin.' : 'The physical reader has no station assignment.')
     setView('station-select')
   }
 
@@ -426,32 +465,77 @@ export default function App() {
     setCloseRejectedStudent('')
     setScanFeedback(null)
     setErrorMessage('')
-    setStatusMessage('Choose an active station to close.')
+    if (NFC_MODE === 'hardware') {
+      if (readerContext?.station) void selectSessionToClose(readerContext.station)
+      else setErrorMessage('The NFC reader station is not configured.')
+      return
+    }
+    setStatusMessage('Choose an active mock station to close.')
     setView('close-select')
   }
 
-  function handleStationSelect(station) {
-    if (occupiedStations.includes(station)) {
-      setErrorMessage('That station is already occupied.')
-      return
-    }
-
-    setSelectedStation(station)
+  function resumeOpeningSession(session) {
+    const scannedStudents = session.opened_by || []
+    setPendingAction('open')
+    setSelectedStation(session.station)
+    setParticipants(scannedStudents.map((student) => ({
+      uid: student.uid,
+      fullName: student.fullName,
+      studentId: student.studentId,
+    })))
+    participantsByUidRef.current = new Map(
+      scannedStudents.filter((student) => student.uid).map((student) => [student.uid, student]),
+    )
+    setClosingParticipants([])
+    closingParticipantsRef.current = []
+    setScanFeedback(null)
     setErrorMessage('')
-    setStatusMessage(`Tap each group member’s student card for Station ${station}.`)
+    setStatusMessage(`${scannedStudents.length} students already recorded. Continue scanning to finish opening.`)
     setView('participant-scan')
   }
 
-  function selectSessionToClose(station) {
-    if (!sessions.some((session) => session.status === 'open' && session.station === station)) return
-    setSelectedStation(station)
-    closingParticipantsRef.current = []
-    setClosingParticipants([])
-    setCloseRejectedStudent('')
-    setScanFeedback(null)
-    setErrorMessage('')
-    setStatusMessage(`Tap NFC cards to record closing attendance for Station ${station}.`)
-    setView('close-scan')
+  async function handleStationSelect(station) {
+    if (NFC_MODE === 'hardware' && (!readerContext?.station || station !== readerContext.station)) {
+      setErrorMessage('This cabinet reader is not assigned to that station.')
+      return
+    }
+
+    try {
+      if (!workflowLoaded) throw new Error('Loading configured stations...')
+      const data = await sendCabinetWorkflow('open', { mode: NFC_MODE, station })
+      const session = normalizeServerSession(data.session)
+      setCabinetState({ sessions: NFC_MODE === 'mock' ? [...sessions, session].filter(Boolean) : [session].filter(Boolean) })
+      setSelectedStation(data.station)
+      setErrorMessage('')
+      setStatusMessage(`Tap each group member’s NFC card for ${stationLabel(data.station)}.`)
+      setView('participant-scan')
+    } catch (error) {
+      setErrorMessage(error.message || 'The cabinet session could not be opened.')
+    }
+  }
+
+  async function selectSessionToClose(station) {
+    const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
+    if (!activeSession) return
+    if (activeSession.workflow_state === 'opening') {
+      resumeOpeningSession(activeSession)
+      return
+    }
+    try {
+      const data = await sendCabinetWorkflow('start_close', { mode: NFC_MODE, station })
+      const session = normalizeServerSession(data.session)
+      setCabinetState({ sessions: sessions.map((item) => item.station === station ? session : item).filter(Boolean) })
+      setSelectedStation(data.station)
+      closingParticipantsRef.current = []
+      setClosingParticipants([])
+      setCloseRejectedStudent('')
+      setScanFeedback(null)
+      setErrorMessage('')
+      setStatusMessage(`Tap NFC cards to record closing attendance for ${stationLabel(data.station)}.`)
+      setView('close-scan')
+    } catch (error) {
+      setErrorMessage(error.message || 'The cabinet session could not be closed.')
+    }
   }
 
   function isActiveSessionMember(uid, studentId) {
@@ -527,8 +611,12 @@ export default function App() {
       if (mockUid) {
         const response = await fetchWithTimeout('/api/verify-nfc/', {
           method: 'POST',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nfc_uid: mockUid }),
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-TapTrack-Mock-Mode': 'true',
+          },
+          body: JSON.stringify({ nfc_uid: mockUid, station: selectedStation }),
         })
         const result = await readApiResponse(response)
         data = result.data
@@ -640,35 +728,26 @@ export default function App() {
     setView('confirm-session')
   }
 
-  function finalizeSession() {
-    const now = new Date()
-    const snapshot = participants.map((participant) => ({
-      uid: participant.uid,
-      fullName: participant.fullName,
-      studentId: participant.studentId,
-      section: participant.section,
-    }))
-
+  async function finalizeSession() {
     if (pendingAction === 'open') {
-      const sessionRecord = {
-        id: makeSessionId(),
-        station: selectedStation,
-        status: 'open',
-        openedAt: now.toISOString(),
-        timestamp: now.toISOString(),
-        participantIds: snapshot.map((participant) => participant.studentId),
-        participantUids: snapshot.map((participant) => participant.uid),
-        participants: snapshot,
-      }
-
-      if (!selectedStation || occupiedStations.includes(selectedStation)) {
-        setErrorMessage('Choose an available station before opening the cabinet.')
+      if (!selectedStation || !selectedSession || selectedSession.workflow_state !== 'opening') {
+        setErrorMessage('Start an opening workflow on this reader before opening the cabinet.')
         setView('station-select')
         return
       }
-      if (!saveCabinetState([sessionRecord, ...sessions])) return
-      setStatusMessage(`Cabinet opened on Station ${selectedStation}.`)
-      setView('cabinet-opened')
+      try {
+        const data = await sendCabinetWorkflow('finish_open', { mode: NFC_MODE, station: selectedStation })
+        const session = normalizeServerSession(data.session)
+        setCabinetState((current) => ({
+          sessions: NFC_MODE === 'mock'
+            ? current.sessions.map((item) => item.station === data.station ? session : item)
+            : [session].filter(Boolean),
+        }))
+        setStatusMessage(`Cabinet opened on ${stationLabel(data.station)}.`)
+        setView('cabinet-opened')
+      } catch (error) {
+        setErrorMessage(error.message || 'The cabinet session could not be opened.')
+      }
       return
     }
 
@@ -681,30 +760,24 @@ export default function App() {
     if (closingParticipants.length === 0 || closingParticipants.some((participant) => (
       !isActiveSessionMember(participant.uid, participant.studentId)
     ))) {
-      setErrorMessage(`Scan at least one member of the Station ${selectedStation} active session before closing.`)
+      setErrorMessage(`Scan at least one member of the ${stationLabel(selectedStation)} active session before closing.`)
       setView('close-scan')
       return
     }
 
-    const closingAttendance = closingParticipants.map((participant) => ({
-      uid: participant.uid,
-      fullName: participant.fullName,
-      studentId: participant.studentId,
-      section: participant.section || '',
-    }))
-    const closedSession = {
-      ...selectedSession,
-      status: 'closed',
-      closedAt: now.toISOString(),
-      closingParticipants: closingAttendance,
-      closingParticipantIds: closingAttendance.map((participant) => participant.studentId),
-      closingParticipantUids: closingAttendance.map((participant) => participant.uid),
+    try {
+      const data = await sendCabinetWorkflow('finish_close', { mode: NFC_MODE, station: selectedStation })
+      const session = normalizeServerSession(data.session)
+      setCabinetState((current) => ({
+        sessions: NFC_MODE === 'mock'
+          ? current.sessions.map((item) => item.station === data.station ? session : item)
+          : [session].filter(Boolean),
+      }))
+      setStatusMessage(`Cabinet closed on ${stationLabel(data.station)}.`)
+      setView('cabinet-closed')
+    } catch (error) {
+      setErrorMessage(error.message || 'The cabinet session could not be closed.')
     }
-
-    const updatedSessions = sessions.map((session) => (session.id === selectedSession.id ? closedSession : session))
-    if (!saveCabinetState(updatedSessions)) return
-    setStatusMessage(`Cabinet closed on Station ${selectedSession.station}.`)
-    setView('cabinet-closed')
   }
 
   async function handleRegistrationSubmit(event) {
@@ -838,13 +911,13 @@ export default function App() {
                 <h1 className="title">Cabinet Management</h1>
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
-                {[1, 2].map((station) => {
+                {readerStations.map((station) => {
                   const session = sessions.find((item) => item.status === 'open' && item.station === station)
                   return (
                     <div className={`station-status-card ${session ? 'is-open' : 'is-available'}`} key={station}>
-                      <strong>STATION {station}</strong>
+                      <strong>{stationLabel(station).toUpperCase()}</strong>
                       <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
-                      {session ? <span>{getParticipantCount(session)} participants</span> : <span>Ready</span>}
+                      {session ? <span>Opened by {getParticipantCount(session)}</span> : <span>Ready</span>}
                       {session && <small>Opened {formatSessionTime(session.openedAt)}</small>}
                     </div>
                   )
@@ -875,7 +948,7 @@ export default function App() {
             <p className="muted">The active session must be closed before another can begin.</p>
             <div className="confirm-list">
               <div className="confirm-row"><span>Station</span><strong>{selectedSession?.station}</strong></div>
-              <div className="confirm-row"><span>Participants</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
             </div>
             <div className="button-row">
               <button className="btn primary" onClick={() => setView('cabinet-opened')}>VIEW SESSION</button>
@@ -896,13 +969,13 @@ export default function App() {
             </div>
             <div className="confirm-list">
               <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
-              <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
-              <div className="confirm-row"><span>Closing scan count</span><strong>{closingParticipants.length}</strong></div>
+              <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div className="confirm-row"><span>Closed by</span><strong>{closingParticipants.length}</strong></div>
               <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
             </div>
             <div className="participant-list session-participants">
-              <h3>Members in this session</h3>
-              {(selectedSession?.participants || []).map((participant) => (
+              <h3>Opened by</h3>
+              {(selectedSession?.opened_by || []).map((participant) => (
                 <div key={participant.uid} className="participant-card">
                   <div className="participant-badge">✓</div>
                   <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
@@ -910,7 +983,7 @@ export default function App() {
               ))}
             </div>
             <div className="participant-list session-participants">
-              <h3>Closing attendance</h3>
+              <h3>Closed by</h3>
               {closingParticipants.length === 0
                 ? <div className="empty-state">No closing attendance recorded yet.</div>
                 : closingParticipants.map((participant) => (
@@ -942,7 +1015,7 @@ export default function App() {
         <Screen>
           <div className="panel status-panel">
             <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>NOT AUTHORIZED</strong></div>
-            <h2>You are not a member of the Station {selectedStation} active session.</h2>
+            <h2>You are not a member of the {stationLabel(selectedStation)} active session.</h2>
             <p className="muted">Only a member of this station’s session can close it.</p>
             {closeRejectedStudent && <p className="muted">Card scanned: {closeRejectedStudent}</p>}
             <div className="button-row">
@@ -1084,16 +1157,20 @@ export default function App() {
         <Screen>
           <div className="panel">
             <h2>Select Station</h2>
+            {!workflowLoaded && <div className="empty-state" role="status">Loading configured stations...</div>}
+            {workflowLoaded && readerStations.length === 0 && (
+              <div className="empty-state" role="status">No mock stations are configured.</div>
+            )}
             <div className="station-grid">
-              {[1, 2].map((station) => (
+              {readerStations.map((station) => (
                 <button
                   key={station}
                   className="btn station-button"
                   disabled={occupiedStations.includes(station)}
                   onClick={() => handleStationSelect(station)}
                 >
-                  <span>STATION {station}</span>
-                  <small>{occupiedStations.includes(station) ? 'IN USE · NOT AVAILABLE' : 'AVAILABLE · SELECT'}</small>
+                  <span>{stationLabel(station).toUpperCase()}</span>
+                  <small>{occupiedStations.includes(station) ? 'OCCUPIED' : 'AVAILABLE'}</small>
                 </button>
               ))}
             </div>
@@ -1112,16 +1189,23 @@ export default function App() {
             <p className="muted">Active sessions by station</p>
             {!occupiedStations.length && <div className="large-state is-closed"><span className="status-dot good" /><strong>ALL CABINETS CLOSED</strong></div>}
             <div className="station-grid">
-              {[1, 2].map((station) => {
+              {readerStations.map((station) => {
                 const session = sessions.find((item) => item.status === 'open' && item.station === station)
                 return (
                   <div className={`station-status-card close-station-card ${session ? 'is-open' : 'is-available'}`} key={station}>
-                    <strong>STATION {station}</strong>
+                    <strong>{stationLabel(station).toUpperCase()}</strong>
                     <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
                     {session ? <>
-                      <span>{getParticipantCount(session)} participants</span>
+                      <span>Opened by {getParticipantCount(session)}</span>
                       <small>Opened {formatSessionTime(session.openedAt)}</small>
-                      <button className="btn primary" onClick={() => selectSessionToClose(station)}>CLOSE STATION {station}</button>
+                      <button
+                        className="btn primary"
+                        onClick={() => session.workflow_state === 'opening'
+                          ? resumeOpeningSession(session)
+                          : selectSessionToClose(station)}
+                      >
+                        {session.workflow_state === 'opening' ? 'RESUME OPENING' : `CLOSE ${stationLabel(station).toUpperCase()}`}
+                      </button>
                     </> : <span>No active session</span>}
                   </div>
                 )
@@ -1256,13 +1340,13 @@ export default function App() {
                 <strong>{pendingAction === 'open' ? selectedStation : selectedSession?.station}</strong>
               </div>
               <div className="confirm-row">
-                <span>Participants</span>
+                <span>Opened by</span>
                 <strong>{pendingAction === 'open' ? participants.length : getParticipantCount(selectedSession)}</strong>
               </div>
               {pendingAction === 'close' && (
                 <>
-                  <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
-                  <div className="confirm-row"><span>Closing attendance</span><strong>{closingParticipants.length}</strong></div>
+                  <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+                  <div className="confirm-row"><span>Closed by</span><strong>{closingParticipants.length}</strong></div>
                   <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
                   <div className="confirm-row"><span>Current duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
                 </>
@@ -1284,7 +1368,7 @@ export default function App() {
               {pendingAction === 'open'
                 ? <button className="btn ghost" onClick={() => setView('participant-scan')}>BACK</button>
                 : <button className="btn ghost" onClick={() => setView('close-scan')}>BACK TO SCANNING</button>}
-              <button className="btn primary" onClick={finalizeSession}>{pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE STATION ${selectedStation}`}</button>
+              <button className="btn primary" onClick={finalizeSession}>{pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE ${stationLabel(selectedStation).toUpperCase()}`}</button>
             </div>
           </div>
         </Screen>
@@ -1298,12 +1382,13 @@ export default function App() {
             <h2>Cabinet Open</h2>
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
-              <div><span>Participants</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
               <div><span>Session Duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
             </div>
             <p className="session-id">Session {selectedSession?.id || 'active'}</p>
             <div className="participant-list session-participants">
-              {(selectedSession?.participants || []).map((participant) => (
+              <h3>Opened by</h3>
+              {(selectedSession?.opened_by || []).map((participant) => (
                 <div key={participant.uid} className="participant-card">
                   <div className="participant-badge">✓</div>
                   <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
@@ -1323,7 +1408,30 @@ export default function App() {
           <div className="panel status-panel success-panel">
             <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
             <h2>Cabinet Closed</h2>
-            <p className="muted">Station {selectedStation} is closed. Other active stations remain open.</p>
+            <p className="muted">{stationLabel(selectedStation)} is closed.</p>
+            <div className="session-metrics">
+              <div><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div><span>Closed by</span><strong>{selectedSession?.closed_by?.length || 0}</strong></div>
+              <div><span>Session Duration</span><strong>{formatDuration(selectedSession?.openedAt, selectedSession?.closedAt)}</strong></div>
+            </div>
+            <div className="participant-list session-participants">
+              <h3>Opened by</h3>
+              {(selectedSession?.opened_by || []).map((student) => (
+                <div key={student.uid || student.studentId} className="participant-card">
+                  <div className="participant-badge">✓</div>
+                  <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
+                </div>
+              ))}
+            </div>
+            <div className="participant-list session-participants">
+              <h3>Closed by</h3>
+              {(selectedSession?.closed_by || []).map((student) => (
+                <div key={student.uid || student.studentId} className="participant-card">
+                  <div className="participant-badge">✓</div>
+                  <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
+                </div>
+              ))}
+            </div>
             <div className="button-row">
               <button className="btn primary" onClick={resetToHome}>Done</button>
             </div>

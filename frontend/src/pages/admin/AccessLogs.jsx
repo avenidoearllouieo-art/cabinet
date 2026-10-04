@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
+import DataTable from '../../components/DataTable'
+import StatusBadge from '../../components/StatusBadge'
 import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus } from 'lucide-react'
@@ -136,7 +138,7 @@ export default function AccessLogs() {
       ['User', row.student_name || row.username || row.user_name || '—'],
       ['Role', row.role || row.user_role || '—'],
       ['Access Type', getAccessTypeLabel(row)],
-      ['Location', row.cabinet_name || row.location || row.ip_address || '—'],
+      ['Station', row.station || '—'],
       ['Result', getResultLabel(row)],
       ['Duration', getDurationValue(row)],
     ]
@@ -181,12 +183,8 @@ export default function AccessLogs() {
   }, [logs])
 
   const accessTypeOptions = useMemo(() => {
-    const accessTypes = Array.from(new Set(logs.map((log) => {
-      const hasCabinet = Boolean(log.cabinet_name || log.cabinet || log.rfid_tag)
-      return hasCabinet ? 'cabinet' : 'other'
-    })))
-
-    return [{ value: 'all', label: 'All access types' }, ...accessTypes.map((type) => ({ value: type, label: type === 'cabinet' ? 'Cabinet Unlock' : 'Other' }))]
+    const accessTypes = Array.from(new Set(logs.map((log) => log.access_type || 'Access Event')))
+    return [{ value: 'all', label: 'All access types' }, ...accessTypes.map((type) => ({ value: type, label: type }))]
   }, [logs])
 
   const filteredLogs = useMemo(() => {
@@ -202,10 +200,7 @@ export default function AccessLogs() {
     }
 
     if (statusFilter !== 'all') {
-      result = result.filter((log) => {
-        const status = String(log.status || '').toLowerCase()
-        return status === statusFilter.toLowerCase()
-      })
+      result = result.filter((log) => resolveResult(log) === statusFilter.toLowerCase())
     }
 
     if (roleFilter !== 'all') {
@@ -216,10 +211,7 @@ export default function AccessLogs() {
     }
 
     if (accessTypeFilter !== 'all') {
-      result = result.filter((log) => {
-        const accessType = log.cabinet_name || log.cabinet || log.rfid_tag ? 'cabinet' : 'other'
-        return accessType === accessTypeFilter
-      })
+      result = result.filter((log) => getAccessTypeLabel(log) === accessTypeFilter)
     }
 
     if (dateFilter) {
@@ -257,7 +249,7 @@ export default function AccessLogs() {
 
   const totalLogs = logs.length
   const successfulLogins = logs.filter((log) => String(log.status || '').toLowerCase() === 'success').length
-  const failedLogins = logs.filter((log) => String(log.status || '').toLowerCase() === 'failed').length
+  const failedLogins = logs.filter((log) => resolveResult(log) === 'failed').length
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -266,29 +258,21 @@ export default function AccessLogs() {
     const logDate = new Date(log.access_time)
     logDate.setHours(0, 0, 0, 0)
     const isToday = logDate.getTime() === today.getTime()
-    const isCabinetUnlock = Boolean(log.cabinet_name || log.cabinet || log.rfid_tag)
+    const isCabinetUnlock = getAccessTypeLabel(log) === 'Cabinet Unlock'
     return isToday && isCabinetUnlock
   }).length
 
-  const statusStyles = {
-    success: 'bg-[#ECFDF5] text-[#16A34A]',
-    failed: 'bg-[#FEE2E2] text-[#B91C1C]',
-    in_progress: 'bg-[#FEF3C7] text-[#92400E]',
-  }
-
-  const resolveResult = (row) => {
+  function resolveResult(row) {
     const raw = String(row.status || '').toLowerCase()
     if (raw === 'success') return 'success'
-    if (raw === 'failed') return 'failed'
     if (raw === 'in progress' || raw === 'in_progress' || raw === 'pending' || raw === 'processing') return 'in_progress'
-    return 'in_progress'
+    return raw ? 'failed' : 'in_progress'
   }
 
   const getResultBadge = (row) => {
     const result = resolveResult(row)
-    const style = statusStyles[result] || statusStyles.in_progress
     const label = result === 'success' ? 'Success' : result === 'failed' ? 'Failed' : 'In Progress'
-    return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${style}`}>{label}</span>
+    return <StatusBadge status={label} label={label} />
   }
 
   const getResultLabel = (row) => {
@@ -296,41 +280,26 @@ export default function AccessLogs() {
     return result === 'success' ? 'Success' : result === 'failed' ? 'Failed' : 'In Progress'
   }
 
-  const getAccessTypeLabel = (row) => {
-    const hasCabinet = Boolean(row.cabinet_name || row.cabinet || row.rfid_tag)
-    const reason = String(row.reason || '').toLowerCase()
-    if (reason.includes('lock') || reason.includes('locked')) return 'Cabinet Lock'
-    if (reason.includes('logout') || reason.includes('sign out') || reason.includes('logged out')) return 'Logout'
-    if (reason.includes('register') || reason.includes('registration')) return 'Registration'
-    if (hasCabinet) return 'Cabinet Unlock'
-    return 'Website Login'
+  function getAccessTypeLabel(row) {
+    return row.access_type || 'Access Event'
   }
 
   const getAccessTypeBadge = (row) => {
     const label = getAccessTypeLabel(row)
-    const iconProps = { size: 14 }
-    const sharedClasses = 'inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold'
-
-    switch (label) {
-      case 'Cabinet Unlock':
-        return <span className={`${sharedClasses} bg-[#DBEAFE] text-[#1D4ED8]`}><KeyRound {...iconProps} />Cabinet Unlock</span>
-      case 'Cabinet Lock':
-        return <span className={`${sharedClasses} bg-[#E0E7FF] text-[#4338CA]`}><Lock {...iconProps} />Cabinet Lock</span>
-      case 'Logout':
-        return <span className={`${sharedClasses} bg-[#F3F4F6] text-[#374151]`}><LogOut {...iconProps} />Logout</span>
-      case 'Registration':
-        return <span className={`${sharedClasses} bg-[#ECFDF5] text-[#16A34A]`}><UserPlus {...iconProps} />Registration</span>
-      default:
-        return <span className={`${sharedClasses} bg-[#F5F3FF] text-[#7C3AED]`}><Globe {...iconProps} />Website Login</span>
+    const icons = {
+      'Cabinet Unlock': KeyRound,
+      'Cabinet Opened': Lock,
+      'Cabinet Closed': LogOut,
+      'NFC Registration': UserPlus,
+      'Access Denied': ShieldCheck,
     }
+    const Icon = icons[label] || Globe
+    return <StatusBadge label={label} tone={label === 'Access Denied' ? 'danger' : 'info'} icon={Icon} />
   }
 
   const getDurationValue = (row) => {
-    if (!row.access_time) return '—'
-    const start = new Date(row.access_time)
-    const end = row.updated_at ? new Date(row.updated_at) : new Date()
-    const diffMs = Math.max(0, end.getTime() - start.getTime())
-    const seconds = Math.floor(diffMs / 1000)
+    if (row.duration_seconds == null) return '—'
+    const seconds = row.duration_seconds
     if (seconds < 60) return `${seconds}s`
     const minutes = Math.floor(seconds / 60)
     return `${minutes} min`
@@ -338,17 +307,6 @@ export default function AccessLogs() {
 
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize))
   const paginatedLogs = filteredLogs.slice((page - 1) * pageSize, page * pageSize)
-  const allVisibleSelected = paginatedLogs.length > 0 && paginatedLogs.every((log) => selectedIds.includes(log.id))
-
-  const toggleSelectAllVisible = () => {
-    if (allVisibleSelected) {
-      setSelectedIds((current) => current.filter((id) => !paginatedLogs.some((log) => log.id === id)))
-      return
-    }
-
-    const newIds = Array.from(new Set([...selectedIds, ...paginatedLogs.map((log) => log.id)]))
-    setSelectedIds(newIds)
-  }
 
   const toggleSelection = (id) => {
     setSelectedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))
@@ -358,7 +316,7 @@ export default function AccessLogs() {
     <div className="space-y-8">
       <PageHeader
         title="Access Logs Management"
-        description="Monitor user login activity and session information."
+        description="Monitor cabinet and NFC access events across all users."
       />
 
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
@@ -418,7 +376,7 @@ export default function AccessLogs() {
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All results</option>
                 <option value="success">Success</option>
-                <option value="failed">Failed</option>
+                <option value="failed">Failed / Denied</option>
               </select>
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
@@ -457,99 +415,57 @@ export default function AccessLogs() {
           <div>{filteredLogs.length} result{filteredLogs.length === 1 ? '' : 's'}</div>
         </div>
 
-        <div className="max-h-[600px] overflow-auto rounded-[12px] border border-[#E5E7EB] shadow-sm">
-          <table className="min-w-full divide-y divide-[#E5E7EB] text-sm">
-            <thead className="sticky top-0 z-10 bg-[#F9FAFB] shadow-sm">
-              <tr>
-                <th className="px-4 py-3 text-left">
-                  <label className="flex h-11 w-11 items-center justify-center" aria-label="Select all visible access logs"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="h-5 w-5 rounded border-[#D1D5DB]" /></label>
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Time</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">User</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Role</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Access Type</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Location</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Result</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Duration</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E5E7EB] bg-white">
-              {loading && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-[#6B7280]">
-                    <div className="flex flex-col items-center justify-center gap-3">
-                      <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-500" />
-                      <span>Loading access logs…</span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              {!loading && !paginatedLogs.length && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-16 text-center text-[#6B7280]">
-                    <div className="mx-auto flex max-w-md flex-col items-center gap-4 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
-                        <span className="text-2xl">📭</span>
+        <DataTable
+          columns={[
+            { key: 'access_time', label: 'Date & Time', className: 'w-[14%]', render: (value) => formatDate(value) },
+            { key: 'user', label: 'User', className: 'w-[15%]', render: (_value, row) => row.student_name || row.username || row.user_name || 'Unregistered card' },
+            { key: 'role', label: 'Role', className: 'w-[8%]', render: (_value, row) => row.role || '—' },
+            { key: 'station', label: 'Station', className: 'w-[10%]', render: (_value, row) => row.station || '—' },
+            { key: 'access_type', label: 'Access Type', className: 'w-[17%]', render: (_value, row) => getAccessTypeBadge(row) },
+            { key: 'status', label: 'Result', className: 'w-[10%]', render: (_value, row) => getResultBadge(row) },
+            { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: (_value, row) => getDurationValue(row) },
+            {
+              key: 'actions',
+              label: 'Action',
+              className: 'w-[18%]',
+              render: (_value, row) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input type="checkbox" aria-label={`Select access log ${row.id}`} checked={selectedIds.includes(row.id)} onChange={() => toggleSelection(row.id)} className="h-4 w-4 rounded border-[#D1D5DB]" />
+                  <div className="relative" ref={openActionId === row.id ? actionMenuRef : null}>
+                    <button type="button" onClick={() => setOpenActionId((current) => (current === row.id ? null : row.id))} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#D1D5DB] bg-white text-taptrack-navy transition hover:bg-taptrack-gold/20" aria-label="Open access log actions">
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {openActionId === row.id && (
+                      <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
+                        <button type="button" onClick={() => { setOpenActionId(null); handleOpenViewModal(row.id, row) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]"><Eye size={14} />View Details</button>
+                        <button type="button" onClick={() => { setOpenActionId(null); handleViewUserProfile(row) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]"><ShieldCheck size={14} />View User Profile</button>
+                        <button type="button" onClick={() => { setOpenActionId(null); handleExportRecord(row) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]"><Globe size={14} />Export Record</button>
+                        <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(row) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]"><Trash2 size={14} />Delete</button>
                       </div>
-                      <p className="text-lg font-semibold text-slate-900">{logs.length ? 'No access logs match your filters.' : 'No access logs available.'}</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              {!loading && paginatedLogs.map((log, index) => {
-                const isSelected = selectedIds.includes(log.id)
-                return (
-                  <tr key={log.id} className={`${index % 2 ? 'bg-[#F9FAFB]' : 'bg-white'} transition hover:bg-slate-100`}>
-                    <td className="px-4 py-4">
-                      <label className="flex h-11 w-11 items-center justify-center" aria-label={`Select access log ${log.id}`}><input type="checkbox" checked={isSelected} onChange={() => toggleSelection(log.id)} className="h-5 w-5 rounded border-[#D1D5DB]" /></label>
-                    </td>
-                    <td className="px-4 py-4 text-[#374151]">{formatDate(log.access_time)}</td>
-                    <td className="px-4 py-4">
-                      <div className="space-y-1">
-                        <div className="font-medium text-[#111827]">{log.student_name || log.username || log.user_name || '—'}</div>
-                        <div className="text-xs text-[#6B7280]">{log.email || log.user_email || '—'}</div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 text-[#374151]">{log.role || log.user_role || '—'}</td>
-                    <td className="px-4 py-4">{getAccessTypeBadge(log)}</td>
-                    <td className="px-4 py-4 text-[#374151]">{log.cabinet_name || log.location || log.ip_address || '—'}</td>
-                    <td className="px-4 py-4">{getResultBadge(log)}</td>
-                    <td className="px-4 py-4 text-[#374151]">{getDurationValue(log)}</td>
-                    <td className="px-4 py-4">
-                      <div className="relative" ref={openActionId === log.id ? actionMenuRef : null}>
-                        <button type="button" onClick={() => setOpenActionId((current) => (current === log.id ? null : log.id))} className="flex h-11 w-11 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-taptrack-navy transition hover:bg-taptrack-gold/20" aria-label="Open access log actions">
-                          <MoreHorizontal size={16} />
-                        </button>
-                        {openActionId === log.id && (
-                          <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
-                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenViewModal(log.id, log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
-                              <Eye size={14} />View Details
-                            </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleViewUserProfile(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
-                              <ShieldCheck size={14} />View User Profile
-                            </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleExportRecord(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
-                              <Globe size={14} />Export Record
-                            </button>
-                            <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(log) }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]">
-                              <Trash2 size={14} />Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                    )}
+                  </div>
+                </div>
+              ),
+            },
+          ]}
+          data={paginatedLogs}
+          loading={loading}
+          showActions={false}
+          expandable
+          variant="monitoring"
+          emptyMessage={logs.length ? 'No access logs match your filters.' : 'No access logs available.'}
+          renderExpandedRow={(row) => (
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div><dt className="font-semibold">Event ID</dt><dd>{row.id}</dd></div>
+              <div><dt className="font-semibold">Access Method</dt><dd>{row.access_method || '—'}</dd></div>
+              {row.nfc_uid && <div><dt className="font-semibold">NFC UID</dt><dd className="break-all">{row.nfc_uid}</dd></div>}
+              {resolveResult(row) === 'failed' && row.reason && <div className="sm:col-span-2 lg:col-span-3"><dt className="font-semibold">Failure Reason</dt><dd>{row.reason}</dd></div>}
+            </dl>
+          )}
+        />
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-[#6B7280]">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredLogs.length)} of {filteredLogs.length}</div>
+          <div className="text-sm text-[#6B7280]">Showing {filteredLogs.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filteredLogs.length)} of {filteredLogs.length}</div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="min-h-11 rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
             {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (

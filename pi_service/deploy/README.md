@@ -79,6 +79,14 @@ Important:
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
+Each physical station reader must have a unique `DEVICE_API_KEY`. Map each key on the Django server with `TAPTRACK_NFC_DEVICE_MAP`, for example:
+
+```env
+TAPTRACK_NFC_DEVICE_MAP=[{"device_id":"CABINET1-STATION1","api_key":"<station-1-reader-key>","station":"Station 1","cabinet_name":"Cabinet 1","active":true},{"device_id":"CABINET1-STATION2","api_key":"<station-2-reader-key>","station":"Station 2","cabinet_name":"Cabinet 1","active":true}]
+```
+
+Django derives the station and cabinet from the authenticated reader. The Cabinet browser sends workflow commands through the Pi bridge and never submits audit values or receives reader keys.
+
 ## Build the Cabinet UI
 
 ```bash
