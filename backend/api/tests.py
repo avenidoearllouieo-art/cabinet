@@ -2434,6 +2434,59 @@ class CabinetDeviceIntegrationTests(TestCase):
         )
         self.assertEqual(invalid.status_code, 400)
 
+    @override_settings(TAPTRACK_CABINET_STATIONS=[])
+    def test_hardware_workflow_and_real_scan_do_not_require_mock_station_list(self):
+        student = User.objects.create_user(
+            username='hardware-no-mock-station-student',
+            email='hardware-no-mock-station@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='HARDWARE-NO-MOCK-001',
+            nfc_uid='HARDWARE-READER-UID-001',
+        )
+
+        opened = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': student.nfc_uid},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+
+        self.assertEqual(opened.status_code, 200, opened.json())
+        self.assertEqual(opened.json()['mode'], 'hardware')
+        self.assertEqual(scan.status_code, 200, scan.json())
+        access_log = student.access_logs.get()
+        self.assertEqual(access_log.nfc_uid, 'HARDWARE-READER-UID-001')
+        self.assertEqual(access_log.station, 'Station 1')
+        self.assertEqual(access_log.cabinet_session_id, opened.json()['session']['id'])
+
+    @override_settings(DEBUG=True)
+    def test_unmapped_hardware_key_is_not_silently_routed_to_mock_station_validation(self):
+        os.environ['DEVICE_API_KEY'] = 'unmapped-hardware-key'
+
+        workflow = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY='unmapped-hardware-key',
+        )
+        scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'REAL-READER-UID'},
+            HTTP_X_API_KEY='unmapped-hardware-key',
+            format='json',
+        )
+
+        self.assertEqual(workflow.status_code, 403, workflow.json())
+        self.assertEqual(scan.status_code, 403, scan.json())
+        self.assertNotIn('mock station', workflow.json().get('error', '').lower())
+        self.assertNotIn('mock station', scan.json().get('error', '').lower())
+        self.assertFalse(AccessLog.objects.filter(nfc_uid='REAL-READER-UID').exists())
+
     def test_hardware_device_ignores_browser_station_override_and_disabled_devices_are_rejected(self):
         student = User.objects.create_user(
             username='reader-bound-student',

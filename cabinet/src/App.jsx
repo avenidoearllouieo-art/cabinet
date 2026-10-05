@@ -449,11 +449,23 @@ export default function App() {
     setScanFeedback(null)
     setErrorMessage('')
     if (NFC_MODE === 'hardware') {
-      if (readerContext?.station) void handleStationSelect(readerContext.station)
-      else setErrorMessage('The NFC reader station is not configured.')
+      const station = readerContext?.station
+      if (!station) {
+        setErrorMessage('The NFC reader station is not configured.')
+        return
+      }
+      const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
+      if (activeSession?.workflow_state === 'opening') {
+        resumeOpeningSession(activeSession)
+      } else if (activeSession) {
+        setSelectedStation(station)
+        setView('already-open')
+      } else {
+        void handleStationSelect(station)
+      }
       return
     }
-    setStatusMessage(NFC_MODE === 'mock' ? 'Choose an available mock station to begin.' : 'The physical reader has no station assignment.')
+    setStatusMessage('Choose a station to begin.')
     setView('station-select')
   }
 
@@ -466,8 +478,24 @@ export default function App() {
     setScanFeedback(null)
     setErrorMessage('')
     if (NFC_MODE === 'hardware') {
-      if (readerContext?.station) void selectSessionToClose(readerContext.station)
-      else setErrorMessage('The NFC reader station is not configured.')
+      const station = readerContext?.station
+      if (!station) {
+        setErrorMessage('The NFC reader station is not configured.')
+        return
+      }
+      const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
+      if (!activeSession) {
+        setSelectedStation(station)
+        setView('already-closed')
+      } else if (activeSession.workflow_state === 'opening') {
+        resumeOpeningSession(activeSession)
+      } else {
+        void selectSessionToClose(station)
+      }
+      return
+    }
+    if (!sessions.some((session) => session.status === 'open')) {
+      setView('already-closed')
       return
     }
     setStatusMessage('Choose an active mock station to close.')
@@ -500,6 +528,17 @@ export default function App() {
       return
     }
 
+    const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
+    if (activeSession?.workflow_state === 'opening') {
+      resumeOpeningSession(activeSession)
+      return
+    }
+    if (activeSession) {
+      setSelectedStation(station)
+      setView('already-open')
+      return
+    }
+
     try {
       if (!workflowLoaded) throw new Error('Loading configured stations...')
       const data = await sendCabinetWorkflow('open', { mode: NFC_MODE, station })
@@ -516,7 +555,11 @@ export default function App() {
 
   async function selectSessionToClose(station) {
     const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
-    if (!activeSession) return
+    if (!activeSession) {
+      setSelectedStation(station)
+      setView('already-closed')
+      return
+    }
     if (activeSession.workflow_state === 'opening') {
       resumeOpeningSession(activeSession)
       return
@@ -936,6 +979,7 @@ export default function App() {
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
               {NFC_MODE === 'mock' && <button className="btn ghost home-action" onClick={startPasswordRecovery}>Password Recovery</button>}
             </div>
+            {errorMessage && <div className="error-banner" role="alert">{errorMessage}</div>}
           </div>
         </Screen>
       )}
@@ -949,6 +993,7 @@ export default function App() {
             <div className="confirm-list">
               <div className="confirm-row"><span>Station</span><strong>{selectedSession?.station}</strong></div>
               <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
             </div>
             <div className="button-row">
               <button className="btn primary" onClick={() => setView('cabinet-opened')}>VIEW SESSION</button>
@@ -1029,7 +1074,7 @@ export default function App() {
         <Screen>
           <div className="panel status-panel">
             <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
-            <h2>Cabinet is already closed.</h2>
+            <h2>{selectedStation ? `${stationLabel(selectedStation)} is already closed.` : 'Cabinet is already closed.'}</h2>
             <div className="button-row">
               <button className="btn primary" onClick={resetToHome}>BACK TO HOME</button>
             </div>
@@ -1166,11 +1211,10 @@ export default function App() {
                 <button
                   key={station}
                   className="btn station-button"
-                  disabled={occupiedStations.includes(station)}
                   onClick={() => handleStationSelect(station)}
                 >
                   <span>{stationLabel(station).toUpperCase()}</span>
-                  <small>{occupiedStations.includes(station) ? 'OCCUPIED' : 'AVAILABLE'}</small>
+                  <small>{occupiedStations.includes(station) ? 'OPEN' : 'AVAILABLE'}</small>
                 </button>
               ))}
             </div>
@@ -1206,7 +1250,10 @@ export default function App() {
                       >
                         {session.workflow_state === 'opening' ? 'RESUME OPENING' : `CLOSE ${stationLabel(station).toUpperCase()}`}
                       </button>
-                    </> : <span>No active session</span>}
+                    </> : <>
+                      <span>No active session</span>
+                      <button className="btn ghost" onClick={() => selectSessionToClose(station)}>CLOSE {stationLabel(station).toUpperCase()}</button>
+                    </>}
                   </div>
                 )
               })}

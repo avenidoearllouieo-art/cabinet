@@ -88,15 +88,7 @@ class HasDeviceAPIKey(BasePermission):
             return True
         if mapped_device:
             return False
-        if not expected or not hmac.compare_digest(provided, expected):
-            return False
-        request.nfc_device_context = {
-            'station': '',
-            'cabinet_name': settings.TAPTRACK_CABINET_NAME,
-            'device_id': 'MOCK-LAPTOP',
-            'mock': settings.DEBUG,
-        }
-        return settings.DEBUG
+        return False
 
 
 class PasswordResetRateThrottle(AnonRateThrottle):
