@@ -182,13 +182,10 @@ export default function App() {
         const stations = (data.stations || []).map((item) => item.name)
         setReaderContext({
           mode: data.mode || NFC_MODE,
-          station: data.station,
           cabinetName: data.cabinet_name,
           stations,
         })
-        const sessions = data.mode === 'mock'
-          ? data.stations.map((item) => normalizeServerSession(item.session)).filter(Boolean)
-          : [normalizeServerSession(data.session)].filter(Boolean)
+        const sessions = (data.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean)
         setCabinetState({ sessions })
         setWorkflowLoaded(true)
       })
@@ -406,21 +403,27 @@ export default function App() {
       .filter((session) => session.status === 'open')
       .map((session) => session.station)
   }, [sessions])
-  const readerStations = readerContext?.mode === 'mock'
-    ? readerContext.stations || []
-    : readerContext?.station ? [readerContext.station] : []
+  const readerStations = readerContext?.stations || []
+
+  function updateStationSession(session) {
+    if (!session) return
+    setCabinetState((current) => ({
+      sessions: [...current.sessions.filter((item) => item.station !== session.station), session],
+    }))
+  }
+
+  async function refreshCabinetWorkflow() {
+    const state = await fetchCabinetWorkflow({ mode: NFC_MODE })
+    setCabinetState({
+      sessions: (state.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean),
+    })
+  }
 
   function resetToHome() {
     if (selectedSession && selectedSession.workflow_state !== 'idle') {
-      void sendCabinetWorkflow('cancel', { mode: NFC_MODE, station: selectedStation }).then((data) => {
-        if (data.mode === 'mock') {
-          return fetchCabinetWorkflow({ mode: NFC_MODE }).then((state) => {
-            setCabinetState({ sessions: state.stations.map((item) => normalizeServerSession(item.session)).filter(Boolean) })
-          })
-        }
-        const session = normalizeServerSession(data.session)
-        setCabinetState({ sessions: session ? [session] : [] })
-      }).catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
+      void sendCabinetWorkflow('cancel', { mode: NFC_MODE, station: selectedStation })
+        .then(refreshCabinetWorkflow)
+        .catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
     }
     setView('home')
     setPendingAction('open')
@@ -448,23 +451,6 @@ export default function App() {
     participantsByUidRef.current.clear()
     setScanFeedback(null)
     setErrorMessage('')
-    if (NFC_MODE === 'hardware') {
-      const station = readerContext?.station
-      if (!station) {
-        setErrorMessage('The NFC reader station is not configured.')
-        return
-      }
-      const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
-      if (activeSession?.workflow_state === 'opening') {
-        resumeOpeningSession(activeSession)
-      } else if (activeSession) {
-        setSelectedStation(station)
-        setView('already-open')
-      } else {
-        void handleStationSelect(station)
-      }
-      return
-    }
     setStatusMessage('Choose a station to begin.')
     setView('station-select')
   }
@@ -477,25 +463,8 @@ export default function App() {
     setCloseRejectedStudent('')
     setScanFeedback(null)
     setErrorMessage('')
-    if (NFC_MODE === 'hardware') {
-      const station = readerContext?.station
-      if (!station) {
-        setErrorMessage('The NFC reader station is not configured.')
-        return
-      }
-      const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
-      if (!activeSession) {
-        setSelectedStation(station)
-        setView('already-closed')
-      } else if (activeSession.workflow_state === 'opening') {
-        resumeOpeningSession(activeSession)
-      } else {
-        void selectSessionToClose(station)
-      }
-      return
-    }
     if (!sessions.some((session) => session.status === 'open')) {
-      setView('already-closed')
+      setView('close-select')
       return
     }
     setStatusMessage('Choose an active mock station to close.')
@@ -523,11 +492,6 @@ export default function App() {
   }
 
   async function handleStationSelect(station) {
-    if (NFC_MODE === 'hardware' && (!readerContext?.station || station !== readerContext.station)) {
-      setErrorMessage('This cabinet reader is not assigned to that station.')
-      return
-    }
-
     const activeSession = sessions.find((session) => session.status === 'open' && session.station === station)
     if (activeSession?.workflow_state === 'opening') {
       resumeOpeningSession(activeSession)
@@ -543,7 +507,7 @@ export default function App() {
       if (!workflowLoaded) throw new Error('Loading configured stations...')
       const data = await sendCabinetWorkflow('open', { mode: NFC_MODE, station })
       const session = normalizeServerSession(data.session)
-      setCabinetState({ sessions: NFC_MODE === 'mock' ? [...sessions, session].filter(Boolean) : [session].filter(Boolean) })
+      updateStationSession(session)
       setSelectedStation(data.station)
       setErrorMessage('')
       setStatusMessage(`Tap each group member’s NFC card for ${stationLabel(data.station)}.`)
@@ -564,10 +528,25 @@ export default function App() {
       resumeOpeningSession(activeSession)
       return
     }
+    if (activeSession.workflow_state === 'closing') {
+      const scannedStudents = activeSession.closed_by || []
+      closingParticipantsRef.current = scannedStudents.map((student) => ({
+        uid: student.uid,
+        fullName: student.fullName,
+        studentId: student.studentId,
+      }))
+      setClosingParticipants(closingParticipantsRef.current)
+      setSelectedStation(station)
+      setPendingAction('close')
+      setErrorMessage('')
+      setStatusMessage('Continue scanning closing attendance for this station.')
+      setView('close-scan')
+      return
+    }
     try {
       const data = await sendCabinetWorkflow('start_close', { mode: NFC_MODE, station })
       const session = normalizeServerSession(data.session)
-      setCabinetState({ sessions: sessions.map((item) => item.station === station ? session : item).filter(Boolean) })
+      updateStationSession(session)
       setSelectedStation(data.station)
       closingParticipantsRef.current = []
       setClosingParticipants([])
@@ -774,18 +753,14 @@ export default function App() {
   async function finalizeSession() {
     if (pendingAction === 'open') {
       if (!selectedStation || !selectedSession || selectedSession.workflow_state !== 'opening') {
-        setErrorMessage('Start an opening workflow on this reader before opening the cabinet.')
+        setErrorMessage('Start an opening workflow for the selected station before opening the cabinet.')
         setView('station-select')
         return
       }
       try {
         const data = await sendCabinetWorkflow('finish_open', { mode: NFC_MODE, station: selectedStation })
         const session = normalizeServerSession(data.session)
-        setCabinetState((current) => ({
-          sessions: NFC_MODE === 'mock'
-            ? current.sessions.map((item) => item.station === data.station ? session : item)
-            : [session].filter(Boolean),
-        }))
+        updateStationSession(session)
         setStatusMessage(`Cabinet opened on ${stationLabel(data.station)}.`)
         setView('cabinet-opened')
       } catch (error) {
@@ -811,11 +786,7 @@ export default function App() {
     try {
       const data = await sendCabinetWorkflow('finish_close', { mode: NFC_MODE, station: selectedStation })
       const session = normalizeServerSession(data.session)
-      setCabinetState((current) => ({
-        sessions: NFC_MODE === 'mock'
-          ? current.sessions.map((item) => item.station === data.station ? session : item)
-          : [session].filter(Boolean),
-      }))
+      updateStationSession(session)
       setStatusMessage(`Cabinet closed on ${stationLabel(data.station)}.`)
       setView('cabinet-closed')
     } catch (error) {
@@ -959,7 +930,7 @@ export default function App() {
                   return (
                     <div className={`station-status-card ${session ? 'is-open' : 'is-available'}`} key={station}>
                       <strong>{stationLabel(station).toUpperCase()}</strong>
-                      <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
+                      <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OCCUPIED' : 'AVAILABLE'}</span>
                       {session ? <span>Opened by {getParticipantCount(session)}</span> : <span>Ready</span>}
                       {session && <small>Opened {formatSessionTime(session.openedAt)}</small>}
                     </div>
@@ -1207,16 +1178,21 @@ export default function App() {
               <div className="empty-state" role="status">No mock stations are configured.</div>
             )}
             <div className="station-grid">
-              {readerStations.map((station) => (
-                <button
-                  key={station}
-                  className="btn station-button"
-                  onClick={() => handleStationSelect(station)}
-                >
-                  <span>{stationLabel(station).toUpperCase()}</span>
-                  <small>{occupiedStations.includes(station) ? 'OPEN' : 'AVAILABLE'}</small>
-                </button>
-              ))}
+              {readerStations.map((station) => {
+                const session = sessions.find((item) => item.status === 'open' && item.station === station)
+                const resuming = session?.workflow_state === 'opening'
+                return (
+                  <button
+                    key={station}
+                    className="btn station-button"
+                    onClick={() => handleStationSelect(station)}
+                    disabled={Boolean(session && !resuming)}
+                  >
+                    <span>{stationLabel(station).toUpperCase()}</span>
+                    <small>{resuming ? 'RESUME OPENING' : session ? 'OCCUPIED' : 'AVAILABLE'}</small>
+                  </button>
+                )
+              })}
             </div>
             {errorMessage && <div className="error-banner">{errorMessage}</div>}
             <div className="button-row">
@@ -1238,7 +1214,7 @@ export default function App() {
                 return (
                   <div className={`station-status-card close-station-card ${session ? 'is-open' : 'is-available'}`} key={station}>
                     <strong>{stationLabel(station).toUpperCase()}</strong>
-                    <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OPEN' : 'AVAILABLE'}</span>
+                    <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? session.workflow_state === 'closing' ? 'CLOSING' : session.workflow_state === 'opening' ? 'OPENING' : 'OCCUPIED' : 'AVAILABLE'}</span>
                     {session ? <>
                       <span>Opened by {getParticipantCount(session)}</span>
                       <small>Opened {formatSessionTime(session.openedAt)}</small>
@@ -1248,7 +1224,11 @@ export default function App() {
                           ? resumeOpeningSession(session)
                           : selectSessionToClose(station)}
                       >
-                        {session.workflow_state === 'opening' ? 'RESUME OPENING' : `CLOSE ${stationLabel(station).toUpperCase()}`}
+                        {session.workflow_state === 'opening'
+                          ? 'RESUME OPENING'
+                          : session.workflow_state === 'closing'
+                            ? 'CONTINUE CLOSING'
+                            : `CLOSE ${stationLabel(station).toUpperCase()}`}
                       </button>
                     </> : <>
                       <span>No active session</span>

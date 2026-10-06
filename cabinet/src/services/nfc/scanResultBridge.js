@@ -6,8 +6,7 @@ const workflowUrl = `${new URL(scanBridgeUrl).origin}/cabinet/workflow`
 async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardware', station } = {}) {
   const mockMode = mode === 'mock'
   const url = mockMode ? '/api/cabinet/workflow/' : workflowUrl
-  const body = command ? { command } : null
-  if (body && mockMode && station) body.station = station
+  const body = command ? { command, station } : null
   const response = await fetcher(url, {
     method: command ? 'POST' : 'GET',
     headers: {

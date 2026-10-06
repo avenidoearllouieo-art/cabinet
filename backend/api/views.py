@@ -1217,7 +1217,7 @@ class CabinetWorkflowView(APIView):
         context = getattr(request, 'nfc_device_context', {})
         if context.get('mock'):
             return context
-        if not context.get('station') or not context.get('cabinet_name'):
+        if not context.get('cabinet_name'):
             return None
         return context
 
@@ -1230,7 +1230,7 @@ class CabinetWorkflowView(APIView):
     def get(self, request, *args, **kwargs):
         context = self.get_context(request)
         if not context:
-            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Reader device is not mapped to a cabinet.'}, status=status.HTTP_403_FORBIDDEN)
         if context.get('mock'):
             stations = []
             for station in settings.TAPTRACK_CABINET_STATIONS:
@@ -1242,37 +1242,47 @@ class CabinetWorkflowView(APIView):
                     'session': CabinetSessionSerializer(session).data if session else None,
                 })
             return Response({'mode': 'mock', 'stations': stations})
-        if not context.get('station') or not context.get('cabinet_name'):
-            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
-        session = self.active_session(context['station'])
+        stations = []
+        for station in settings.TAPTRACK_CABINET_STATIONS:
+            session = self.active_session(station)
+            stations.append({
+                'name': station,
+                'cabinet_name': context['cabinet_name'],
+                'status': 'occupied' if session else 'available',
+                'session': CabinetSessionSerializer(session).data if session else None,
+            })
         return Response({
             'mode': 'hardware',
-            'station': context['station'],
             'cabinet_name': context['cabinet_name'],
-            'session': CabinetSessionSerializer(session).data if session else None,
+            'stations': stations,
         })
 
     def post(self, request, *args, **kwargs):
         context = self.get_context(request)
         if not context:
-            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Reader device is not mapped to a cabinet.'}, status=status.HTTP_403_FORBIDDEN)
 
+        station = str(request.data.get('station') or '').strip()
+        if station not in settings.TAPTRACK_CABINET_STATIONS:
+            return Response({'error': 'Select a configured cabinet station.'}, status=status.HTTP_400_BAD_REQUEST)
         if context.get('mock'):
-            station = str(request.data.get('station') or '').strip()
-            if station not in settings.TAPTRACK_CABINET_STATIONS:
-                return Response({'error': 'Select a configured mock station.'}, status=status.HTTP_400_BAD_REQUEST)
-            context = {
-                **context,
-                'station': station,
-                'cabinet_name': settings.TAPTRACK_CABINET_NAME,
-            }
-        elif not context.get('station') or not context.get('cabinet_name'):
-            return Response({'error': 'Reader station is not configured.'}, status=status.HTTP_403_FORBIDDEN)
+            context = {**context, 'cabinet_name': settings.TAPTRACK_CABINET_NAME}
+        context = {**context, 'station': station}
 
         command = str(request.data.get('command') or '').strip().lower()
         with transaction.atomic():
-            session = self.active_session(context['station'], lock=True)
+            session = self.active_session(station, lock=True)
             if command == 'open':
+                another_workflow = CabinetSession.objects.filter(
+                    station__in=settings.TAPTRACK_CABINET_STATIONS,
+                    status=CabinetSession.StatusChoices.OPEN,
+                    workflow_state__in=(
+                        CabinetSession.WorkflowStateChoices.OPENING,
+                        CabinetSession.WorkflowStateChoices.CLOSING,
+                    ),
+                ).exclude(station=station).exists()
+                if another_workflow and not context.get('mock'):
+                    return Response({'error': 'Another station is currently using the shared NFC reader.'}, status=status.HTTP_409_CONFLICT)
                 if session:
                     return Response({'error': 'This station already has an active session.'}, status=status.HTTP_409_CONFLICT)
                 try:
@@ -1294,6 +1304,16 @@ class CabinetWorkflowView(APIView):
             elif command == 'start_close':
                 if not session or session.workflow_state != CabinetSession.WorkflowStateChoices.IDLE:
                     return Response({'error': 'There is no active session available to close.'}, status=status.HTTP_409_CONFLICT)
+                another_workflow = CabinetSession.objects.filter(
+                    station__in=settings.TAPTRACK_CABINET_STATIONS,
+                    status=CabinetSession.StatusChoices.OPEN,
+                    workflow_state__in=(
+                        CabinetSession.WorkflowStateChoices.OPENING,
+                        CabinetSession.WorkflowStateChoices.CLOSING,
+                    ),
+                ).exclude(station=station).exists()
+                if another_workflow and not context.get('mock'):
+                    return Response({'error': 'Another station is currently using the shared NFC reader.'}, status=status.HTTP_409_CONFLICT)
                 session.closed_by.clear()
                 session.workflow_state = CabinetSession.WorkflowStateChoices.CLOSING
                 session.save(update_fields=['workflow_state', 'updated_at'])
@@ -1566,13 +1586,24 @@ class VerifyNFCView(APIView):
     permission_classes = [HasDeviceAPIKey]         # API key instead
 
     def _active_session_for_user(self, user, device_context):
-        sessions_query = CabinetSession.objects.filter(status=CabinetSession.StatusChoices.OPEN)
-        if device_context.get('station'):
+        sessions_query = CabinetSession.objects.filter(
+            status=CabinetSession.StatusChoices.OPEN,
+            station__in=settings.TAPTRACK_CABINET_STATIONS,
+        )
+        if device_context.get('mock') and device_context.get('station'):
             sessions_query = sessions_query.filter(station=device_context['station'])
-        elif user:
-            sessions_query = sessions_query.filter(opened_by=user)
         else:
-            return None
+            workflow_sessions = sessions_query.filter(
+                workflow_state__in=(
+                    CabinetSession.WorkflowStateChoices.OPENING,
+                    CabinetSession.WorkflowStateChoices.CLOSING,
+                ),
+            )
+            workflow_matches = list(workflow_sessions.order_by('-opened_at')[:2])
+            if workflow_matches:
+                return workflow_matches[0] if len(workflow_matches) == 1 else None
+            if user:
+                sessions_query = sessions_query.filter(opened_by=user)
         sessions = list(sessions_query.order_by('-opened_at')[:2])
         return sessions[0] if len(sessions) == 1 else None
 
@@ -1627,7 +1658,7 @@ class VerifyNFCView(APIView):
             status=status_value,
             action=action,
             nfc_uid=nfc_uid,
-            station=cabinet_session.station if cabinet_session else device_context.get('station', ''),
+            station=cabinet_session.station if cabinet_session else '',
             cabinet_name=device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME,
             reason=reason_value,
         )
@@ -1715,7 +1746,8 @@ class VerifyNFCView(APIView):
                 )
             else:
                 enrollment.expires_at = expires_at
-            enrollment.station = device_context.get('station', '')
+            active_session = self._active_session_for_user(None, device_context)
+            enrollment.station = active_session.station if active_session else ''
             enrollment.cabinet_name = device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME
             enrollment.set_token(token)
             enrollment.save()
@@ -1755,9 +1787,9 @@ class VerifyNFCView(APIView):
                 'station': mock_station,
                 'cabinet_name': settings.TAPTRACK_CABINET_NAME,
             }
-        elif not device_context.get('station') or not device_context.get('cabinet_name'):
+        elif not device_context.get('cabinet_name'):
             return Response(
-                {'success': False, 'error': 'This NFC reader is not mapped to a station and cabinet.'},
+                {'success': False, 'error': 'This NFC reader is not mapped to a cabinet.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

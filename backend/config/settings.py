@@ -80,8 +80,7 @@ if (
         or not device.get('api_key').strip()
         or not isinstance(device.get('device_id'), str)
         or not device.get('device_id').strip()
-        or not isinstance(device.get('station'), str)
-        or not device.get('station').strip()
+        or ('station' in device and not isinstance(device.get('station'), str))
         or not isinstance(device.get('cabinet_name'), str)
         or not device.get('cabinet_name').strip()
         or not isinstance(device.get('active'), bool)
@@ -90,7 +89,7 @@ if (
     or len(device_keys) != len(set(device_keys))
     or len({device['device_id'] for device in TAPTRACK_NFC_DEVICE_MAP}) != len(TAPTRACK_NFC_DEVICE_MAP)
 ):
-    raise ImproperlyConfigured('Each active TAPTRACK_NFC_DEVICE_MAP entry must have a unique device ID and API key, station, and cabinet name.')
+    raise ImproperlyConfigured('Each active TAPTRACK_NFC_DEVICE_MAP entry must have a unique device ID and API key plus a cabinet name.')
 
 
 # Application definition

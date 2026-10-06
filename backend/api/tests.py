@@ -2435,7 +2435,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(invalid.status_code, 400)
 
     @override_settings(TAPTRACK_CABINET_STATIONS=[])
-    def test_hardware_workflow_and_real_scan_do_not_require_mock_station_list(self):
+    def test_hardware_workflow_requires_a_configured_selected_station(self):
         student = User.objects.create_user(
             username='hardware-no-mock-station-student',
             email='hardware-no-mock-station@example.com',
@@ -2447,24 +2447,13 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         opened = self.client.post(
             '/api/cabinet/workflow/',
-            {'command': 'open'},
+            {'command': 'open', 'station': 'Station 1'},
             HTTP_X_API_KEY=self.device_api_key,
             format='json',
         )
-        scan = self.client.post(
-            '/api/verify-nfc/',
-            {'nfc_uid': student.nfc_uid},
-            HTTP_X_API_KEY=self.device_api_key,
-            format='json',
-        )
-
-        self.assertEqual(opened.status_code, 200, opened.json())
-        self.assertEqual(opened.json()['mode'], 'hardware')
-        self.assertEqual(scan.status_code, 200, scan.json())
-        access_log = student.access_logs.get()
-        self.assertEqual(access_log.nfc_uid, 'HARDWARE-READER-UID-001')
-        self.assertEqual(access_log.station, 'Station 1')
-        self.assertEqual(access_log.cabinet_session_id, opened.json()['session']['id'])
+        self.assertEqual(opened.status_code, 400, opened.json())
+        self.assertEqual(opened.json()['error'], 'Select a configured cabinet station.')
+        self.assertFalse(student.access_logs.exists())
 
     @override_settings(DEBUG=True)
     def test_unmapped_hardware_key_is_not_silently_routed_to_mock_station_validation(self):
@@ -2487,7 +2476,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertNotIn('mock station', scan.json().get('error', '').lower())
         self.assertFalse(AccessLog.objects.filter(nfc_uid='REAL-READER-UID').exists())
 
-    def test_hardware_device_ignores_browser_station_override_and_disabled_devices_are_rejected(self):
+    def test_hardware_scan_uses_active_workflow_station_and_disabled_devices_are_rejected(self):
         student = User.objects.create_user(
             username='reader-bound-student',
             email='reader-bound@example.com',
@@ -2497,6 +2486,15 @@ class CabinetDeviceIntegrationTests(TestCase):
             nfc_uid='READER-BOUND-UID',
         )
 
+        station_one = CabinetSession.objects.create(
+            station='Station 1',
+            status=CabinetSession.StatusChoices.OPEN,
+        )
+        session = CabinetSession.objects.create(
+            station='Station 2',
+            status=CabinetSession.StatusChoices.OPEN,
+            workflow_state=CabinetSession.WorkflowStateChoices.OPENING,
+        )
         response = self.client.post(
             '/api/verify-nfc/',
             {'nfc_uid': student.nfc_uid, 'station': 'Station 2'},
@@ -2505,8 +2503,10 @@ class CabinetDeviceIntegrationTests(TestCase):
         )
         self.assertEqual(response.status_code, 200, response.json())
         log = AccessLog.objects.get(user=student)
-        self.assertEqual(log.station, 'Station 1')
+        self.assertEqual(log.station, 'Station 2')
+        self.assertEqual(log.cabinet_session, session)
         self.assertEqual(log.cabinet_name, 'Cabinet 1')
+        self.assertEqual(station_one.status, CabinetSession.StatusChoices.OPEN)
 
         with override_settings(TAPTRACK_NFC_DEVICE_MAP=[{
             'device_id': 'CABINET1-STATION1',
@@ -2624,11 +2624,22 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(response.json()['cabinet_session_id'], session.pk)
         self.assertEqual(response.json()['reason'], log.reason)
 
-    @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
-        {'device_id': 'CABINET1-STATION1', 'api_key': 'reader-one-secret', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
-        {'device_id': 'CABINET1-STATION2', 'api_key': 'reader-two-secret', 'station': 'Station 2', 'cabinet_name': 'Cabinet 1', 'active': True},
-    ])
-    def test_reader_identity_keeps_simultaneous_station_logs_separate(self):
+    @override_settings(
+        TAPTRACK_NFC_DEVICE_MAP=[{'device_id': 'CABINET1', 'api_key': 'cabinet-device-test-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True}],
+        TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'],
+    )
+    def test_single_reader_logs_the_selected_station_when_both_are_occupied(self):
+        station_response = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+        self.assertEqual(station_response.status_code, 200, station_response.json())
+        self.assertEqual(station_response.json()['mode'], 'hardware')
+        self.assertEqual(
+            [(item['name'], item['status']) for item in station_response.json()['stations']],
+            [('Station 1', 'available'), ('Station 2', 'available')],
+        )
+
         student = User.objects.create_user(
             username='multi-station-student',
             email='multi-station@example.com',
@@ -2638,28 +2649,31 @@ class CabinetDeviceIntegrationTests(TestCase):
             nfc_uid='MULTI-STATION-UID',
         )
         station_one = CabinetSession.objects.create(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
-        station_two = CabinetSession.objects.create(station='Station 2', status=CabinetSession.StatusChoices.OPEN)
+        station_two = CabinetSession.objects.create(
+            station='Station 2',
+            status=CabinetSession.StatusChoices.OPEN,
+            workflow_state=CabinetSession.WorkflowStateChoices.OPENING,
+        )
         station_one.opened_by.add(student)
-        station_two.opened_by.add(student)
 
-        for device_key in ('reader-one-secret', 'reader-two-secret'):
-            response = self.client.post(
-                '/api/verify-nfc/',
-                {'nfc_uid': student.nfc_uid},
-                HTTP_X_API_KEY=device_key,
-                format='json',
-            )
-            self.assertEqual(response.status_code, 200, response.json())
+        response = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': student.nfc_uid},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.json())
 
         logs = list(student.access_logs.order_by('station'))
-        self.assertEqual([log.station for log in logs], ['Station 1', 'Station 2'])
-        self.assertEqual([log.cabinet_name for log in logs], ['Cabinet 1', 'Cabinet 1'])
-        self.assertEqual([log.cabinet_session_id for log in logs], [station_one.pk, station_two.pk])
+        self.assertEqual([log.station for log in logs], ['Station 2'])
+        self.assertEqual([log.cabinet_name for log in logs], ['Cabinet 1'])
+        self.assertEqual([log.cabinet_session_id for log in logs], [station_two.pk])
+        self.assertEqual(station_one.status, CabinetSession.StatusChoices.OPEN)
 
-    @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
-        {'device_id': 'CABINET1-STATION1', 'api_key': 'reader-workflow-secret', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
-        {'device_id': 'CABINET1-STATION2', 'api_key': 'reader-two-workflow-secret', 'station': 'Station 2', 'cabinet_name': 'Cabinet 1', 'active': True},
-    ])
+    @override_settings(
+        TAPTRACK_NFC_DEVICE_MAP=[{'device_id': 'CABINET1', 'api_key': 'reader-workflow-secret', 'cabinet_name': 'Cabinet 1', 'active': True}],
+        TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'],
+    )
     def test_backend_workflow_derives_open_close_and_rejected_audit_events(self):
         participant = User.objects.create_user(
             username='workflow-participant',
@@ -2679,7 +2693,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         )
 
         opened = self.client.post(
-            '/api/cabinet/workflow/', {'command': 'open'},
+            '/api/cabinet/workflow/', {'command': 'open', 'station': 'Station 1'},
             HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(opened.status_code, 200, opened.json())
@@ -2696,28 +2710,35 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(open_log.cabinet_session_id, session_id)
 
         finish_open = self.client.post(
-            '/api/cabinet/workflow/', {'command': 'finish_open'},
+            '/api/cabinet/workflow/', {'command': 'finish_open', 'station': 'Station 1'},
             HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(finish_open.status_code, 200, finish_open.json())
         station_two_open = self.client.post(
-            '/api/cabinet/workflow/', {'command': 'open'},
-            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+            '/api/cabinet/workflow/', {'command': 'open', 'station': 'Station 2'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(station_two_open.status_code, 200, station_two_open.json())
         station_two_scan = self.client.post(
             '/api/verify-nfc/', {'nfc_uid': participant.nfc_uid},
-            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(station_two_scan.status_code, 200, station_two_scan.json())
         self.assertEqual(AccessLog.objects.filter(user=participant).latest('access_time').station, 'Station 2')
         station_two_finish = self.client.post(
-            '/api/cabinet/workflow/', {'command': 'finish_open'},
-            HTTP_X_API_KEY='reader-two-workflow-secret', format='json',
+            '/api/cabinet/workflow/', {'command': 'finish_open', 'station': 'Station 2'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(station_two_finish.status_code, 200, station_two_finish.json())
+        both_occupied = self.client.get(
+            '/api/cabinet/workflow/', HTTP_X_API_KEY='reader-workflow-secret',
+        )
+        self.assertEqual(
+            [(item['name'], item['status']) for item in both_occupied.json()['stations']],
+            [('Station 1', 'occupied'), ('Station 2', 'occupied')],
+        )
         self.client.post(
-            '/api/cabinet/workflow/', {'command': 'start_close'},
+            '/api/cabinet/workflow/', {'command': 'start_close', 'station': 'Station 1'},
             HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
 
@@ -2741,7 +2762,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertEqual(close_log.reason, 'Cabinet close attendance recorded')
 
         closed = self.client.post(
-            '/api/cabinet/workflow/', {'command': 'finish_close'},
+            '/api/cabinet/workflow/', {'command': 'finish_close', 'station': 'Station 1'},
             HTTP_X_API_KEY='reader-workflow-secret', format='json',
         )
         self.assertEqual(closed.status_code, 200, closed.json())
@@ -2750,6 +2771,31 @@ class CabinetDeviceIntegrationTests(TestCase):
         station_two_session = CabinetSession.objects.get(pk=station_two_open.json()['session']['id'])
         self.assertEqual(station_one_session.status, CabinetSession.StatusChoices.CLOSED)
         self.assertEqual(station_two_session.status, CabinetSession.StatusChoices.OPEN)
+
+        start_station_two_close = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'start_close', 'station': 'Station 2'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(start_station_two_close.status_code, 200, start_station_two_close.json())
+        station_two_closing_scan = self.client.post(
+            '/api/verify-nfc/', {'nfc_uid': participant.nfc_uid},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(station_two_closing_scan.status_code, 200, station_two_closing_scan.json())
+        self.assertEqual(station_two_closing_scan.json()['station']['name'], 'Station 2')
+        finish_station_two_close = self.client.post(
+            '/api/cabinet/workflow/', {'command': 'finish_close', 'station': 'Station 2'},
+            HTTP_X_API_KEY='reader-workflow-secret', format='json',
+        )
+        self.assertEqual(finish_station_two_close.status_code, 200, finish_station_two_close.json())
+
+        all_available = self.client.get(
+            '/api/cabinet/workflow/', HTTP_X_API_KEY='reader-workflow-secret',
+        )
+        self.assertEqual(
+            [(item['name'], item['status']) for item in all_available.json()['stations']],
+            [('Station 1', 'available'), ('Station 2', 'available')],
+        )
 
     def test_duplicate_participant_scan_is_recorded_as_duplicate(self):
         student = User.objects.create_user(

@@ -144,11 +144,14 @@ class DjangoVerifier:
             payload['error'] = self._sanitize_error(payload['error'])
         return status_code, payload
 
-    def workflow(self, command: str | None = None) -> tuple[int, dict]:
+    def workflow(self, command: str | None = None, station: str | None = None) -> tuple[int, dict]:
         if not self.api_key:
             raise DjangoRequestError('Django device API key is not configured.')
 
-        body = None if command is None else json.dumps({'command': command}).encode('utf-8')
+        workflow_payload = {'command': command} if command is not None else None
+        if workflow_payload is not None and station:
+            workflow_payload['station'] = station
+        body = None if workflow_payload is None else json.dumps(workflow_payload).encode('utf-8')
         request = urllib.request.Request(
             DJANGO_WORKFLOW_URL,
             data=body,
@@ -520,10 +523,11 @@ class NFCHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get('Content-Length', '0'))
                 payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
                 command = str(payload.get('command') or '')
+                station = str(payload.get('station') or '').strip()
                 if command not in {'open', 'finish_open', 'start_close', 'finish_close', 'cancel'}:
                     self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
                     return
-                status_code, response = service.verifier.workflow(command)
+                status_code, response = service.verifier.workflow(command, station)
                 self._send_json(HTTPStatus(status_code), response)
             except (ValueError, json.JSONDecodeError):
                 self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})

@@ -166,7 +166,7 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(request.get_header('X-api-key'), 'unit-test-key')
         self.assertEqual(timeout, 5)
 
-    def test_django_workflow_proxy_uses_device_key_and_only_forwards_command(self):
+    def test_django_workflow_proxy_uses_device_key_and_forwards_selected_station(self):
         calls = []
 
         def opener(request, timeout):
@@ -174,13 +174,13 @@ class NFCServiceTests(unittest.TestCase):
             return FakeResponse(200, {'station': 'Station 1', 'session': {'id': 4}})
 
         verifier = DjangoVerifier(api_key='workflow-device-key', opener=opener)
-        status, payload = verifier.workflow('open')
+        status, payload = verifier.workflow('open', 'Station 2')
 
         self.assertEqual(status, 200)
         self.assertEqual(payload['station'], 'Station 1')
         request, timeout = calls[0]
         self.assertEqual(request.full_url, 'http://127.0.0.1:8000/api/cabinet/workflow/')
-        self.assertEqual(json.loads(request.data), {'command': 'open'})
+        self.assertEqual(json.loads(request.data), {'command': 'open', 'station': 'Station 2'})
         self.assertEqual(request.get_header('X-api-key'), 'workflow-device-key')
         self.assertEqual(timeout, 5)
 
@@ -377,19 +377,19 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             def __init__(self):
                 self.commands = []
 
-            def workflow(self, command=None):
-                self.commands.append(command)
+            def workflow(self, command=None, station=None):
+                self.commands.append((command, station))
                 return 200, {'station': 'Station 1', 'session': {'workflow_state': command or 'idle'}}
 
         verifier = WorkflowVerifier()
         self.service.verifier = verifier
 
         get_status, _, current = self.get_json('/cabinet/workflow')
-        post_status, opened = self.post_json('/cabinet/workflow', {'command': 'open'})
+        post_status, opened = self.post_json('/cabinet/workflow', {'command': 'open', 'station': 'Station 2'})
 
         self.assertEqual(get_status, 200)
         self.assertEqual(post_status, 200)
-        self.assertEqual(verifier.commands, [None, 'open'])
+        self.assertEqual(verifier.commands, [(None, None), ('open', 'Station 2')])
         self.assertEqual(current['station'], 'Station 1')
         self.assertEqual(opened['session']['workflow_state'], 'open')
 
