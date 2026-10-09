@@ -81,6 +81,7 @@ class HasDeviceAPIKey(BasePermission):
         if mapped_device and mapped_device.get('active') is True:
             request.nfc_device_context = {
                 'device_id': str(mapped_device['device_id']).strip(),
+                'station': str(mapped_device.get('station') or '').strip(),
                 'cabinet_name': str(mapped_device.get('cabinet_name') or '').strip(),
                 'mock': False,
             }

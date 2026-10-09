@@ -1652,13 +1652,14 @@ class VerifyNFCView(APIView):
             status_value = AccessLog.AccessStatusChoices.DUPLICATE
             reason_value = 'Duplicate participant scan'
 
+        station_name = (cabinet_session.station if cabinet_session else '') or device_context.get('station') or ''
         access_log = AccessLog.objects.create(
             user=user,
             cabinet_session=cabinet_session,
             status=status_value,
             action=action,
             nfc_uid=nfc_uid,
-            station=cabinet_session.station if cabinet_session else '',
+            station=station_name,
             cabinet_name=device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME,
             reason=reason_value,
         )
@@ -1747,7 +1748,7 @@ class VerifyNFCView(APIView):
             else:
                 enrollment.expires_at = expires_at
             active_session = self._active_session_for_user(None, device_context)
-            enrollment.station = active_session.station if active_session else ''
+            enrollment.station = (active_session.station if active_session else '') or device_context.get('station') or ''
             enrollment.cabinet_name = device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME
             enrollment.set_token(token)
             enrollment.save()
