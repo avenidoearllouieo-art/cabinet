@@ -1,6 +1,9 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+import uuid
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import secrets
@@ -442,6 +445,40 @@ class AccessLog(models.Model):
             models.Index(fields=['cabinet_session', 'status']),
             models.Index(fields=['station', 'access_time']),
         ]
+
+
+def access_log_photo_upload_to(instance, filename):
+    return f'access-log-photos/{uuid.uuid4().hex}.jpg'
+
+
+class AccessLogPhoto(models.Model):
+    class CaptureStatusChoices(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
+    access_log = models.OneToOneField(
+        AccessLog,
+        on_delete=models.CASCADE,
+        related_name='photo',
+    )
+    image = models.ImageField(upload_to=access_log_photo_upload_to, blank=True)
+    capture_status = models.CharField(
+        max_length=10,
+        choices=CaptureStatusChoices.choices,
+        default=CaptureStatusChoices.PENDING,
+    )
+    captured_at = models.DateTimeField(null=True, blank=True)
+    diagnostic_error = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return f'Photo for access log {self.access_log_id} ({self.capture_status})'
+
+
+@receiver(post_delete, sender=AccessLogPhoto)
+def delete_access_log_photo_file(sender, instance, **kwargs):
+    if instance.image:
+        instance.image.delete(save=False)
 
 
 class Notification(models.Model):

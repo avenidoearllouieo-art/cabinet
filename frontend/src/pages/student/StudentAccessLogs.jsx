@@ -123,6 +123,11 @@ export default function StudentAccessLogs() {
       render: (value) => getStatusBadge(value),
     },
     {
+      key: 'photo_capture_status',
+      label: 'Photo Status',
+      render: (value) => value === 'success' ? 'Captured' : value === 'pending' ? 'Pending' : value === 'failed' ? 'Unavailable' : 'Unavailable',
+    },
+    {
       key: 'actions',
       label: 'Action',
       render: (_value, row) => (
@@ -230,6 +235,7 @@ export default function StudentAccessLogs() {
       <ViewInstructorAccessLogModal
         isOpen={isViewModalOpen}
         log={selectedLog}
+        allowPhotoPreview={false}
         onClose={() => {
           setIsViewModalOpen(false)
           setSelectedLog(null)

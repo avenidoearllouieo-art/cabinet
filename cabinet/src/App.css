@@ -426,6 +426,76 @@
 }
 .feedback-banner strong { display: block; margin-bottom: 4px; color: var(--heading); font-size: 1.05rem; }
 .feedback-banner p { margin: 0; color: var(--muted); }
+.access-photo-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  text-align: left;
+}
+.access-photo-status { display: flex; align-items: center; gap: 10px; }
+.access-photo-status strong { color: var(--heading); }
+.photo-state-indicator { padding: 3px 8px; border-radius: 999px; background: #edf1f5; color: #506174; font-size: 0.85rem; font-weight: 700; }
+.photo-state-captured { background: #e7f5eb; color: #17643b; }
+.photo-state-pending,
+.photo-state-loading { background: #fff4d2; color: #775508; }
+.access-photo-placeholder,
+.access-photo-diagnostic { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.9rem; }
+.access-photo-diagnostic { color: #8a4b12; }
+.access-photo-preview-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--heading);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.access-photo-preview-trigger img { width: 76px; height: 54px; border-radius: 4px; object-fit: cover; }
+.photo-preview-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 20, 34, 0.78);
+}
+.photo-preview-dialog {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(900px, 100%);
+  max-height: min(90dvh, 900px);
+  padding: 46px 14px 14px;
+  border-radius: 8px;
+  background: #fff;
+}
+.photo-preview-dialog img { display: block; max-width: 100%; max-height: calc(90dvh - 80px); object-fit: contain; }
+.photo-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--heading);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
 .panel-card { margin-bottom: 16px; padding: 18px; border-color: var(--border); background: #fff; text-align: left; }
 .panel-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .panel-card-header h3 { margin: 0; color: var(--heading); font-size: 1.1rem; }

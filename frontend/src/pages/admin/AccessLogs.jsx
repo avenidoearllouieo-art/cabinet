@@ -34,6 +34,11 @@ export default function AccessLogs() {
   const [accessTypeFilter, setAccessTypeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
   const [sectionFilter, setSectionFilter] = useState('all')
+  const [studentFilter, setStudentFilter] = useState('all')
+  const [cabinetFilter, setCabinetFilter] = useState('all')
+  const [stationFilter, setStationFilter] = useState('all')
+  const [actionFilter, setActionFilter] = useState('all')
+  const [photoFilter, setPhotoFilter] = useState('all')
   const [sortBy, setSortBy] = useState('newest')
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -64,13 +69,27 @@ export default function AccessLogs() {
       setSelectedIds([])
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, sortBy])
+  }, [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, studentFilter, cabinetFilter, stationFilter, actionFilter, photoFilter, sortBy])
 
   const fetchLogs = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await api.get('/access-logs/')
-      const rawLogs = Array.isArray(response.data) ? response.data : response.data.results || []
+      const rawLogs = []
+      let currentPage = 1
+      let hasNextPage = true
+      while (hasNextPage) {
+        const response = await api.get('/access-logs/', {
+          params: { page: currentPage, page_size: 100 },
+        })
+        if (Array.isArray(response.data)) {
+          rawLogs.push(...response.data)
+          hasNextPage = false
+        } else {
+          rawLogs.push(...(response.data.results || []))
+          hasNextPage = Boolean(response.data.next)
+          currentPage += 1
+        }
+      }
       setLogs(rawLogs)
       setError('')
     } catch (err) {
@@ -187,6 +206,25 @@ export default function AccessLogs() {
     return [{ value: 'all', label: 'All access types' }, ...accessTypes.map((type) => ({ value: type, label: type }))]
   }, [logs])
 
+  const logOptions = useMemo(() => {
+    const optionsFor = (getValue, getLabel) => {
+      const unique = new Map()
+      logs.forEach((log) => {
+        const value = getValue(log)
+        if (value !== null && value !== undefined && value !== '') {
+          unique.set(String(value), getLabel(log))
+        }
+      })
+      return [...unique.entries()].sort((left, right) => left[1].localeCompare(right[1]))
+    }
+    return {
+      students: optionsFor((log) => log.user, (log) => `${log.student_name || log.username || 'Student'}${log.student_id ? ` (${log.student_id})` : ''}`),
+      cabinets: optionsFor((log) => log.cabinet_name, (log) => log.cabinet_name),
+      stations: optionsFor((log) => log.station, (log) => log.station),
+      actions: optionsFor((log) => log.action, (log) => log.action),
+    }
+  }, [logs])
+
   const filteredLogs = useMemo(() => {
     let result = logs
 
@@ -230,6 +268,17 @@ export default function AccessLogs() {
       })
     }
 
+    if (studentFilter !== 'all') result = result.filter((log) => String(log.user) === studentFilter)
+    if (cabinetFilter !== 'all') result = result.filter((log) => log.cabinet_name === cabinetFilter)
+    if (stationFilter !== 'all') result = result.filter((log) => log.station === stationFilter)
+    if (actionFilter !== 'all') result = result.filter((log) => log.action === actionFilter)
+    if (photoFilter !== 'all') {
+      result = result.filter((log) => {
+        const captureStatus = log.photo_capture_status || 'unavailable'
+        return photoFilter === 'unavailable' ? captureStatus === 'unavailable' || captureStatus === 'failed' : captureStatus === photoFilter
+      })
+    }
+
     const sorted = [...result]
     sorted.sort((left, right) => {
       const leftTime = left.access_time ? new Date(left.access_time).getTime() : 0
@@ -245,7 +294,7 @@ export default function AccessLogs() {
     })
 
     return sorted
-  }, [logs, query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, sortBy])
+  }, [logs, query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, studentFilter, cabinetFilter, stationFilter, actionFilter, photoFilter, sortBy])
 
   const totalLogs = logs.length
   const successfulLogins = logs.filter((log) => String(log.status || '').toLowerCase() === 'success').length
@@ -380,6 +429,44 @@ export default function AccessLogs() {
               </select>
             </label>
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+              <span className="sr-only">Filter student</span>
+              <select value={studentFilter} onChange={(e) => setStudentFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
+                <option value="all">All students</option>
+                {logOptions.students.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </label>
+            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+              <span className="sr-only">Filter Cabinet</span>
+              <select value={cabinetFilter} onChange={(e) => setCabinetFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
+                <option value="all">All Cabinets</option>
+                {logOptions.cabinets.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
+              </select>
+            </label>
+            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+              <span className="sr-only">Filter station</span>
+              <select value={stationFilter} onChange={(e) => setStationFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
+                <option value="all">All stations</option>
+                {logOptions.stations.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
+              </select>
+            </label>
+            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+              <span className="sr-only">Filter action</span>
+              <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
+                <option value="all">All actions</option>
+                {logOptions.actions.map(([action, label]) => <option key={action} value={action}>{label}</option>)}
+              </select>
+            </label>
+            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+              <span className="sr-only">Filter photo status</span>
+              <select value={photoFilter} onChange={(e) => setPhotoFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
+                <option value="all">All photo statuses</option>
+                <option value="pending">Pending</option>
+                <option value="success">Captured</option>
+                <option value="failed">Failed</option>
+                <option value="unavailable">Unavailable / no record</option>
+              </select>
+            </label>
+            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
               <span className="sr-only">Filter date</span>
               <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50" />
             </label>
@@ -423,6 +510,7 @@ export default function AccessLogs() {
             { key: 'station', label: 'Station', className: 'w-[10%]', render: (_value, row) => row.station || '—' },
             { key: 'access_type', label: 'Access Type', className: 'w-[17%]', render: (_value, row) => getAccessTypeBadge(row) },
             { key: 'status', label: 'Result', className: 'w-[10%]', render: (_value, row) => getResultBadge(row) },
+            { key: 'photo_capture_status', label: 'Photo', className: 'w-[9%]', render: (value) => value === 'success' ? 'Captured' : value === 'pending' ? 'Pending' : value === 'failed' ? 'Failed' : 'Unavailable' },
             { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: (_value, row) => getDurationValue(row) },
             {
               key: 'actions',
@@ -458,6 +546,7 @@ export default function AccessLogs() {
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <div><dt className="font-semibold">Event ID</dt><dd>{row.id}</dd></div>
               <div><dt className="font-semibold">Access Method</dt><dd>{row.access_method || '—'}</dd></div>
+              <div><dt className="font-semibold">Photo Status</dt><dd>{row.photo_capture_status === 'success' ? 'Captured' : row.photo_capture_status === 'pending' ? 'Pending' : row.photo_capture_status === 'failed' ? 'Unavailable' : 'Unavailable'}</dd></div>
               {row.nfc_uid && <div><dt className="font-semibold">NFC UID</dt><dd className="break-all">{row.nfc_uid}</dd></div>}
               {resolveResult(row) === 'failed' && row.reason && <div className="sm:col-span-2 lg:col-span-3"><dt className="font-semibold">Failure Reason</dt><dd>{row.reason}</dd></div>}
             </dl>

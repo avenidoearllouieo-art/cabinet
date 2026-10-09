@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import api from '../../services/api.js'
+import AccessLogPhotoPanel from './AccessLogPhotoPanel.jsx'
 
 export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnauthorized }) {
   const resolvedLogId = log?.id ?? logId
@@ -89,6 +90,7 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
         {loading ? (
           <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading...</div>
         ) : (
+          <>
           <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Event ID</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.id || resolvedLogId}</dd></div>
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">User</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.student_name || displayLog.username || displayLog.user_name || (displayLog.user ? `User ${displayLog.user}` : 'Unregistered card')}</dd></div>
@@ -102,6 +104,10 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Date and Time</dt><dd className="mt-1 text-sm text-slate-900">{formatDate(displayLog.access_time)}</dd></div>
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Duration</dt><dd className="mt-1 text-sm text-slate-900">{formatDuration(displayLog.duration_seconds)}</dd></div>
           </dl>
+          <div className="mt-4">
+            <AccessLogPhotoPanel eventId={resolvedLogId} captureStatus={displayLog.photo_capture_status} allowImage />
+          </div>
+          </>
         )}
 
         <div className="mt-6 flex items-center justify-end gap-3">

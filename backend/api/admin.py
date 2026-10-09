@@ -10,6 +10,9 @@ from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import path, reverse
+from django.http import FileResponse, Http404
+from django.utils.html import format_html
+from django.utils.cache import patch_cache_control
 
 from .models import (
     Section,
@@ -20,6 +23,7 @@ from .models import (
     Activity,
     Submission,
     AccessLog,
+    AccessLogPhoto,
     CabinetSession,
     CabinetEvent,
     NFCEnrollmentSession,
@@ -519,13 +523,62 @@ class AccessLogAdminForm(forms.ModelForm):
 
 @admin.register(AccessLog)
 class AccessLogAdmin(admin.ModelAdmin):
-    list_display = ('user', 'nfc_uid', 'station', 'action', 'status', 'cabinet_session', 'access_time')
-    list_filter = ('status', 'action', 'station', 'user__section', 'cabinet_session__status')
-    search_fields = ('user__first_name', 'user__last_name', 'user__student_id', 'nfc_uid', 'station', 'reason')
+    list_display = ('user', 'nfc_uid', 'station', 'action', 'status', 'cabinet_session', 'access_time', 'photo_thumbnail', 'photo_capture_status', 'photo_captured_at')
+    list_filter = ('status', 'action', 'user__section', 'cabinet_name', 'station', 'cabinet_session__status', 'photo__capture_status')
+    search_fields = ('user__first_name', 'user__last_name', 'user__student_id', 'nfc_uid', 'cabinet_name', 'station', 'reason')
     ordering = ('-access_time',)
     form = AccessLogAdminForm
-    readonly_fields = ('user', 'cabinet_session', 'access_time', 'status', 'action', 'nfc_uid', 'station', 'cabinet_name', 'reason', 'updated_at')
+    readonly_fields = (
+        'user', 'cabinet_session', 'access_time', 'status', 'action', 'nfc_uid',
+        'station', 'cabinet_name', 'reason', 'updated_at', 'photo_thumbnail',
+        'photo_capture_status', 'photo_captured_at',
+    )
     date_hierarchy = 'access_time'
+
+    def get_urls(self):
+        return [
+            path('<path:object_id>/photo/', self.admin_site.admin_view(self.photo_file_view), name='api_accesslog_photo'),
+        ] + super().get_urls()
+
+    def photo_file_view(self, request, object_id):
+        access_log = self.get_object(request, object_id)
+        if access_log is None or not self.has_view_permission(request, access_log):
+            raise Http404
+        try:
+            photo = access_log.photo
+        except AccessLogPhoto.DoesNotExist:
+            raise Http404
+        if not photo.image:
+            raise Http404
+        response = FileResponse(photo.image.open('rb'), content_type='image/jpeg')
+        response['Content-Disposition'] = f'inline; filename="access-log-{access_log.pk}.jpg"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        patch_cache_control(response, private=True, no_store=True)
+        return response
+
+    @admin.display(description='Photo')
+    def photo_thumbnail(self, obj):
+        try:
+            if obj.photo.image:
+                photo_url = reverse('admin:api_accesslog_photo', args=[obj.pk])
+                return format_html('<img src="{}" alt="Access photo" style="max-height: 64px; max-width: 96px;">', photo_url)
+        except AccessLogPhoto.DoesNotExist:
+            pass
+        return 'No photo'
+
+    @admin.display(description='Capture status', ordering='photo__capture_status')
+    def photo_capture_status(self, obj):
+        try:
+            return obj.photo.get_capture_status_display()
+        except AccessLogPhoto.DoesNotExist:
+            return 'Not captured'
+
+    @admin.display(description='Captured at', ordering='photo__captured_at')
+    def photo_captured_at(self, obj):
+        try:
+            return obj.photo.captured_at
+        except AccessLogPhoto.DoesNotExist:
+            return None
 
     def has_add_permission(self, request):
         return False

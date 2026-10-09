@@ -91,6 +91,45 @@ class HasDeviceAPIKey(BasePermission):
         return False
 
 
+class CanReadAccessLogPhoto(BasePermission):
+    message = 'You are not authorized to view this access log photo.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        if user and user.is_authenticated:
+            return user.role in ('admin', 'instructor', 'student')
+        return HasDeviceAPIKey().has_permission(request, view)
+
+    def has_object_permission(self, request, view, access_log):
+        device_context = getattr(request, 'nfc_device_context', None)
+        if device_context is not None:
+            cabinet_name = str(device_context.get('cabinet_name') or '').strip()
+            return bool(cabinet_name and access_log.cabinet_name == cabinet_name)
+
+        user = request.user
+        if user.role == 'admin':
+            return True
+        if user.role == 'student':
+            return access_log.user_id == user.pk
+        if user.role != 'instructor' or not access_log.user:
+            return False
+
+        section = access_log.user.section
+        return bool(section and (
+            section.instructor_id == user.pk
+            or section.assigned_instructors.filter(pk=user.pk).exists()
+        ))
+
+
+class CanReadAccessLogPhotoImage(CanReadAccessLogPhoto):
+    message = 'Students may view photo status but not captured images.'
+
+    def has_object_permission(self, request, view, access_log):
+        if request.user.is_authenticated and request.user.role == 'student':
+            return False
+        return super().has_object_permission(request, view, access_log)
+
+
 class PasswordResetRateThrottle(AnonRateThrottle):
     rate = '60/hour'
 

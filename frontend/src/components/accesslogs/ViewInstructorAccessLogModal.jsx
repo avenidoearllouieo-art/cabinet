@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import StatusBadge from '../StatusBadge.jsx'
 import { accessLogResult, accessLogValue, formatAccessLogDate, formatAccessLogTime } from './accessLogFormatters.js'
+import AccessLogPhotoPanel from './AccessLogPhotoPanel.jsx'
 
 const DetailField = ({ label, children }) => (
   <div className="min-w-0">
@@ -10,7 +11,7 @@ const DetailField = ({ label, children }) => (
   </div>
 )
 
-export default function ViewInstructorAccessLogModal({ isOpen, log, onClose }) {
+export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, allowPhotoPreview = false }) {
   if (!isOpen || !log) return null
   const result = accessLogResult(log)
 
@@ -60,6 +61,12 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose }) {
               <DetailField label="Reader / Station">{accessLogValue(log.station)}</DetailField>
             </dl>
           </section>
+
+          <AccessLogPhotoPanel
+            eventId={log.id}
+            captureStatus={log.photo_capture_status}
+            allowImage={allowPhotoPreview}
+          />
         </div>
 
         <div className="mt-5 flex justify-end border-t border-[#dbe5f0] pt-4">

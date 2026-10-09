@@ -2,19 +2,24 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
 from django.contrib import admin as django_admin
 from django.test import Client, RequestFactory, TestCase, override_settings
+from django.test import TransactionTestCase
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from io import BytesIO
+from PIL import Image
 import os
+import tempfile
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 from openpyxl import Workbook, load_workbook
 
 from .admin import AccessLogAdmin
-from .models import AccessLog, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession
+from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession
 
 
 class InstructorSectionOverviewScopeTests(TestCase):
@@ -1352,6 +1357,16 @@ class InstructorAccessLogTests(TestCase):
             reason='NFC verified successfully',
             access_time=now,
         )
+        AccessLogPhoto.objects.create(
+            access_log=self.success_log,
+            capture_status=AccessLogPhoto.CaptureStatusChoices.SUCCESS,
+            captured_at=now,
+        )
+        AccessLogPhoto.objects.create(
+            access_log=self.duplicate_log,
+            capture_status=AccessLogPhoto.CaptureStatusChoices.FAILED,
+            diagnostic_error='Camera unavailable',
+        )
 
     def create_log(self, user, status, **fields):
         access_time = fields.pop('access_time')
@@ -1384,6 +1399,8 @@ class InstructorAccessLogTests(TestCase):
         self.assertEqual(serialized['cabinet_name'], 'Cabinet Alpha')
         self.assertEqual(serialized['station'], 'Reader 1')
         self.assertEqual(serialized['access_result'], 'Success')
+        self.assertEqual(serialized['photo_capture_status'], 'success')
+        self.assertNotIn('image_endpoint', serialized)
 
         failed = next(entry for entry in results if entry['id'] == self.rejected_log.pk)
         self.assertEqual(failed['access_result'], 'Failed')
@@ -1419,6 +1436,9 @@ class InstructorAccessLogTests(TestCase):
             {entry['id'] for entry in section_response.json()['results']},
             {self.rejected_log.pk, self.duplicate_log.pk},
         )
+        photo_response = self.client.get('/api/access-logs/?photo_capture_status=failed')
+        self.assertEqual(photo_response.status_code, 200, photo_response.json())
+        self.assertEqual([entry['id'] for entry in photo_response.json()['results']], [self.duplicate_log.pk])
         date_response = self.client.get(f'/api/access-logs/?access_time_after={today}&access_time_before={today}')
         self.assertEqual(
             {entry['id'] for entry in date_response.json()['results']},
@@ -2163,6 +2183,7 @@ class UserProfileAccessLogTests(TestCase):
             {self.john.pk},
         )
         self.assertEqual(self.client.get(f'/api/users/{self.mary.pk}/access-logs/').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/access-logs/{self.mary_logs[0].pk}/').status_code, 404)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 403)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 403)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 403)
@@ -2173,9 +2194,431 @@ class UserProfileAccessLogTests(TestCase):
         self.assertEqual(self_response.status_code, 200, self_response.json())
         self.assertEqual({entry['user'] for entry in self_response.json()['results']}, {self.john.pk})
         self.assertEqual(other_response.status_code, 404)
+        self.assertEqual(self.client.get(f'/api/access-logs/{self.john_logs[0].pk}/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/access-logs/{self.mary_logs[0].pk}/').status_code, 404)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 403)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 403)
         self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 403)
+
+
+@override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+    {'device_id': 'PHOTO-CABINET', 'api_key': 'photo-test-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+])
+class AccessLogPhotoApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.device_api_key = 'photo-test-key'
+        os.environ['DEVICE_API_KEY'] = self.device_api_key
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=self.media_directory.name))
+        self.student = User.objects.create_user(
+            username='photo-student',
+            email='photo-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='PHOTO-001',
+        )
+        self.access_log = AccessLog.objects.create(
+            user=self.student,
+            nfc_uid='PHOTO-UID-001',
+            station='Station 1',
+            cabinet_name='Cabinet 1',
+            status=AccessLog.AccessStatusChoices.SUCCESS,
+        )
+
+    def jpeg_upload(self, filename='camera-supplied-name.jpg'):
+        image_data = BytesIO()
+        Image.new('RGB', (8, 8), color=(30, 80, 120)).save(image_data, format='JPEG')
+        return SimpleUploadedFile(filename, image_data.getvalue(), content_type='image/jpeg')
+
+    def upload_url(self, event_id=None):
+        return f'/api/access-logs/{event_id or self.access_log.pk}/photo/'
+
+    def test_authorized_device_uploads_jpeg_to_existing_event(self):
+        response = self.client.post(
+            self.upload_url(),
+            {'image': self.jpeg_upload(), 'station': 'Forged station', 'student_id': 'FORGED'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201, response.json())
+        photo = AccessLogPhoto.objects.get(access_log=self.access_log)
+        self.assertEqual(photo.capture_status, AccessLogPhoto.CaptureStatusChoices.SUCCESS)
+        self.assertIsNotNone(photo.captured_at)
+        self.assertTrue(photo.image.name.startswith('access-log-photos/'))
+        self.assertTrue(photo.image.name.endswith('.jpg'))
+        self.assertNotIn('camera-supplied-name', photo.image.name)
+        self.assertEqual(response.json()['event_id'], self.access_log.pk)
+        self.assertNotIn('url', response.json())
+        self.assertEqual(photo.access_log.station, 'Station 1')
+        self.assertEqual(photo.access_log.user, self.student)
+
+    def test_photo_metadata_reports_unavailable_for_access_log_without_photo(self):
+        response = self.client.get(
+            self.upload_url(), HTTP_X_API_KEY=self.device_api_key,
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json(), {
+            'event_id': self.access_log.pk,
+            'capture_status': None,
+            'captured_at': None,
+            'diagnostic_error': None,
+            'image_available': False,
+            'image_endpoint': None,
+        })
+        missing_image = self.client.get(
+            f'/api/access-logs/{self.access_log.pk}/photo/image/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+        self.assertEqual(missing_image.status_code, 404)
+
+    def test_pending_and_failed_capture_statuses_are_read_back_from_backend(self):
+        pending = self.client.post(
+            f'/api/access-logs/{self.access_log.pk}/photo-status/',
+            {'status': 'pending'}, HTTP_X_API_KEY=self.device_api_key, format='json',
+        )
+        pending_metadata = self.client.get(self.upload_url(), HTTP_X_API_KEY=self.device_api_key)
+        self.assertEqual(pending.status_code, 200, pending.json())
+        self.assertEqual(pending_metadata.json()['capture_status'], 'pending')
+        self.assertIsNone(pending_metadata.json()['captured_at'])
+        self.assertFalse(pending_metadata.json()['image_available'])
+
+        failed = self.client.post(
+            f'/api/access-logs/{self.access_log.pk}/photo-status/',
+            {'status': 'failed', 'error': 'Camera unavailable'},
+            HTTP_X_API_KEY=self.device_api_key, format='json',
+        )
+        failed_metadata = self.client.get(self.upload_url(), HTTP_X_API_KEY=self.device_api_key)
+        self.assertEqual(failed.status_code, 200, failed.json())
+        self.assertEqual(failed_metadata.json()['capture_status'], 'failed')
+        self.assertEqual(failed_metadata.json()['diagnostic_error'], 'Camera unavailable')
+        self.assertIsNotNone(failed_metadata.json()['captured_at'])
+
+    def test_same_cabinet_device_can_read_a_station_two_event(self):
+        station_two_event = AccessLog.objects.create(
+            user=self.student,
+            nfc_uid='PHOTO-STATION-TWO',
+            station='Station 2',
+            cabinet_name='Cabinet 1',
+            status=AccessLog.AccessStatusChoices.SUCCESS,
+        )
+        uploaded = self.client.post(
+            self.upload_url(station_two_event.pk), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        metadata = self.client.get(
+            self.upload_url(station_two_event.pk), HTTP_X_API_KEY=self.device_api_key,
+        )
+
+        self.assertEqual(uploaded.status_code, 201, uploaded.json())
+        self.assertEqual(metadata.status_code, 200, metadata.json())
+        self.assertEqual(metadata.json()['event_id'], station_two_event.pk)
+        self.assertEqual(metadata.json()['capture_status'], 'success')
+        image = self.client.get(metadata.json()['image_endpoint'], HTTP_X_API_KEY=self.device_api_key)
+        self.assertEqual(image.status_code, 200)
+        image.close()
+
+    def test_missing_and_invalid_device_credentials_cannot_read_photo_data(self):
+        for path in (self.upload_url(), f'/api/access-logs/{self.access_log.pk}/photo/image/'):
+            with self.subTest(path=path):
+                missing = self.client.get(path)
+                invalid = self.client.get(path, HTTP_X_API_KEY='invalid-photo-key')
+                self.assertEqual(missing.status_code, 401)
+                self.assertEqual(invalid.status_code, 401)
+
+    def test_photo_metadata_and_image_bytes_require_authorized_device(self):
+        uploaded = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.json())
+
+        metadata = self.client.get(self.upload_url(), HTTP_X_API_KEY=self.device_api_key)
+        self.assertEqual(metadata.status_code, 200, metadata.json())
+        self.assertEqual(metadata.json()['capture_status'], AccessLogPhoto.CaptureStatusChoices.SUCCESS)
+        self.assertTrue(metadata.json()['image_available'])
+        self.assertEqual(
+            metadata.json()['image_endpoint'],
+            f'/api/access-logs/{self.access_log.pk}/photo/image/',
+        )
+        self.assertNotIn('/media/', metadata.json()['image_endpoint'])
+
+        image = self.client.get(metadata.json()['image_endpoint'], HTTP_X_API_KEY=self.device_api_key)
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image['Content-Type'], 'image/jpeg')
+        self.assertIn('no-store', image['Cache-Control'])
+        image_bytes = b''.join(image.streaming_content)
+        self.assertTrue(image_bytes.startswith(b'\xff\xd8'))
+        image.close()
+
+        missing_key = self.client.get(self.upload_url())
+        self.assertEqual(missing_key.status_code, 401)
+
+    def test_device_photo_reads_are_limited_to_its_cabinet(self):
+        other_cabinet_event = AccessLog.objects.create(
+            nfc_uid='PHOTO-OTHER-CABINET', station='Station 2', cabinet_name='Cabinet 2',
+        )
+
+        response = self.client.get(
+            self.upload_url(other_cabinet_event.pk), HTTP_X_API_KEY=self.device_api_key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_jwt_photo_reads_follow_student_and_instructor_log_permissions(self):
+        uploaded = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.json())
+        image_path = f'/api/access-logs/{self.access_log.pk}/photo/image/'
+        other_student = User.objects.create_user(
+            username='photo-other-student', email='photo-other@example.com',
+            password='secret1234', role=User.RoleChoices.STUDENT, student_id='PHOTO-002',
+        )
+        another_cabinet_log = AccessLog.objects.create(
+            user=other_student,
+            nfc_uid='PHOTO-ADMIN-OTHER-CABINET',
+            station='Station 2',
+            cabinet_name='Cabinet 2',
+            status=AccessLog.AccessStatusChoices.SUCCESS,
+        )
+        another_cabinet_photo_path = f'/api/access-logs/{another_cabinet_log.pk}/photo/'
+        self.client.force_authenticate(user=other_student)
+        self.assertEqual(self.client.get(another_cabinet_photo_path).status_code, 200)
+        self.assertEqual(self.client.get(f'{another_cabinet_photo_path}image/').status_code, 403)
+
+        self.client.force_authenticate(user=self.student)
+        self.assertEqual(self.client.get(self.upload_url()).status_code, 200)
+        student_logs = self.client.get('/api/access-logs/').json()['results']
+        self.assertEqual({entry['user'] for entry in student_logs}, {self.student.pk})
+        self.assertEqual(student_logs[0]['photo_capture_status'], 'success')
+        self.assertNotIn('image_endpoint', student_logs[0])
+        self.assertEqual(self.client.get(another_cabinet_photo_path).status_code, 404)
+        self.assertEqual(self.client.get(f'{another_cabinet_photo_path}image/').status_code, 404)
+        student_metadata = self.client.get(self.upload_url()).json()
+        self.assertEqual(student_metadata['capture_status'], 'success')
+        self.assertIsNone(student_metadata['captured_at'])
+        self.assertIsNone(student_metadata['diagnostic_error'])
+        self.assertFalse(student_metadata['image_available'])
+        self.assertIsNone(student_metadata['image_endpoint'])
+        student_image = self.client.get(image_path)
+        self.assertEqual(student_image.status_code, 403)
+
+        instructor = User.objects.create_user(
+            username='photo-instructor', email='photo-instructor@example.com',
+            password='secret1234', role=User.RoleChoices.INSTRUCTOR, instructor_id='PHOTO-INS-1',
+        )
+        section = Section.objects.create(
+            section_name='Photo Access Section', subject_code='PHOTO-101', instructor=instructor,
+        )
+        self.student.section = section
+        self.student.save(update_fields=['section'])
+        self.client.force_authenticate(user=instructor)
+
+        self.assertEqual(self.client.get(self.upload_url()).status_code, 200)
+        instructor_image = self.client.get(image_path)
+        self.assertEqual(instructor_image.status_code, 200)
+        instructor_image.close()
+
+        assigned_section = Section.objects.create(
+            section_name='M2M Assigned Photo Section', subject_code='PHOTO-ASSIGNED',
+        )
+        assigned_section.assigned_instructors.add(instructor)
+        assigned_student = User.objects.create_user(
+            username='photo-m2m-assigned-student', email='photo-m2m-assigned@example.com',
+            password='secret1234', role=User.RoleChoices.STUDENT, student_id='PHOTO-ASSIGNED-1',
+            section=assigned_section,
+        )
+        assigned_log = AccessLog.objects.create(
+            user=assigned_student, nfc_uid='PHOTO-M2M-ASSIGNED', station='Station 2',
+            cabinet_name='Cabinet 1', status=AccessLog.AccessStatusChoices.SUCCESS,
+        )
+        self.client.force_authenticate(user=instructor)
+        self.assertEqual(self.client.get(f'/api/access-logs/{assigned_log.pk}/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/access-logs/{assigned_log.pk}/photo/').status_code, 200)
+
+        assigned_upload = self.client.post(
+            self.upload_url(assigned_log.pk), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        self.assertEqual(assigned_upload.status_code, 201, assigned_upload.json())
+        assigned_image = self.client.get(f'/api/access-logs/{assigned_log.pk}/photo/image/')
+        self.assertEqual(assigned_image.status_code, 200)
+        assigned_image.close()
+
+        unrelated_instructor = User.objects.create_user(
+            username='unrelated-photo-instructor', email='unrelated-photo@example.com',
+            password='secret1234', role=User.RoleChoices.INSTRUCTOR, instructor_id='PHOTO-INS-2',
+        )
+        Section.objects.create(
+            section_name='Unrelated Photo Section', subject_code='PHOTO-202', instructor=unrelated_instructor,
+        )
+        self.client.force_authenticate(user=unrelated_instructor)
+        self.assertEqual(self.client.get(self.upload_url()).status_code, 404)
+        self.assertEqual(self.client.get(image_path).status_code, 404)
+
+        admin_user = User.objects.create_superuser(
+            username='photo-read-admin', email='photo-read-admin@example.com', password='secret1234',
+        )
+        self.client.force_authenticate(user=admin_user)
+        self.assertEqual(self.client.get(self.upload_url()).status_code, 200)
+        self.assertEqual(self.client.get(another_cabinet_photo_path).status_code, 200)
+        admin_image = self.client.get(image_path)
+        self.assertEqual(admin_image.status_code, 200)
+        admin_image.close()
+
+    def test_upload_requires_valid_device_api_key(self):
+        missing = self.client.post(self.upload_url(), {'image': self.jpeg_upload()}, format='multipart')
+        invalid = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY='incorrect-key', format='multipart',
+        )
+
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(invalid.status_code, 403)
+        self.assertFalse(AccessLogPhoto.objects.exists())
+
+    def test_upload_rejects_invalid_image_and_oversized_file(self):
+        invalid = SimpleUploadedFile('not-an-image.jpg', b'not a jpeg', content_type='image/jpeg')
+        invalid_response = self.client.post(
+            self.upload_url(), {'image': invalid}, HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        oversized = SimpleUploadedFile(
+            'large.jpg', b'x' * (5 * 1024 * 1024 + 1), content_type='image/jpeg',
+        )
+        oversized_response = self.client.post(
+            self.upload_url(), {'image': oversized}, HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertEqual(oversized_response.status_code, 413)
+        self.assertFalse(AccessLogPhoto.objects.exists())
+
+    def test_device_cannot_upload_to_another_cabinets_event(self):
+        other_cabinet_event = AccessLog.objects.create(
+            nfc_uid='OTHER-CABINET-UID', station='Station 2', cabinet_name='Cabinet 2',
+        )
+        response = self.client.post(
+            self.upload_url(other_cabinet_event.pk), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(AccessLogPhoto.objects.exists())
+
+    def test_duplicate_photo_upload_is_rejected(self):
+        first = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        duplicate = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+
+        self.assertEqual(first.status_code, 201, first.json())
+        self.assertEqual(duplicate.status_code, 409, duplicate.json())
+        self.assertEqual(AccessLogPhoto.objects.filter(access_log=self.access_log).count(), 1)
+
+    def test_camera_failure_status_is_recorded_without_changing_access_event(self):
+        response = self.client.post(
+            f'/api/access-logs/{self.access_log.pk}/photo-status/',
+            {'status': 'failed', 'error': 'Camera did not respond'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        photo = AccessLogPhoto.objects.get(access_log=self.access_log)
+        self.assertEqual(photo.capture_status, AccessLogPhoto.CaptureStatusChoices.FAILED)
+        self.assertEqual(photo.diagnostic_error, 'Camera did not respond')
+        self.assertIsNotNone(photo.captured_at)
+        self.access_log.refresh_from_db()
+        self.assertEqual(self.access_log.status, AccessLog.AccessStatusChoices.SUCCESS)
+
+    def test_admin_displays_photo_and_private_file_is_staff_only(self):
+        uploaded = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.json())
+        admin_user = User.objects.create_superuser(
+            username='photo-admin', email='photo-admin@example.com', password='secret1234',
+        )
+        self.client.force_login(admin_user)
+
+        listing = self.client.get(reverse('admin:api_accesslog_changelist'))
+        self.assertEqual(listing.status_code, 200)
+        self.assertContains(listing, '<img', html=False)
+        photo = AccessLogPhoto.objects.get(access_log=self.access_log)
+        protected = self.client.get(reverse('admin:api_accesslog_photo', args=[self.access_log.pk]))
+        public_media = self.client.get(f'/media/{photo.image.name}')
+        self.assertEqual(protected.status_code, 200)
+        self.assertEqual(protected['Content-Type'], 'image/jpeg')
+        self.assertIn('no-store', protected['Cache-Control'])
+        self.assertEqual(public_media.status_code, 404)
+        protected.close()
+        self.client.logout()
+        unauthenticated = self.client.get(reverse('admin:api_accesslog_photo', args=[self.access_log.pk]))
+        self.assertEqual(unauthenticated.status_code, 302)
+
+    def test_legacy_access_log_without_photo_remains_valid(self):
+        access_log_admin = AccessLogAdmin(model=AccessLog, admin_site=django_admin.site)
+
+        self.assertFalse(AccessLogPhoto.objects.filter(access_log=self.access_log).exists())
+        self.assertEqual(access_log_admin.photo_thumbnail(self.access_log), 'No photo')
+        self.assertEqual(access_log_admin.photo_capture_status(self.access_log), 'Not captured')
+        self.assertEqual(self.access_log.status, AccessLog.AccessStatusChoices.SUCCESS)
+
+    def test_deleting_photo_metadata_removes_stored_image(self):
+        response = self.client.post(
+            self.upload_url(), {'image': self.jpeg_upload()},
+            HTTP_X_API_KEY=self.device_api_key, format='multipart',
+        )
+        self.assertEqual(response.status_code, 201, response.json())
+        photo = AccessLogPhoto.objects.get(access_log=self.access_log)
+        stored_name = photo.image.name
+        self.assertTrue(photo.image.storage.exists(stored_name))
+
+        photo.delete()
+
+        self.assertFalse(photo.image.storage.exists(stored_name))
+
+
+class AccessLogPhotoMigrationTests(TransactionTestCase):
+    migrate_from = ('api', '0035_cabinetsession_unique_open_station')
+    migrate_to = ('api', '0036_accesslogphoto')
+
+    def setUp(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        historical_log = old_apps.get_model('api', 'AccessLog').objects.create(
+            nfc_uid='MIGRATION-LEGACY-UID',
+            station='Station 1',
+            cabinet_name='Cabinet 1',
+            status='success',
+        )
+        self.access_log_id = historical_log.pk
+        MigrationExecutor(connection).migrate([self.migrate_to])
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+    def test_existing_access_log_survives_photo_migration_without_photo(self):
+        new_apps = MigrationExecutor(connection).loader.project_state([self.migrate_to]).apps
+        historical_log = new_apps.get_model('api', 'AccessLog').objects.get(pk=self.access_log_id)
+        photo_model = new_apps.get_model('api', 'AccessLogPhoto')
+
+        self.assertEqual(historical_log.nfc_uid, 'MIGRATION-LEGACY-UID')
+        self.assertEqual(historical_log.station, 'Station 1')
+        self.assertEqual(historical_log.status, 'success')
+        self.assertFalse(photo_model.objects.filter(access_log_id=self.access_log_id).exists())
 
 
 @override_settings(TAPTRACK_NFC_DEVICE_MAP=[

@@ -16,10 +16,23 @@ from .models import (
     Notification,
     TemporaryUpload,
     SubmissionAttachment,
+    AccessLogPhoto,
     ActivityDiscussion,
     ActivityAnnouncement,
     PasswordResetRequest,
 )
+
+
+class AccessLogPhotoReadSerializer(serializers.Serializer):
+    event_id = serializers.IntegerField()
+    capture_status = serializers.ChoiceField(
+        choices=AccessLogPhoto.CaptureStatusChoices.choices,
+        allow_null=True,
+    )
+    captured_at = serializers.DateTimeField(allow_null=True)
+    diagnostic_error = serializers.CharField(allow_null=True, allow_blank=True)
+    image_available = serializers.BooleanField()
+    image_endpoint = serializers.CharField(allow_null=True)
 
 
 def sync_section_owner(section, instructor):
@@ -1051,6 +1064,7 @@ class AccessLogSerializer(serializers.ModelSerializer):
     cabinet_name = serializers.CharField(read_only=True)
     reason = serializers.CharField(read_only=True)
     cabinet_session = serializers.PrimaryKeyRelatedField(read_only=True)
+    photo_capture_status = serializers.SerializerMethodField()
 
     class Meta:
         model = AccessLog
@@ -1076,6 +1090,7 @@ class AccessLogSerializer(serializers.ModelSerializer):
             'status',
             'reason',
             'access_time',
+            'photo_capture_status',
             'updated_at'
         ]
         read_only_fields = fields
@@ -1084,6 +1099,12 @@ class AccessLogSerializer(serializers.ModelSerializer):
         if not obj.user:
             return None
         return f"{obj.user.first_name} {obj.user.last_name}".strip()
+
+    def get_photo_capture_status(self, obj):
+        try:
+            return obj.photo.capture_status
+        except AccessLogPhoto.DoesNotExist:
+            return None
 
     def get_access_method(self, obj):
         return 'NFC' if obj.nfc_uid else None

@@ -187,6 +187,7 @@ class NFCServiceTests(unittest.TestCase):
     def test_registered_django_response_becomes_one_registered_event(self):
         verifier = FakeVerifier((200, {
             'success': True,
+            'event_id': 9031,
             'name': 'Avery Example',
             'student_id': 'STU-001',
             'role': 'student',
@@ -199,6 +200,10 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(event['status'], 'registered')
         self.assertEqual(event['uid'], '1234')
         self.assertEqual(event['event_id'], 1)
+        self.assertEqual(event['django_response']['event_id'], 9031)
+        self.assertEqual(stored[0]['event_id'], 1)
+        self.assertEqual(stored[0]['django_response']['event_id'], 9031)
+        self.assertNotEqual(event['event_id'], event['django_response']['event_id'])
         self.assertEqual(event['name'], 'Avery Example')
         self.assertEqual(event['student_id'], 'STU-001')
         self.assertEqual(event['role'], 'student')

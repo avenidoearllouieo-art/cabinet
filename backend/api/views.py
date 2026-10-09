@@ -8,6 +8,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import (
     IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole,
     IsStudentRole, HasDeviceAPIKey, PasswordResetRateThrottle,
+    CanReadAccessLogPhoto,
+    CanReadAccessLogPhotoImage,
 )
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
@@ -19,11 +21,15 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.http import FileResponse
+from django.urls import reverse
+from django.utils.cache import patch_cache_control
 from django.conf import settings
+from PIL import Image, UnidentifiedImageError
 from urllib.parse import quote
 import hashlib
 
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
+from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
 from .models import PasswordResetRequest, NFCEnrollmentSession
 from .serializers import (
@@ -47,12 +53,208 @@ from .serializers import (
     PasswordResetConfirmationSerializer,
     PasswordResetTokenValidationSerializer,
     NFCEnrollmentRegistrationSerializer,
+    AccessLogPhotoReadSerializer,
 )
 from django.contrib.auth.password_validation import validate_password
 import secrets
 import logging
 
 logger = logging.getLogger(__name__)
+MAX_ACCESS_LOG_PHOTO_BYTES = 5 * 1024 * 1024
+MAX_ACCESS_LOG_PHOTO_PIXELS = 20_000_000
+
+
+def get_authorized_access_log_photo_event(request, view, event_id):
+    queryset = AccessLog.objects.select_related('photo', 'user__section')
+    device_context = getattr(request, 'nfc_device_context', None)
+    if device_context is not None:
+        cabinet_name = str(device_context.get('cabinet_name') or '').strip()
+        queryset = queryset.filter(cabinet_name=cabinet_name)
+    elif request.user.role == User.RoleChoices.STUDENT:
+        queryset = queryset.filter(user=request.user)
+    elif request.user.role == User.RoleChoices.INSTRUCTOR:
+        queryset = queryset.filter(
+            Q(user__role=User.RoleChoices.STUDENT)
+            & (Q(user__section__instructor=request.user) | Q(user__section__assigned_instructors=request.user))
+        ).distinct()
+
+    access_log = get_object_or_404(queryset, pk=event_id)
+    view.check_object_permissions(request, access_log)
+    return access_log
+
+
+class AccessLogPhotoStatusView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+    parser_classes = [JSONParser]
+
+    def post(self, request, event_id, *args, **kwargs):
+        device_context = getattr(request, 'nfc_device_context', {})
+        cabinet_name = str(device_context.get('cabinet_name') or '').strip()
+        access_log = get_object_or_404(
+            AccessLog.objects.select_related('photo'),
+            pk=event_id,
+            cabinet_name=cabinet_name,
+        )
+        capture_status = request.data.get('status')
+        if capture_status not in (
+            AccessLogPhoto.CaptureStatusChoices.PENDING,
+            AccessLogPhoto.CaptureStatusChoices.FAILED,
+        ):
+            return Response(
+                {'success': False, 'error': 'Status must be pending or failed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        diagnostic_error = request.data.get('error', '')
+        if not isinstance(diagnostic_error, str) or len(diagnostic_error) > 1000:
+            return Response(
+                {'success': False, 'error': 'Error must be a string of at most 1000 characters.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            photo, _ = AccessLogPhoto.objects.select_for_update().get_or_create(access_log=access_log)
+            if photo.image:
+                return Response(
+                    {'success': False, 'error': 'A photo has already been uploaded for this event.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            photo.capture_status = capture_status
+            photo.captured_at = timezone.now() if capture_status == AccessLogPhoto.CaptureStatusChoices.FAILED else None
+            photo.diagnostic_error = diagnostic_error.strip()
+            photo.save(update_fields=['capture_status', 'captured_at', 'diagnostic_error'])
+
+        return Response({
+            'success': True,
+            'event_id': access_log.pk,
+            'capture_status': photo.capture_status,
+            'captured_at': photo.captured_at,
+            'error': photo.diagnostic_error,
+        }, status=status.HTTP_200_OK)
+
+
+class AccessLogPhotoUploadView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [HasDeviceAPIKey]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def initialize_request(self, request, *args, **kwargs):
+        self.photo_request_method = request.method
+        return super().initialize_request(request, *args, **kwargs)
+
+    def get_authenticators(self):
+        if self.photo_request_method == 'POST':
+            return []
+        return super().get_authenticators()
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [HasDeviceAPIKey()]
+        return [CanReadAccessLogPhoto()]
+
+    def _authorized_access_log(self, request, event_id):
+        return get_authorized_access_log_photo_event(request, self, event_id)
+
+    def get(self, request, event_id, *args, **kwargs):
+        access_log = self._authorized_access_log(request, event_id)
+        photo = getattr(access_log, 'photo', None)
+        student_status_only = getattr(request.user, 'role', None) == User.RoleChoices.STUDENT
+        image_available = bool(
+            photo and photo.image and photo.image.storage.exists(photo.image.name)
+        )
+        payload = {
+            'event_id': access_log.pk,
+            'capture_status': photo.capture_status if photo else None,
+            'captured_at': photo.captured_at if photo and not student_status_only else None,
+            'diagnostic_error': (photo.diagnostic_error or None) if photo and not student_status_only else None,
+            'image_available': image_available if not student_status_only else False,
+            'image_endpoint': reverse('access_log_photo_image', args=[access_log.pk])
+            if image_available and not student_status_only else None,
+        }
+        return Response(AccessLogPhotoReadSerializer(payload).data, status=status.HTTP_200_OK)
+
+    def post(self, request, event_id, *args, **kwargs):
+        device_context = getattr(request, 'nfc_device_context', {})
+        cabinet_name = str(device_context.get('cabinet_name') or '').strip()
+        access_log = get_object_or_404(
+            AccessLog.objects.select_related('photo'),
+            pk=event_id,
+            cabinet_name=cabinet_name,
+        )
+        uploaded_image = request.FILES.get('image')
+        if uploaded_image is None:
+            return Response(
+                {'success': False, 'error': 'JPEG image is required in the image field.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if uploaded_image.size > MAX_ACCESS_LOG_PHOTO_BYTES:
+            return Response(
+                {'success': False, 'error': 'Image exceeds the 5 MB upload limit.'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+        try:
+            with Image.open(uploaded_image) as image:
+                if image.format != 'JPEG':
+                    raise ValueError('Only JPEG images are accepted.')
+                if image.width * image.height > MAX_ACCESS_LOG_PHOTO_PIXELS:
+                    raise ValueError('Image dimensions exceed the allowed limit.')
+                image.verify()
+            uploaded_image.seek(0)
+            with Image.open(uploaded_image) as image:
+                image.load()
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            return Response(
+                {'success': False, 'error': 'Uploaded file is not a valid JPEG image.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        finally:
+            uploaded_image.seek(0)
+
+        with transaction.atomic():
+            photo, _ = AccessLogPhoto.objects.select_for_update().get_or_create(access_log=access_log)
+            if photo.image:
+                return Response(
+                    {'success': False, 'error': 'A photo has already been uploaded for this event.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            photo.image = uploaded_image
+            photo.capture_status = AccessLogPhoto.CaptureStatusChoices.SUCCESS
+            photo.captured_at = timezone.now()
+            photo.diagnostic_error = ''
+            try:
+                photo.save()
+            except IntegrityError:
+                if photo.image and photo.image.storage.exists(photo.image.name):
+                    photo.image.storage.delete(photo.image.name)
+                return Response(
+                    {'success': False, 'error': 'A photo has already been uploaded for this event.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        return Response({
+            'success': True,
+            'event_id': access_log.pk,
+            'capture_status': photo.capture_status,
+            'captured_at': photo.captured_at,
+        }, status=status.HTTP_201_CREATED)
+
+
+class AccessLogPhotoImageView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [CanReadAccessLogPhotoImage]
+
+    def get(self, request, event_id, *args, **kwargs):
+        access_log = get_authorized_access_log_photo_event(request, self, event_id)
+        photo = getattr(access_log, 'photo', None)
+        if not photo or not photo.image or not photo.image.storage.exists(photo.image.name):
+            return Response({'error': 'Photo image is unavailable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        response = FileResponse(photo.image.open('rb'), content_type='image/jpeg')
+        response['Content-Disposition'] = f'inline; filename="access-log-{access_log.pk}.jpg"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        patch_cache_control(response, private=True, no_store=True)
+        return response
 
 
 class SectionViewSet(viewsets.ModelViewSet):
@@ -233,7 +435,9 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='access-logs')
     def access_logs(self, request, pk=None):
         profile_user = self.get_object()
-        logs = AccessLog.objects.filter(user=profile_user).select_related('user', 'cabinet_session').order_by('-access_time', '-pk')
+        logs = AccessLog.objects.filter(user=profile_user).select_related(
+            'user', 'user__section', 'cabinet_session', 'photo',
+        ).order_by('-access_time', '-pk')
         paginator = PageNumberPagination()
         paginator.page_size = 20
         paginator.page_size_query_param = 'page_size'
@@ -245,7 +449,9 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='profile-details')
     def profile_details(self, request, pk=None):
         profile_user = self.get_object()
-        access_logs = AccessLog.objects.filter(user=profile_user).select_related('user', 'cabinet_session').order_by('-access_time', '-pk')
+        access_logs = AccessLog.objects.filter(user=profile_user).select_related(
+            'user', 'user__section', 'cabinet_session', 'photo',
+        ).order_by('-access_time', '-pk')
         activities = self._profile_activities(profile_user)
         submissions = Submission.objects.filter(student=profile_user).select_related('student', 'activity').order_by('-submitted_at', '-pk')
 
@@ -1173,15 +1379,20 @@ class StudentSubmissionUpload(APIView):
 class AccessLogFilter(filters.FilterSet):
     status = filters.CharFilter(method='filter_access_result')
     action = filters.CharFilter(field_name='action', lookup_expr='iexact')
+    student_id = filters.CharFilter(field_name='user__student_id', lookup_expr='iexact')
     user__section = filters.ModelChoiceFilter(field_name='user__section', queryset=Section.objects.all())
     station = filters.CharFilter(field_name='station', lookup_expr='iexact')
     nfc_uid = filters.CharFilter(field_name='nfc_uid', lookup_expr='icontains')
     cabinet_name = filters.CharFilter(field_name='cabinet_name', lookup_expr='iexact')
+    photo_capture_status = filters.CharFilter(field_name='photo__capture_status', lookup_expr='iexact')
     access_time = filters.DateFromToRangeFilter(field_name='access_time')
 
     class Meta:
         model = AccessLog
-        fields = ['status', 'action', 'station', 'nfc_uid', 'user__section', 'cabinet_name', 'access_time']
+        fields = [
+            'status', 'action', 'station', 'nfc_uid', 'student_id',
+            'user__section', 'cabinet_name', 'photo_capture_status', 'access_time',
+        ]
 
     def filter_access_result(self, queryset, name, value):
         result = str(value or '').strip().lower()
@@ -1358,7 +1569,7 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['station', 'opened_by__student_id', 'closed_by__student_id', 'notes']
     ordering_fields = ['opened_at', 'closed_at', 'station']
     ordering = ['-opened_at']
-    pagination_class = PageNumberPagination
+    pagination_class = AccessLogPagination
 
     @action(detail=False, methods=['get'], url_path='station-status')
     def station_status(self, request):
@@ -1407,7 +1618,7 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet for managing Access Logs.
     Returns latest access logs first with filtering by status, section, cabinet, and instructor-owned students.
     """
-    queryset = AccessLog.objects.select_related('user', 'cabinet_session').all()
+    queryset = AccessLog.objects.select_related('user', 'user__section', 'cabinet_session', 'photo').all()
     serializer_class = AccessLogSerializer
     authentication_classes = [JWTAuthentication]
     filter_backends = [filters.DjangoFilterBackend, AccessLogSearchFilter, OrderingFilter]
@@ -1415,7 +1626,7 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['user__student_id', 'user__first_name', 'user__last_name', 'nfc_uid', 'station']
     ordering_fields = ['access_time', 'user__student_id', 'user__last_name', 'station', 'cabinet_name']
     ordering = ['-access_time']
-    pagination_class = PageNumberPagination
+    pagination_class = AccessLogPagination
 
     def paginate_queryset(self, queryset):
         if self.request.user.role == User.RoleChoices.INSTRUCTOR:
@@ -1432,13 +1643,15 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin':
-            return AccessLog.objects.select_related('user', 'cabinet_session').all()
+            return AccessLog.objects.select_related('user', 'user__section', 'cabinet_session', 'photo').all()
         if user.role == 'student':
-            return AccessLog.objects.filter(user=user).select_related('user', 'cabinet_session')
+            return AccessLog.objects.filter(user=user).select_related('user', 'cabinet_session', 'user__section', 'photo')
         if user.role == 'instructor':
             student_filters = Q(user__role=User.RoleChoices.STUDENT)
             instructor_filters = Q(user__section__instructor=user) | Q(user__section__assigned_instructors=user)
-            return AccessLog.objects.filter(student_filters & instructor_filters).select_related('user', 'cabinet_session').distinct()
+            return AccessLog.objects.filter(student_filters & instructor_filters).select_related(
+                'user', 'cabinet_session', 'user__section', 'photo',
+            ).distinct()
         return AccessLog.objects.none()
 
     @action(detail=False, methods=['get'], url_path='filter-options')

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
+import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
@@ -153,6 +155,7 @@ export default function App() {
   const [closingParticipants, setClosingParticipants] = useState([])
   const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
   const [scanFeedback, setScanFeedback] = useState(null)
+  const [scanPhoto, setScanPhoto] = useState(null)
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
   const [errorMessage, setErrorMessage] = useState('')
   const [clock, setClock] = useState(() => new Date())
@@ -173,6 +176,28 @@ export default function App() {
   const bridgePollingRef = useRef(false)
   const bridgeAbortControllerRef = useRef(null)
   const bridgeErrorRef = useRef('')
+  const photoEventIdRef = useRef(null)
+
+  const loadScanPhoto = useCallback((event) => {
+    const eventId = getDjangoAccessLogEventId(event)
+    if (!eventId) {
+      photoEventIdRef.current = null
+      setScanPhoto({ state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
+      return
+    }
+
+    photoEventIdRef.current = eventId
+    setScanPhoto({ eventId, state: 'loading', label: 'Checking…', imageBlob: null, diagnosticError: null })
+    fetchAccessLogPhoto(eventId)
+      .then((photo) => {
+        if (photoEventIdRef.current === eventId) setScanPhoto(photo)
+      })
+      .catch(() => {
+        if (photoEventIdRef.current === eventId) {
+          setScanPhoto({ eventId, state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
+        }
+      })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -311,6 +336,8 @@ export default function App() {
         throw new Error(`NFC event ${eventId} has an unsupported status.`)
       }
 
+      loadScanPhoto(event)
+
       nfcScanCursorRef.current = eventId
       try {
         localStorage.setItem(NFC_SCAN_CURSOR_KEY, String(eventId))
@@ -381,7 +408,7 @@ export default function App() {
       window.clearInterval(intervalId)
       bridgeAbortControllerRef.current?.abort()
     }
-  }, [view, selectedSession])
+  }, [view, selectedSession, loadScanPhoto])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined
@@ -435,6 +462,8 @@ export default function App() {
     setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
+    setScanPhoto(null)
+    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Ready for the next cabinet session.')
     setNfcUid('')
@@ -450,6 +479,8 @@ export default function App() {
     setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
+    setScanPhoto(null)
+    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Choose a station to begin.')
     setView('station-select')
@@ -462,6 +493,8 @@ export default function App() {
     setClosingParticipants([])
     setCloseRejectedStudent('')
     setScanFeedback(null)
+    setScanPhoto(null)
+    photoEventIdRef.current = null
     setErrorMessage('')
     if (!sessions.some((session) => session.status === 'open')) {
       setView('close-select')
@@ -591,6 +624,8 @@ export default function App() {
   function retryCloseScan() {
     setCloseRejectedStudent('')
     setScanFeedback(null)
+    setScanPhoto(null)
+    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Tap NFC cards to record closing attendance.')
     setMockNfcUid('')
@@ -611,6 +646,8 @@ export default function App() {
     setPendingRegistration(null)
     setAccessState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
     setScanFeedback(null)
+    setScanPhoto(null)
+    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage(skipped
       ? `${participants.length} participants ready. The unregistered card was skipped.`
@@ -643,6 +680,7 @@ export default function App() {
         const result = await readApiResponse(response)
         data = result.data
         if (response.status === 404 && data.registration_required && data.registration_url) {
+          loadScanPhoto({ django_response: data })
           if (closingScan) rejectCloseAttempt('Unknown NFC card')
           else showUnregisteredCard(mockUid, data.registration_url)
           return
@@ -668,6 +706,8 @@ export default function App() {
         }
         scanUid = data.student_id || data.name
       }
+
+      loadScanPhoto({ django_response: data })
 
       const nextUid = scanUid || data.student_id || data.name
       const normalizedUser = {
@@ -983,6 +1023,7 @@ export default function App() {
               <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
               <span>{statusMessage || 'Tap NFC cards to record closing attendance.'}</span>
             </div>
+            <AccessPhotoDetails photo={scanPhoto} />
             <div className="confirm-list">
               <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
               <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
@@ -1064,6 +1105,7 @@ export default function App() {
                 <span>Participants already scanned</span>
                 <strong>{participants.length}</strong>
               </div>
+              <AccessPhotoDetails photo={scanPhoto} />
               <div className="participant-list">
                 {participants.map((participant) => (
                   <div key={participant.uid} className="participant-card">
@@ -1310,6 +1352,7 @@ export default function App() {
                 </div>
               )}
             </div>
+            <AccessPhotoDetails photo={scanPhoto} />
             {errorMessage && <div className="error-banner">{errorMessage}</div>}
 
             <div className="panel-card">

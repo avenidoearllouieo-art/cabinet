@@ -308,6 +308,7 @@ export default function InstructorAccessLogs() {
       <ViewInstructorAccessLogModal
         isOpen={isViewModalOpen}
         log={selectedLog}
+        allowPhotoPreview
         onClose={() => {
           setIsViewModalOpen(false)
           setSelectedLog(null)
