@@ -1001,6 +1001,8 @@ class ProfileAdminFormTests(TestCase):
 
 
 class StudentWorkbookImportTests(TestCase):
+    HEADERS = ['Student ID', 'First Name', 'Last Name', 'Email', 'Role', 'Subject']
+
     def setUp(self):
         self.client = Client()
         self.admin = User.objects.create_superuser(
@@ -1041,6 +1043,28 @@ class StudentWorkbookImportTests(TestCase):
         self.assertTrue(response.context['errors'])
         self.assertFalse(User.objects.filter(email='avery@example.com').exists())
 
+    def test_legacy_template_is_rejected_with_exact_new_column_order(self):
+        legacy_headers = ['student_id', 'first_name', 'last_name', 'email', 'username', 'subject_code', 'role', 'active']
+        response = self.upload(legacy_headers, [['OLD-100', 'Avery', 'Example', 'old@example.com', '', '', 'student', 'true']])
+
+        self.assertTrue(any(error['column'] == 'header' and 'exact order' in error['message'] for error in response.context['errors']))
+        self.assertFalse(User.objects.filter(student_id='OLD-100').exists())
+
+    def test_reordered_six_column_header_is_rejected_without_shifting_data(self):
+        reordered_headers = ['First Name', 'Student ID', 'Last Name', 'Email', 'Role', 'Subject']
+        response = self.upload(reordered_headers, [['Avery', 'SHIFT-100', 'Example', 'shift@example.com', 'student', 'XLSX-TEST']])
+
+        self.assertTrue(any(error['column'] == 'header' and 'exact order' in error['message'] for error in response.context['errors']))
+        self.assertFalse(User.objects.filter(student_id='SHIFT-100').exists())
+        self.assertFalse(User.objects.filter(first_name='Avery').exists())
+
+    def test_malformed_xlsx_reports_a_file_error(self):
+        workbook = SimpleUploadedFile('broken.xlsx', b'not an xlsx workbook')
+        response = self.client.post(self.import_url, {'workbook': workbook})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any(error['column'] == 'file' for error in response.context['errors']))
+
     def test_students_admin_changelist_links_to_import_page(self):
         response = self.client.get(reverse('admin:api_studentprofile_changelist'))
 
@@ -1058,7 +1082,11 @@ class StudentWorkbookImportTests(TestCase):
         template_workbook = load_workbook(template_path, read_only=True, data_only=True)
         self.assertEqual(
             next(template_workbook.active.iter_rows(values_only=True)),
-            ('student_id', 'first_name', 'last_name', 'email', 'username', 'subject_code', 'role', 'active'),
+            tuple(self.HEADERS),
+        )
+        self.assertEqual(
+            next(template_workbook.active.iter_rows(min_row=2, max_row=2, values_only=True)),
+            ('DEMO-STUDENT-001', 'Avery', 'Example', 'avery.example@example.invalid', 'student', None),
         )
         template_workbook.close()
         uploaded = SimpleUploadedFile(template_path.name, template_path.read_bytes())
@@ -1070,15 +1098,17 @@ class StudentWorkbookImportTests(TestCase):
         self.assertEqual(len(prepared), 1)
         self.assertEqual(prepared[0]['student_id'], 'DEMO-STUDENT-001')
         self.assertEqual(prepared[0]['email'], 'avery.example@example.invalid')
+        self.assertEqual(prepared[0]['role'], User.RoleChoices.STUDENT)
+        self.assertIsNone(prepared[0]['section_id'])
         self.assertEqual(SectionSerializer(self.section).data['subject_code'], 'XLSX-TEST')
         self.assertEqual(Section._meta.get_field('subject_code').verbose_name, 'Subject Code')
         self.assertFalse(User.objects.filter(student_id='DEMO-STUDENT-001').exists())
 
     def test_duplicate_student_id_and_email_inside_workbook_are_rejected(self):
-        headers = ['student_id', 'first_name', 'last_name', 'email']
+        headers = self.HEADERS
         rows = [
-            ['DUP-100', 'Avery', 'Example', 'same@example.com'],
-            ['DUP-100', 'Casey', 'Example', 'same@example.com'],
+            ['DUP-100', 'Avery', 'Example', 'same@example.com', 'student', ''],
+            ['DUP-100', 'Casey', 'Example', 'same@example.com', 'student', ''],
         ]
         response = self.upload(headers, rows)
 
@@ -1097,8 +1127,8 @@ class StudentWorkbookImportTests(TestCase):
             role=User.RoleChoices.STUDENT,
         )
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email'],
-            [['EXISTING-100', 'Changed', 'Name', 'changed@example.com']],
+            self.HEADERS,
+            [['EXISTING-100', 'Changed', 'Name', 'changed@example.com', 'student', '']],
         )
 
         self.assertTrue(response.context['errors'])
@@ -1115,24 +1145,25 @@ class StudentWorkbookImportTests(TestCase):
             role=User.RoleChoices.STUDENT,
         )
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email'],
-            [['EMAIL-101', 'Avery', 'Example', 'already.used@example.com']],
+            self.HEADERS,
+            [['EMAIL-101', 'Avery', 'Example', 'already.used@example.com', 'student', '']],
         )
 
         self.assertTrue(any(error['column'] == 'email' for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='EMAIL-101').exists())
 
     def test_existing_username_is_rejected(self):
+        generated_username = 'student_USERNAME-NEW-100'
         User.objects.create_user(
-            username='chosen_username',
+            username=generated_username,
             email='username.owner@example.com',
             password=None,
             student_id='USERNAME-OWNER-100',
             role=User.RoleChoices.STUDENT,
         )
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'username'],
-            [['USERNAME-NEW-100', 'Avery', 'Example', 'new.username@example.com', 'chosen_username']],
+            self.HEADERS,
+            [['USERNAME-NEW-100', 'Avery', 'Example', 'new.username@example.com', 'student', '']],
         )
 
         self.assertTrue(any(error['column'] == 'username' for error in response.context['errors']))
@@ -1140,51 +1171,64 @@ class StudentWorkbookImportTests(TestCase):
 
     def test_invalid_subject_code_reports_row_and_imports_nothing(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'subject_code'],
+            self.HEADERS,
             [
-                ['SECTION-VALID-100', 'Casey', 'Example', 'casey.section@example.com', ''],
-                ['SECTION-INVALID-100', 'Avery', 'Example', 'avery.section@example.com', 'MISSING-SECTION'],
+                ['SECTION-VALID-100', 'Casey', 'Example', 'casey.section@example.com', 'student', 'XLSX-TEST'],
+                ['SECTION-INVALID-100', 'Avery', 'Example', 'avery.section@example.com', 'student', 'MISSING-SECTION'],
             ],
         )
 
-        self.assertTrue(any(error['row'] == 3 and error['column'] == 'subject_code' for error in response.context['errors']))
+        self.assertTrue(any(error['row'] == 3 and error['column'] == 'subject' for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id__in=['SECTION-VALID-100', 'SECTION-INVALID-100']).exists())
 
     def test_ambiguous_subject_code_is_rejected(self):
         Section.objects.create(subject_code='DUPLICATE-CODE', section_name='Duplicate Section One')
         Section.objects.create(subject_code='duplicate-code', section_name='Duplicate Section Two')
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'subject_code'],
-            [['SECTION-DUP-100', 'Avery', 'Example', 'section.duplicate@example.com', 'Duplicate-Code']],
+            self.HEADERS,
+            [['SECTION-DUP-100', 'Avery', 'Example', 'section.duplicate@example.com', 'student', 'Duplicate-Code']],
         )
 
-        self.assertTrue(any(error['column'] == 'subject_code' and 'More than one' in error['message'] for error in response.context['errors']))
+        self.assertTrue(any(error['column'] == 'subject' and 'More than one' in error['message'] for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='SECTION-DUP-100').exists())
 
     def test_nfc_uid_and_password_columns_are_not_accepted(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'nfc_uid', 'password'],
-            [['SECURITY-100', 'Avery', 'Example', 'security@example.com', 'NFC-UID', 'do-not-import']],
+            self.HEADERS + ['NFC UID', 'Password'],
+            [['SECURITY-100', 'Avery', 'Example', 'security@example.com', 'student', '', 'NFC-UID', 'do-not-import']],
         )
 
-        self.assertTrue(any(error['column'] == 'header' and 'Unsupported column' in error['message'] for error in response.context['errors']))
+        self.assertTrue(any(error['column'] == 'header' and 'exact order' in error['message'] for error in response.context['errors']))
         self.assertFalse(User.objects.filter(student_id='SECURITY-100').exists())
 
-    def test_invalid_email_and_active_values_are_rejected(self):
+    def test_invalid_email_role_and_subject_values_are_rejected(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'active'],
-            [['BAD-100', 'Avery', 'Example', 'not-an-email', 'sometimes']],
+            self.HEADERS,
+            [['BAD-100', 'Avery', 'Example', 'not-an-email', 'admin', 'MISSING-SUBJECT']],
         )
 
-        self.assertEqual({error['column'] for error in response.context['errors']}, {'email', 'active'})
+        self.assertEqual({error['column'] for error in response.context['errors']}, {'email', 'role', 'subject'})
         self.assertFalse(User.objects.filter(student_id='BAD-100').exists())
+
+    def test_role_is_required_and_imported_role_is_student_only(self):
+        response = self.upload(
+            self.HEADERS,
+            [
+                ['ROLE-BLANK-100', 'Avery', 'Example', 'blank.role@example.com', '', ''],
+                ['ROLE-ADMIN-100', 'Casey', 'Example', 'admin.role@example.com', 'admin', ''],
+            ],
+        )
+
+        self.assertTrue(any(error['row'] == 2 and error['column'] == 'role' and 'required' in error['message'] for error in response.context['errors']))
+        self.assertTrue(any(error['row'] == 3 and error['column'] == 'role' and 'Only the student role' in error['message'] for error in response.context['errors']))
+        self.assertFalse(User.objects.filter(student_id__in=['ROLE-BLANK-100', 'ROLE-ADMIN-100']).exists())
 
     def test_duplicate_generated_username_is_rejected(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email'],
+            self.HEADERS,
             [
-                ['SAME USER', 'Avery', 'Example', 'avery.one@example.com'],
-                ['SAME_USER', 'Casey', 'Example', 'casey.two@example.com'],
+                ['SAME USER', 'Avery', 'Example', 'avery.one@example.com', 'student', ''],
+                ['SAME_USER', 'Casey', 'Example', 'casey.two@example.com', 'student', ''],
             ],
         )
 
@@ -1193,10 +1237,10 @@ class StudentWorkbookImportTests(TestCase):
 
     def test_successful_import_is_confirmed_atomically_and_uses_unusable_passwords(self):
         response = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email', 'username', 'subject_code', 'role', 'active'],
+            self.HEADERS,
             [
-                ['IMPORT-100', 'Avery', 'Example', 'avery.import@example.com', '', 'XLSX-TEST', 'student', 'true'],
-                ['IMPORT-101', 'Casey', 'Example', 'casey.import@example.com', 'casey_import_user', '', 'student', 'false'],
+                ['IMPORT-100', 'Avery', 'Example', 'avery.import@example.com', 'student', 'XLSX-TEST'],
+                ['IMPORT-101', 'Casey', 'Example', 'casey.import@example.com', 'student', ''],
             ],
         )
         self.assertFalse(response.context['errors'])
@@ -1214,9 +1258,10 @@ class StudentWorkbookImportTests(TestCase):
         self.assertEqual(students[0].username, 'student_IMPORT-100')
         self.assertEqual(students[0].section, self.section)
         self.assertTrue(students[0].is_active)
+        self.assertEqual(students[0].role, User.RoleChoices.STUDENT)
         self.assertIsNone(students[0].nfc_uid)
         self.assertFalse(students[0].has_usable_password())
-        self.assertFalse(students[1].is_active)
+        self.assertTrue(students[1].is_active)
         self.assertIsNone(students[1].section)
 
     @override_settings(TAPTRACK_NFC_DEVICE_MAP=[
@@ -1224,8 +1269,8 @@ class StudentWorkbookImportTests(TestCase):
     ])
     def test_imported_student_can_complete_existing_nfc_enrollment_flow(self):
         upload = self.upload(
-            ['student_id', 'first_name', 'last_name', 'email'],
-            [['ENROLL-100', 'Taylor', 'Example', 'taylor.enroll@example.com']],
+            self.HEADERS,
+            [['ENROLL-100', 'Taylor', 'Example', 'taylor.enroll@example.com', 'student', 'XLSX-TEST']],
         )
         self.client.post(self.import_url, {
             'action': 'confirm',
@@ -1242,11 +1287,9 @@ class StudentWorkbookImportTests(TestCase):
             token = parse_qs(urlparse(initial.json()['registration_url']).query)['token'][0]
             registration = self.client.post('/api/cabinet/enrollment/register/', {
                 'token': token,
+                'username': 'taylor_enroll',
                 'student_id': student.student_id,
-                'full_name': 'Taylor Example',
-                'email': student.email,
                 'password': 'Enrollment-Test-Password-123',
-                'confirm_password': 'Enrollment-Test-Password-123',
             })
             self.assertEqual(registration.status_code, 201, registration.json())
             registration_log = AccessLog.objects.get(
@@ -2991,11 +3034,9 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         registration = self.client.post('/api/cabinet/enrollment/register/', {
             'token': token,
+            'username': 'taptrack_test_student',
             'student_id': student.student_id,
-            'full_name': 'Jordan Santos',
-            'email': student.email,
             'password': 'Fixture-Only-Password-123',
-            'confirm_password': 'Fixture-Only-Password-123',
         }, format='json')
         self.assertEqual(registration.status_code, 201, registration.json())
 
@@ -3324,6 +3365,38 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertTrue(validation.json()['valid'])
         self.assertTrue(enrollment.verify_token(token))
 
+    @override_settings(TAPTRACK_NFC_REGISTRATION_URL_BASE='http://10.109.175.241:5177/register')
+    def test_new_enrollment_urls_use_configured_base_and_preserve_valid_token(self):
+        response = self.client.post('/api/verify-nfc/', {
+            'nfc_uid': 'card-configured-url-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 404, response.json())
+        registration_url = response.json()['registration_url']
+        parsed_url = urlparse(registration_url)
+        token = parse_qs(parsed_url.query)['token'][0]
+        enrollment = NFCEnrollmentSession.objects.get(nfc_uid='CARD-CONFIGURED-URL-001')
+        self.assertEqual((parsed_url.scheme, parsed_url.netloc, parsed_url.path), (
+            'http', '10.109.175.241:5177', '/register',
+        ))
+        self.assertTrue(enrollment.verify_token(token))
+        self.assertNotIn('localhost:5176', registration_url)
+        self.assertNotIn(':5000', registration_url)
+
+        with self.settings(NFC_REGISTRATION_URL_BASE='http://registration.example:8080/register'):
+            changed = self.client.post('/api/verify-nfc/', {
+                'nfc_uid': 'card-configured-url-002',
+            }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(changed.status_code, 404, changed.json())
+        changed_url = urlparse(changed.json()['registration_url'])
+        changed_token = parse_qs(changed_url.query)['token'][0]
+        changed_enrollment = NFCEnrollmentSession.objects.get(nfc_uid='CARD-CONFIGURED-URL-002')
+        self.assertEqual((changed_url.scheme, changed_url.netloc, changed_url.path), (
+            'http', 'registration.example:8080', '/register',
+        ))
+        self.assertTrue(changed_enrollment.verify_token(changed_token))
+
     def test_repeated_unknown_nfc_scans_reuse_one_pending_session(self):
         first = self.client.post('/api/verify-nfc/', {
             'nfc_uid': 'CARD-REUSE-001',
@@ -3385,6 +3458,8 @@ class CabinetDeviceIntegrationTests(TestCase):
             student_id='PENDING-001',
             nfc_uid=None,
             is_active=True,
+            first_name='Roster',
+            last_name='Student',
         )
         enrollment = NFCEnrollmentSession(
             nfc_uid='CARD-ENROLLMENT-READY',
@@ -3397,29 +3472,87 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'registration-token',
+            'username': 'pending_student',
             'student_id': 'PENDING-001',
-            'full_name': 'Pending Student',
-            'email': 'pending.registration@example.com',
             'password': 'new-password-123',
-            'confirm_password': 'new-password-123',
         }, format='json')
 
         self.assertEqual(response.status_code, 201, response.json())
         student.refresh_from_db()
         enrollment.refresh_from_db()
         self.assertEqual(student.nfc_uid, 'CARD-ENROLLMENT-READY')
+        self.assertEqual(student.username, 'pending_student')
+        self.assertEqual(student.get_full_name(), 'Roster Student')
+        self.assertEqual(student.email, 'pending-registration@example.com')
         self.assertTrue(student.has_usable_password())
         self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
 
         reused = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'registration-token',
+            'username': 'pending_student',
             'student_id': 'PENDING-001',
-            'full_name': 'Pending Student',
-            'email': 'pending.registration@example.com',
             'password': 'new-password-123',
-            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(reused.status_code, 410, reused.json())
+
+    def test_enrollment_registration_rejects_taken_username_without_consuming_token(self):
+        User.objects.create_user(
+            username='claimed_username',
+            email='claimed.username@example.com',
+            password='existing-password',
+            role=User.RoleChoices.STUDENT,
+            student_id='CLAIMED-USERNAME-001',
+        )
+        pending_student = User.objects.create_user(
+            username='pending_username_owner',
+            email='pending.username@example.com',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='PENDING-USERNAME-001',
+        )
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-USERNAME-CONFLICT',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('username-conflict-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'username-conflict-token',
+            'username': 'claimed_username',
+            'student_id': pending_student.student_id,
+            'password': 'new-password-123',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 409, response.json())
+        self.assertEqual(response.json()['error'], 'That username is already in use.')
+        pending_student.refresh_from_db()
+        enrollment.refresh_from_db()
+        self.assertIsNone(pending_student.nfc_uid)
+        self.assertFalse(pending_student.has_usable_password())
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
+
+    def test_enrollment_registration_requires_username_and_minimum_password(self):
+        enrollment = NFCEnrollmentSession(
+            nfc_uid='CARD-REQUIRED-REGISTRATION-FIELDS',
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token('required-fields-token')
+        enrollment.save()
+
+        response = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'required-fields-token',
+            'student_id': 'PENDING-REQUIRED-001',
+            'password': 'short',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.json())
+        self.assertIn('username', response.json())
+        self.assertIn('password', response.json())
 
     def test_enrollment_registration_rejects_unknown_student_id(self):
         enrollment = NFCEnrollmentSession(
@@ -3433,11 +3566,9 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'unknown-student-token',
+            'username': 'unknown_student',
             'student_id': 'DOES-NOT-EXIST',
-            'full_name': 'Unknown Student',
-            'email': 'unknown.student@example.com',
             'password': 'new-password-123',
-            'confirm_password': 'new-password-123',
         }, format='json')
 
         self.assertEqual(response.status_code, 404, response.json())
@@ -3470,11 +3601,9 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'assigned-token',
+            'username': 'pending_nfc_student',
             'student_id': 'PENDING-002',
-            'full_name': 'Pending NFC Student',
-            'email': 'pending.nfc@example.com',
             'password': 'new-password-123',
-            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(response.status_code, 409, response.json())
 
@@ -3498,10 +3627,8 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'existing-account-token',
+            'username': 'existing_account_student',
             'student_id': 'EXISTING-001',
-            'full_name': 'Existing Account Student',
-            'email': 'existing.account@example.com',
             'password': 'new-password-123',
-            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(response.status_code, 409, response.json())

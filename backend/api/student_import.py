@@ -9,9 +9,8 @@ from openpyxl.utils.exceptions import InvalidFileException
 from .models import Section, User
 
 
-REQUIRED_COLUMNS = ('student_id', 'first_name', 'last_name', 'email')
-OPTIONAL_COLUMNS = ('username', 'subject_code', 'role', 'active')
-SUPPORTED_COLUMNS = frozenset((*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS))
+IMPORT_COLUMNS = ('student_id', 'first_name', 'last_name', 'email', 'role', 'subject')
+EXPECTED_HEADERS = ('student id', 'first name', 'last name', 'email', 'role', 'subject')
 MAX_IMPORT_ROWS = 1000
 
 
@@ -40,34 +39,33 @@ def read_student_workbook(uploaded_file):
         if not header_row:
             return [], [_row_error(1, 'header', 'The workbook is empty.')]
 
-        headers = [_cell_text(value).casefold() for value in header_row]
+        headers = [_cell_text(value).casefold().replace('_', ' ') for value in header_row]
+        while headers and not headers[-1]:
+            headers.pop()
+        normalized_headers = tuple(' '.join(header.split()) for header in headers)
+        if normalized_headers != EXPECTED_HEADERS:
+            expected = ' | '.join(('Student ID', 'First Name', 'Last Name', 'Email', 'Role', 'Subject'))
+            return [], [_row_error(
+                1,
+                'header',
+                f'Expected columns in this exact order: {expected}. Download the current template; older templates are not supported.',
+            )]
+
         errors = []
-        if len(headers) != len(set(headers)):
-            errors.append(_row_error(1, 'header', 'Column names must not be duplicated.'))
-
-        present = {header for header in headers if header}
-        missing = sorted(set(REQUIRED_COLUMNS) - present)
-        if missing:
-            errors.append(_row_error(1, 'header', f'Missing required column(s): {", ".join(missing)}.'))
-
-        unsupported = sorted(present - SUPPORTED_COLUMNS)
-        if unsupported:
-            errors.append(_row_error(1, 'header', f'Unsupported column(s): {", ".join(unsupported)}.'))
-
-        if errors:
-            return [], errors
-
-        column_indexes = {name: index for index, name in enumerate(headers) if name}
         rows = []
         for row_number, values in enumerate(iterator, start=2):
             if not any(_cell_text(value) for value in values):
                 continue
+            if any(_cell_text(value) for value in values[len(IMPORT_COLUMNS):]):
+                errors.append(_row_error(row_number, 'row', 'Unexpected values found after the Subject column.'))
+                continue
             if len(rows) >= MAX_IMPORT_ROWS:
                 errors.append(_row_error(row_number, 'row', f'Files may contain at most {MAX_IMPORT_ROWS} student rows.'))
                 break
-            row = {column: '' for column in SUPPORTED_COLUMNS}
-            for column, index in column_indexes.items():
-                row[column] = _cell_text(values[index] if index < len(values) else None)
+            row = {
+                column: _cell_text(values[index] if index < len(values) else None)
+                for index, column in enumerate(IMPORT_COLUMNS)
+            }
             row['row_number'] = row_number
             rows.append(row)
 
@@ -76,18 +74,6 @@ def read_student_workbook(uploaded_file):
         return rows, errors
     finally:
         workbook.close()
-
-
-def _parse_active(value, row_number, errors):
-    if value == '':
-        return True
-    normalized = value.casefold()
-    if normalized in {'true', 'yes', 'y', '1', 'active'}:
-        return True
-    if normalized in {'false', 'no', 'n', '0', 'inactive'}:
-        return False
-    errors.append(_row_error(row_number, 'active', 'Use true/false, yes/no, 1/0, or active/inactive.'))
-    return True
 
 
 def username_for_student_id(student_id):
@@ -129,11 +115,11 @@ def validate_student_rows(rows):
         first_name = _cell_text(source.get('first_name'))
         last_name = _cell_text(source.get('last_name'))
         email = _cell_text(source.get('email'))
-        subject_code = _cell_text(source.get('subject_code'))
+        subject = _cell_text(source.get('subject'))
         username = _cell_text(source.get('username')) or username_for_student_id(student_id)
-        role = _cell_text(source.get('role')).casefold() or 'student'
+        role = _cell_text(source.get('role')).casefold()
 
-        if role != 'student':
+        if role and role != User.RoleChoices.STUDENT:
             row_errors.append(_row_error(row_number, 'role', 'Only the student role can be imported here.'))
 
         for column, value in (
@@ -141,6 +127,7 @@ def validate_student_rows(rows):
             ('first_name', first_name),
             ('last_name', last_name),
             ('email', email),
+            ('role', role),
         ):
             if not value:
                 row_errors.append(_row_error(row_number, column, f'{column} is required.'))
@@ -173,16 +160,14 @@ def validate_student_rows(rows):
             row_errors.append(_row_error(row_number, 'username', 'This username is already in use.'))
 
         section_id = None
-        if subject_code:
-            matches = section_lookup.get(subject_code.casefold(), [])
+        if subject:
+            matches = section_lookup.get(subject.casefold(), [])
             if not matches:
-                row_errors.append(_row_error(row_number, 'subject_code', 'No Section has this subject_code.'))
+                row_errors.append(_row_error(row_number, 'subject', 'No existing Section has this subject code.'))
             elif len(matches) > 1:
-                row_errors.append(_row_error(row_number, 'subject_code', 'More than one Section has this subject_code; resolve the duplicate Sections first.'))
+                row_errors.append(_row_error(row_number, 'subject', 'More than one Section has this subject code; resolve the duplicate Sections first.'))
             else:
                 section_id = matches[0]
-
-        active = _parse_active(_cell_text(source.get('active')), row_number, row_errors)
 
         candidate = {
             'row_number': row_number,
@@ -191,10 +176,10 @@ def validate_student_rows(rows):
             'last_name': last_name,
             'email': email,
             'username': username,
-            'subject_code': subject_code,
+            'subject': subject,
             'role': role,
             'section_id': section_id,
-            'active': active,
+            'active': True,
         }
 
         if not row_errors:

@@ -69,13 +69,12 @@ Set Cabinet browser build-time values in `cabinet/.env.production` before buildi
 ```env
 VITE_NFC_MODE=hardware
 VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
-VITE_WEB_APP_BASE_URL=http://192.168.1.100:5176
 ```
 
 Important:
 
 - VITE values are compiled into the browser bundle. Never put `DEVICE_API_KEY` or a Django API key in VITE variables.
-- Keep the Portal QR base URL reachable by student phones.
+- Django's `TAPTRACK_NFC_REGISTRATION_URL_BASE` setting controls the registration URL in new QR codes. Configure it in `backend/.env`; the Cabinet forwards that URL unchanged.
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 

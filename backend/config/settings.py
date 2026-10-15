@@ -55,11 +55,11 @@ if not SECRET_KEY:
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', ['localhost', '127.0.0.1', 'testserver'])
 CSRF_TRUSTED_ORIGINS = env_list(
     'DJANGO_CSRF_TRUSTED_ORIGINS',
-    ['http://localhost:5176', 'http://127.0.0.1:5176'],
+    ['http://localhost:5176', 'http://127.0.0.1:5176', 'http://localhost:5177', 'http://127.0.0.1:5177'],
 )
 NFC_REGISTRATION_URL_BASE = os.environ.get(
     'TAPTRACK_NFC_REGISTRATION_URL_BASE',
-    'http://localhost:5176/register',
+    'http://10.109.175.241:5177/register',
 ).rstrip('/')
 TAPTRACK_CABINET_NAME = os.environ.get('TAPTRACK_CABINET_NAME', 'Cabinet 1').strip()
 TAPTRACK_CABINET_STATIONS = env_list(
@@ -215,7 +215,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 CORS_ALLOWED_ORIGINS = env_list(
     'DJANGO_CORS_ALLOWED_ORIGINS',
-    ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176'],
+    ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176', 'http://localhost:5177', 'http://127.0.0.1:5177'],
 )
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [

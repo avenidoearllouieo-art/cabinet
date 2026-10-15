@@ -2132,22 +2132,19 @@ class NFCEnrollmentRegistrationView(APIView):
                     {'error': 'A TapTrack account already exists for this Student ID.'},
                     status=status.HTTP_409_CONFLICT,
                 )
+            username = data['username'].strip()
+            if User.objects.filter(username__iexact=username).exclude(pk=user.pk).exists():
+                return Response(
+                    {'error': 'That username is already in use.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
             if User.objects.filter(nfc_uid=enrollment.nfc_uid).exclude(pk=user.pk).exists():
                 return Response(
                     {'error': 'This NFC card is already assigned to another student.'},
                     status=status.HTTP_409_CONFLICT,
                 )
-            email = data['email'].strip().lower()
-            if User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
-                return Response(
-                    {'error': 'That email address is already in use.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
 
-            name_parts = data['full_name'].strip().split(None, 1)
-            user.first_name = name_parts[0]
-            user.last_name = name_parts[1] if len(name_parts) > 1 else ''
-            user.email = email
+            user.username = username
             user.nfc_uid = enrollment.nfc_uid
             user.is_active = True
             user.set_password(data['password'])

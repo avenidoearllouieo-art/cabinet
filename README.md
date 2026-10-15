@@ -40,10 +40,10 @@ In another terminal:
 ```powershell
 cd frontend
 npm ci
-npm run dev
+npm run dev -- --host 0.0.0.0 --port 5177
 ```
 
-The dashboard runs at `http://localhost:5176` and proxies `/api` requests to Django on port 8000.
+The dashboard runs at `http://10.109.175.241:5177` for devices on the same reachable network. Vite serves the page on port 5177 and keeps the browser API base at `/api`, proxying those requests to Django on port 8000. The proxy defaults to `http://127.0.0.1:8000`; set `VITE_DJANGO_SERVER_URL` to Django's reachable address if Django runs on another machine. When using a remote Django host, add that host to Django's `DJANGO_ALLOWED_HOSTS`. Set `TAPTRACK_NFC_REGISTRATION_URL_BASE=http://10.109.175.241:5177/register` in `backend/.env` so new NFC registration QR codes point to this frontend. Django must be restarted after changing its environment or settings.
 
 ## Quality checks
 

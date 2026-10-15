@@ -67,6 +67,16 @@
 .cabinet-home-card { width: 100%; margin: 0; text-align: center; }
 .status-panel,
 .confirm-panel { width: min(1100px, 100%); margin: 0 auto; }
+.nfc-registration-panel { width: min(1100px, 100%); }
+.nfc-registration-frame {
+  display: block;
+  width: 100%;
+  height: min(70dvh, 760px);
+  margin: 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
 .hero-card,
 .panel-card,
 .feedback-card,

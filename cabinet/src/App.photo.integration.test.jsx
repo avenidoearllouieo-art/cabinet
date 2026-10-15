@@ -149,6 +149,41 @@ describe('Cabinet photo scan integration', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {
+    const registrationUrl = 'http://10.109.175.241:5177/register?token=enrollment-token-123'
+    const fetcher = vi.fn(async (url, options = {}) => {
+      if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+        return jsonResponse({
+          mode: 'mock',
+          cabinet_name: 'Cabinet 1',
+          stations: ['Station 1', 'Station 2'].map((name) => ({ name, status: 'available', session: null })),
+        })
+      }
+      if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+        const request = JSON.parse(options.body)
+        return jsonResponse({ station: request.station, session: null })
+      }
+      if (url === '/api/verify-nfc/') {
+        return jsonResponse({ registration_required: true, registration_url: registrationUrl }, 404)
+      }
+      throw new Error(`Unexpected Cabinet integration request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+    await user.type(await screen.findByLabelText('Mock NFC UID'), 'UNREGISTERED-CARD')
+    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
+
+    expect(container.querySelector('.registration-qr svg')).toBeTruthy()
+    await user.click(await screen.findByRole('button', { name: 'REGISTER THIS CARD' }))
+    const registrationFrame = screen.getByTitle('NFC card registration')
+    expect(registrationFrame.getAttribute('src')).toBe(registrationUrl)
+    expect(screen.getByRole('link', { name: /open registration in this cabinet window/i }).getAttribute('href')).toBe(registrationUrl)
+  })
+
   it('records Station 2 closing attendance when the photo status API fails', async () => {
     const memberUid = 'UID-STATION-2-MEMBER'
     const fetcher = createFetchForCloseStation(5202, memberUid)
@@ -174,5 +209,65 @@ describe('Cabinet photo scan integration', () => {
       }),
     )
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('keeps attendance details visible on the closed-session result screen', async () => {
+    const member = { uid: 'MEMBER-UID-200', studentId: 'MEMBER-200', fullName: 'Riley Member' }
+    const openedSession = {
+      id: 'session-Station 2',
+      station: 'Station 2',
+      status: 'open',
+      workflow_state: 'idle',
+      opened_at: '2026-10-15T10:00:00Z',
+      opened_by: [member],
+      closed_by: [],
+    }
+    const fetcher = vi.fn(async (url, options = {}) => {
+      if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+        return jsonResponse({
+          mode: 'mock',
+          cabinet_name: 'Cabinet 1',
+          stations: [
+            { name: 'Station 1', status: 'available', session: null },
+            { name: 'Station 2', status: 'occupied', session: openedSession },
+          ],
+        })
+      }
+      if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+        const { command } = JSON.parse(options.body)
+        const session = command === 'finish_close'
+          ? { ...openedSession, status: 'closed', workflow_state: 'idle', closed_at: '2026-10-15T10:30:00Z', closed_by: [member] }
+          : { ...openedSession, workflow_state: 'closing' }
+        return jsonResponse({ station: 'Station 2', session })
+      }
+      if (url === '/api/verify-nfc/') {
+        return jsonResponse({
+          success: true,
+          event_id: 6202,
+          nfc_uid: member.uid,
+          name: member.fullName,
+          student_id: member.studentId,
+          role: 'student',
+        })
+      }
+      if (url === '/api/access-logs/6202/photo/') return jsonResponse({ error: 'Photo service unavailable.' }, 503)
+      throw new Error(`Unexpected Cabinet integration request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /close cabinet/i }))
+    await user.click(await screen.findByRole('button', { name: /close station 2/i }))
+    await user.type(await screen.findByLabelText('Mock NFC UID'), member.uid)
+    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
+    await user.click(await screen.findByRole('button', { name: 'CLOSE CABINET' }))
+    await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 2' }))
+
+    expect(await screen.findByRole('heading', { name: 'Cabinet Closed' })).toBeTruthy()
+    expect(screen.getAllByText('Opened by')[0].parentElement.textContent).toContain('1')
+    expect(screen.getAllByText('Closed by')[0].parentElement.textContent).toContain('1')
+    expect(screen.getAllByText(member.fullName)).toHaveLength(2)
+    expect(screen.getAllByText(member.studentId)).toHaveLength(2)
   })
 })

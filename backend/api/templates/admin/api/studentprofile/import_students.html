@@ -11,7 +11,7 @@
 
 {% block content %}
 <div id="content-main">
-  <p>Import new pre-enrollment students. Existing student records are never overwritten. Imported accounts have no usable password and no NFC UID until the student completes the NFC registration flow.</p>
+  <p>Import new pre-enrollment students using this exact column order: Student ID, First Name, Last Name, Email, Role, Subject. Existing student records are never overwritten. Imported accounts have no usable password and no NFC UID until the student completes the NFC registration flow.</p>
   <p><a href="{% static 'api/student_import_template.xlsx' %}" download>Download fake-data Excel template</a></p>
 
   {% if result %}
@@ -36,14 +36,13 @@
     <h2>Preview ({{ rows|length }} student{{ rows|length|pluralize }})</h2>
     <table>
       <thead>
-        <tr><th>Row</th><th>Student ID</th><th>First name</th><th>Last name</th><th>Email</th><th>Subject Code</th><th>Username</th><th>Role</th><th>Active</th></tr>
+        <tr><th>Row</th><th>Student ID</th><th>First Name</th><th>Last Name</th><th>Email</th><th>Role</th><th>Subject</th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
           <tr>
             <td>{{ row.row_number }}</td><td>{{ row.student_id }}</td><td>{{ row.first_name }}</td>
-            <td>{{ row.last_name }}</td><td>{{ row.email }}</td><td>{{ row.subject_code|default:'—' }}</td>
-            <td>{{ row.username }}</td><td>{{ row.role }}</td><td>{{ row.active|yesno:'Yes,No' }}</td>
+            <td>{{ row.last_name }}</td><td>{{ row.email }}</td><td>{{ row.role }}</td><td>{{ row.subject|default:'—' }}</td>
           </tr>
         {% endfor %}
       </tbody>

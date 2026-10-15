@@ -8,20 +8,8 @@ import './App.css'
 
 const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
 const NFC_MODE = (import.meta.env.VITE_NFC_MODE || (import.meta.env.DEV ? 'mock' : 'hardware')).toLowerCase()
-const WEB_APP_BASE_URL = (import.meta.env.VITE_WEB_APP_BASE_URL || '').replace(/\/$/, '')
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
-
-function buildRegistrationUrl(serverUrl) {
-  if (!WEB_APP_BASE_URL) return serverUrl
-  try {
-    const token = new URL(serverUrl).searchParams.get('token')
-    if (!token) return serverUrl
-    return `${WEB_APP_BASE_URL}/register?token=${encodeURIComponent(token)}`
-  } catch {
-    return serverUrl
-  }
-}
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController()
@@ -152,6 +140,7 @@ export default function App() {
   const [selectedStation, setSelectedStation] = useState(null)
   const [participants, setParticipants] = useState([])
   const [pendingRegistration, setPendingRegistration] = useState(null)
+  const [closedSession, setClosedSession] = useState(null)
   const [closingParticipants, setClosingParticipants] = useState([])
   const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
   const [scanFeedback, setScanFeedback] = useState(null)
@@ -303,7 +292,7 @@ export default function App() {
           setCloseRejectedStudent('Unknown NFC card')
           setView('close-not-authorized')
         } else {
-          const registrationUrl = buildRegistrationUrl(event.registration_url)
+          const registrationUrl = event.registration_url
           setAccessState({
             status: 'registration',
             name: '',
@@ -457,6 +446,7 @@ export default function App() {
     setSelectedStation(null)
     setParticipants([])
     setPendingRegistration(null)
+    setClosedSession(null)
     closingParticipantsRef.current = []
     setClosingParticipants([])
     setCloseRejectedStudent('')
@@ -633,13 +623,22 @@ export default function App() {
   }
 
   function showUnregisteredCard(uid, url) {
-    const registrationUrl = buildRegistrationUrl(url)
+    const registrationUrl = url
     setPendingRegistration({ uid, registrationUrl })
     setAccessState({ status: 'registration', name: '', studentId: '', role: '', message: 'Please scan this QR code to register your card.', registrationUrl })
     setScanFeedback(null)
     setErrorMessage('')
     setStatusMessage('This NFC card is not linked to a student.')
     setView('unregistered-card')
+  }
+
+  function openRegistrationPage() {
+    if (!pendingRegistration?.registrationUrl) {
+      setErrorMessage('A registration link is not available. Tap the unregistered card again.')
+      return
+    }
+    setErrorMessage('')
+    setView('nfc-registration')
   }
 
   function resumeParticipantScan({ skipped = false } = {}) {
@@ -827,6 +826,7 @@ export default function App() {
       const data = await sendCabinetWorkflow('finish_close', { mode: NFC_MODE, station: selectedStation })
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
+      setClosedSession(session)
       setStatusMessage(`Cabinet closed on ${stationLabel(data.station)}.`)
       setView('cabinet-closed')
     } catch (error) {
@@ -1121,9 +1121,35 @@ export default function App() {
               </div>
             )}
             <div className="button-row stacked">
-              <a className="btn primary registration-link" href={pendingRegistration?.registrationUrl || '#'} target="_blank" rel="noopener noreferrer">REGISTER THIS CARD</a>
+              <button className="btn primary registration-link" type="button" onClick={openRegistrationPage} disabled={!pendingRegistration?.registrationUrl}>REGISTER THIS CARD</button>
               <button className="btn secondary" onClick={() => resumeParticipantScan({ skipped: true })}>SKIP FOR NOW</button>
               <button className="btn ghost" onClick={() => resumeParticipantScan()}>BACK TO SCANNING</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'nfc-registration' && (
+        <Screen>
+          <div className="panel nfc-registration-panel">
+            <h2>Register NFC Card</h2>
+            {pendingRegistration?.registrationUrl ? (
+              <>
+                <p className="muted">Complete the existing TapTrack registration form below. If this link has expired or was already used, tap the card again to get a fresh link.</p>
+                <iframe
+                  className="nfc-registration-frame"
+                  src={pendingRegistration.registrationUrl}
+                  title="NFC card registration"
+                  referrerPolicy="no-referrer"
+                />
+                <p className="muted">If the form cannot load here, <a href={pendingRegistration.registrationUrl} rel="noreferrer">open registration in this Cabinet window</a>.</p>
+              </>
+            ) : (
+              <p className="error-banner" role="alert">A registration link is not available. Tap the unregistered card again.</p>
+            )}
+            <div className="button-row">
+              <button className="btn secondary" type="button" onClick={() => setView('unregistered-card')}>BACK TO CARD</button>
+              <button className="btn ghost" type="button" onClick={() => resumeParticipantScan()}>BACK TO SCANNING</button>
             </div>
           </div>
         </Screen>
@@ -1480,13 +1506,13 @@ export default function App() {
             <h2>Cabinet Closed</h2>
             <p className="muted">{stationLabel(selectedStation)} is closed.</p>
             <div className="session-metrics">
-              <div><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
-              <div><span>Closed by</span><strong>{selectedSession?.closed_by?.length || 0}</strong></div>
-              <div><span>Session Duration</span><strong>{formatDuration(selectedSession?.openedAt, selectedSession?.closedAt)}</strong></div>
+              <div><span>Opened by</span><strong>{getParticipantCount(closedSession)}</strong></div>
+              <div><span>Closed by</span><strong>{closedSession?.closed_by?.length || 0}</strong></div>
+              <div><span>Session Duration</span><strong>{formatDuration(closedSession?.openedAt, closedSession?.closedAt)}</strong></div>
             </div>
             <div className="participant-list session-participants">
               <h3>Opened by</h3>
-              {(selectedSession?.opened_by || []).map((student) => (
+              {(closedSession?.opened_by || []).map((student) => (
                 <div key={student.uid || student.studentId} className="participant-card">
                   <div className="participant-badge">✓</div>
                   <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
@@ -1495,7 +1521,7 @@ export default function App() {
             </div>
             <div className="participant-list session-participants">
               <h3>Closed by</h3>
-              {(selectedSession?.closed_by || []).map((student) => (
+              {(closedSession?.closed_by || []).map((student) => (
                 <div key={student.uid || student.studentId} className="participant-card">
                   <div className="participant-badge">✓</div>
                   <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
