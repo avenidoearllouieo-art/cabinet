@@ -6,7 +6,7 @@ Phase 1 adds optional photos to existing `AccessLog` records. An access log rema
 
 `GET /api/access-logs/{event_id}/photo/`
 
-Authenticate with the Cabinet device's existing `X-API-Key`, or with a Django JWT (`Authorization: Bearer <token>`). Device keys can read only events for their mapped cabinet. JWT users follow access-log scope: students can read their own events, instructors can read events for students in their assigned sections, and administrators can read all events. Student responses are status-only: capture status is returned, while image availability, diagnostics, image endpoint, and image bytes are withheld. A Student request for their own image endpoint returns `403`; another student's event ID returns `404`.
+Authenticate with the Cabinet device's existing `X-API-Key`, or with a Django JWT (`Authorization: Bearer <token>`). Device keys can read only events for their mapped cabinet. JWT users follow access-log scope: students can read their own events and associated photos, instructors can read events and associated photos for students in their assigned sections, and administrators can read all events and photos. Student metadata includes photo status and the protected image endpoint only when their own image exists; timestamps and diagnostics remain withheld. A student cannot read another student's event; another student's event ID returns `404`.
 
 ```json
 {
@@ -19,7 +19,7 @@ Authenticate with the Cabinet device's existing `X-API-Key`, or with a Django JW
 }
 ```
 
-`capture_status` is the stored value `pending`, `success`, or `failed`; it is `null` when no capture record exists. The Cabinet and authorized staff map these to Pending, Captured, and Unavailable. For non-Student readers, `image_endpoint` is null unless the stored file exists. It is a protected API route, not a public media URL.
+`capture_status` is the stored value `pending`, `success`, or `failed`; it is `null` when no capture record exists. The Cabinet and authorized users map these to Pending, Captured, and Unavailable. `image_endpoint` is null unless the stored file exists. It is a protected API route, not a public media URL.
 
 `GET /api/access-logs/{event_id}/photo/image/` streams JPEG bytes and requires the same device key or JWT authorization. It returns `404` when no image file is available. Responses are private/no-store. Never use the Admin staff-session image route or a `/media/` path from Cabinet.
 

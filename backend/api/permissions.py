@@ -122,12 +122,7 @@ class CanReadAccessLogPhoto(BasePermission):
 
 
 class CanReadAccessLogPhotoImage(CanReadAccessLogPhoto):
-    message = 'Students may view photo status but not captured images.'
-
-    def has_object_permission(self, request, view, access_log):
-        if request.user.is_authenticated and request.user.role == 'student':
-            return False
-        return super().has_object_permission(request, view, access_log)
+    message = 'You are not authorized to view this access log photo.'
 
 
 class PasswordResetRateThrottle(AnonRateThrottle):

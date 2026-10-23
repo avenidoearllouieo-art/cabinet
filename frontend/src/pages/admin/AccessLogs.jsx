@@ -6,6 +6,7 @@ import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.jsx'
+import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus } from 'lucide-react'
 
@@ -510,7 +511,12 @@ export default function AccessLogs() {
             { key: 'station', label: 'Station', className: 'w-[10%]', render: (_value, row) => row.station || '—' },
             { key: 'access_type', label: 'Access Type', className: 'w-[17%]', render: (_value, row) => getAccessTypeBadge(row) },
             { key: 'status', label: 'Result', className: 'w-[10%]', render: (_value, row) => getResultBadge(row) },
-            { key: 'photo_capture_status', label: 'Photo', className: 'w-[9%]', render: (value) => value === 'success' ? 'Captured' : value === 'pending' ? 'Pending' : value === 'failed' ? 'Failed' : 'Unavailable' },
+            {
+              key: 'photo_capture_status',
+              label: 'Photo',
+              className: 'w-[9%]',
+              render: (value, row) => <AccessLogPhotoPanel eventId={row.id} captureStatus={value} allowImage compact />,
+            },
             { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: (_value, row) => getDurationValue(row) },
             {
               key: 'actions',

@@ -2432,7 +2432,7 @@ class AccessLogPhotoApiTests(TestCase):
         another_cabinet_photo_path = f'/api/access-logs/{another_cabinet_log.pk}/photo/'
         self.client.force_authenticate(user=other_student)
         self.assertEqual(self.client.get(another_cabinet_photo_path).status_code, 200)
-        self.assertEqual(self.client.get(f'{another_cabinet_photo_path}image/').status_code, 403)
+        self.assertEqual(self.client.get(f'{another_cabinet_photo_path}image/').status_code, 404)
 
         self.client.force_authenticate(user=self.student)
         self.assertEqual(self.client.get(self.upload_url()).status_code, 200)
@@ -2446,10 +2446,14 @@ class AccessLogPhotoApiTests(TestCase):
         self.assertEqual(student_metadata['capture_status'], 'success')
         self.assertIsNone(student_metadata['captured_at'])
         self.assertIsNone(student_metadata['diagnostic_error'])
-        self.assertFalse(student_metadata['image_available'])
-        self.assertIsNone(student_metadata['image_endpoint'])
+        self.assertTrue(student_metadata['image_available'])
+        self.assertEqual(
+            student_metadata['image_endpoint'],
+            f'/api/access-logs/{self.access_log.pk}/photo/image/',
+        )
         student_image = self.client.get(image_path)
-        self.assertEqual(student_image.status_code, 403)
+        self.assertEqual(student_image.status_code, 200)
+        student_image.close()
 
         instructor = User.objects.create_user(
             username='photo-instructor', email='photo-instructor@example.com',

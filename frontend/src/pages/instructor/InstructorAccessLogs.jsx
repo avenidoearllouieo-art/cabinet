@@ -6,6 +6,7 @@ import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
 import Pagination from '../../components/Pagination'
 import StatusBadge from '../../components/StatusBadge'
+import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import ViewInstructorAccessLogModal from '../../components/accesslogs/ViewInstructorAccessLogModal.jsx'
 import { accessLogResult, accessLogValue, formatAccessLogDate, formatAccessLogTime } from '../../components/accesslogs/accessLogFormatters.js'
 import { Search, CheckCircle2, AlertCircle, LogIn, Users, Eye } from 'lucide-react'
@@ -160,6 +161,12 @@ export default function InstructorAccessLogs() {
       label: 'Access Result',
       className: 'min-w-[125px]',
       render: (_value, row) => getStatusBadge(row),
+    },
+    {
+      key: 'photo_capture_status',
+      label: 'Photo',
+      className: 'min-w-[90px]',
+      render: (value, row) => <AccessLogPhotoPanel eventId={row.id} captureStatus={value} allowImage compact />,
     },
     {
       key: 'reason',

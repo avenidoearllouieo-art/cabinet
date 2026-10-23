@@ -167,9 +167,9 @@ class AccessLogPhotoUploadView(APIView):
             'capture_status': photo.capture_status if photo else None,
             'captured_at': photo.captured_at if photo and not student_status_only else None,
             'diagnostic_error': (photo.diagnostic_error or None) if photo and not student_status_only else None,
-            'image_available': image_available if not student_status_only else False,
+            'image_available': image_available,
             'image_endpoint': reverse('access_log_photo_image', args=[access_log.pk])
-            if image_available and not student_status_only else None,
+            if image_available else None,
         }
         return Response(AccessLogPhotoReadSerializer(payload).data, status=status.HTTP_200_OK)
 

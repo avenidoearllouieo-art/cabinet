@@ -4,6 +4,7 @@ import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
+import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import ViewInstructorAccessLogModal from '../../components/accesslogs/ViewInstructorAccessLogModal.jsx'
 import { Search, CheckCircle2, AlertCircle, LogIn, Eye } from 'lucide-react'
 
@@ -124,8 +125,8 @@ export default function StudentAccessLogs() {
     },
     {
       key: 'photo_capture_status',
-      label: 'Photo Status',
-      render: (value) => value === 'success' ? 'Captured' : value === 'pending' ? 'Pending' : value === 'failed' ? 'Unavailable' : 'Unavailable',
+      label: 'Photo',
+      render: (value, row) => <AccessLogPhotoPanel eventId={row.id} captureStatus={value} allowImage compact />,
     },
     {
       key: 'actions',
@@ -235,7 +236,7 @@ export default function StudentAccessLogs() {
       <ViewInstructorAccessLogModal
         isOpen={isViewModalOpen}
         log={selectedLog}
-        allowPhotoPreview={false}
+        allowPhotoPreview
         onClose={() => {
           setIsViewModalOpen(false)
           setSelectedLog(null)
