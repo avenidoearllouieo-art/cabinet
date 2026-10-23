@@ -2389,9 +2389,14 @@ class AccessLogPhotoApiTests(TestCase):
         )
         self.assertNotIn('/media/', metadata.json()['image_endpoint'])
 
-        image = self.client.get(metadata.json()['image_endpoint'], HTTP_X_API_KEY=self.device_api_key)
+        image = self.client.get(
+            metadata.json()['image_endpoint'],
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_ACCEPT='image/jpeg',
+        )
         self.assertEqual(image.status_code, 200)
         self.assertEqual(image['Content-Type'], 'image/jpeg')
+        self.assertIn('private', image['Cache-Control'])
         self.assertIn('no-store', image['Cache-Control'])
         image_bytes = b''.join(image.streaming_content)
         self.assertTrue(image_bytes.startswith(b'\xff\xd8'))
@@ -2451,8 +2456,12 @@ class AccessLogPhotoApiTests(TestCase):
             student_metadata['image_endpoint'],
             f'/api/access-logs/{self.access_log.pk}/photo/image/',
         )
-        student_image = self.client.get(image_path)
+        student_image = self.client.get(image_path, HTTP_ACCEPT='image/jpeg')
         self.assertEqual(student_image.status_code, 200)
+        self.assertEqual(student_image['Content-Type'], 'image/jpeg')
+        self.assertIn('private', student_image['Cache-Control'])
+        self.assertIn('no-store', student_image['Cache-Control'])
+        self.assertTrue(b''.join(student_image.streaming_content).startswith(b'\xff\xd8'))
         student_image.close()
 
         instructor = User.objects.create_user(
@@ -2506,7 +2515,7 @@ class AccessLogPhotoApiTests(TestCase):
         )
         self.client.force_authenticate(user=unrelated_instructor)
         self.assertEqual(self.client.get(self.upload_url()).status_code, 404)
-        self.assertEqual(self.client.get(image_path).status_code, 404)
+        self.assertEqual(self.client.get(image_path, HTTP_ACCEPT='image/jpeg').status_code, 404)
 
         admin_user = User.objects.create_superuser(
             username='photo-read-admin', email='photo-read-admin@example.com', password='secret1234',

@@ -66,7 +66,6 @@ describe('AccessLogPhotoPanel', () => {
     expect(api.get).toHaveBeenNthCalledWith(3, '/access-logs/52/photo/image/', {
       responseType: 'blob',
       headers: { Accept: 'image/jpeg' },
-      params: { refresh: 1 },
       signal: expect.any(AbortSignal),
     })
   })
@@ -172,5 +171,34 @@ describe('AccessLogPhotoPanel', () => {
     expect(api.get).toHaveBeenNthCalledWith(2, '/access-logs/87/photo/image/', expect.objectContaining({ responseType: 'blob' }))
     expect(api.get).toHaveBeenNthCalledWith(3, '/access-logs/87/photo/', expect.objectContaining({ params: { refresh: 1 } }))
     expect(api.get).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not display or retry an HTTP error response as a JPEG', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: successMetadata(89) })
+      .mockRejectedValueOnce({
+        response: {
+          status: 406,
+          data: jpeg,
+          headers: { 'content-type': 'image/jpeg' },
+        },
+      })
+    render(<AccessLogPhotoPanel eventId={89} allowImage />)
+
+    expect(await screen.findByText('Photo could not be loaded')).toBeTruthy()
+    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('revokes the temporary object URL when the photo panel unmounts', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: successMetadata(90) })
+      .mockResolvedValueOnce({ data: jpeg, headers: { 'content-type': 'image/jpeg' }, status: 200 })
+    const { unmount } = render(<AccessLogPhotoPanel eventId={90} allowImage />)
+
+    expect(await screen.findByRole('img', { name: 'Access event 90 photo thumbnail' })).toBeTruthy()
+    unmount()
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:protected-access-event-photo')
   })
 })

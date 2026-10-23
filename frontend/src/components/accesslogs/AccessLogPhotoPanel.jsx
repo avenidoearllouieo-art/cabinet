@@ -238,11 +238,16 @@ function AuthorizedPhotoDetails({ eventId, compact }) {
           const imageResponse = await requestPhotoEndpoint(`/access-logs/${normalizedEventId}/photo/image/`, {
             responseType: 'blob',
             headers: { Accept: 'image/jpeg' },
-            params: { refresh: attempt },
           }, signal)
           if (signal.aborted) return
+          if (Number.isInteger(imageResponse.status) && (imageResponse.status < 200 || imageResponse.status >= 300)) {
+            throw Object.assign(new Error('Photo image request failed.'), { response: { status: imageResponse.status } })
+          }
           const contentType = imageResponse.headers?.['content-type'] || imageResponse.data?.type || ''
-          if (!String(contentType).toLowerCase().startsWith('image/') || !(imageResponse.data instanceof Blob)) {
+          if (
+            String(contentType).split(';', 1)[0].trim().toLowerCase() !== 'image/jpeg'
+            || !(imageResponse.data instanceof Blob)
+          ) {
             throw new Error('Photo image response was not an image.')
           }
           const imageUrl = URL.createObjectURL(imageResponse.data)
@@ -258,6 +263,11 @@ function AuthorizedPhotoDetails({ eventId, compact }) {
           if (signal.aborted) return
           const errorState = getRequestErrorState(error)
           if (errorState.state === 'forbidden') {
+            setPhoto({ ...errorState, imageUrl: null, capturedAt: null })
+            return
+          }
+          const status = error.response?.status
+          if (status >= 400 && status < 500 && status !== 404) {
             setPhoto({ ...errorState, imageUrl: null, capturedAt: null })
             return
           }

@@ -13,6 +13,7 @@ from .permissions import (
 )
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
+from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
@@ -240,9 +241,19 @@ class AccessLogPhotoUploadView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class JPEGRenderer(BaseRenderer):
+    media_type = 'image/jpeg'
+    format = 'jpg'
+    charset = None
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
+
+
 class AccessLogPhotoImageView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [CanReadAccessLogPhotoImage]
+    renderer_classes = [*APIView.renderer_classes, JPEGRenderer]
 
     def get(self, request, event_id, *args, **kwargs):
         access_log = get_authorized_access_log_photo_event(request, self, event_id)
