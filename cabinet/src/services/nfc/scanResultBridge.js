@@ -31,6 +31,25 @@ export function sendCabinetWorkflow(command, options) {
   return requestWorkflow(command, options)
 }
 
+export async function captureAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
+  const normalizedEventId = Number(eventId)
+  if (!Number.isSafeInteger(normalizedEventId) || normalizedEventId < 1) {
+    throw new Error('A valid Django access event ID is required.')
+  }
+
+  const response = await fetcher(`${new URL(scanBridgeUrl).origin}/photo/capture`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_id: normalizedEventId }),
+    cache: 'no-store',
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || payload.success !== true || Number(payload.event_id) !== normalizedEventId) {
+    throw new Error(payload.error || 'The access photo could not be captured.')
+  }
+  return payload
+}
+
 export async function fetchScanEvents(after, { signal, fetcher = fetch } = {}) {
   const url = new URL(scanBridgeUrl)
   url.searchParams.set('after', String(after))

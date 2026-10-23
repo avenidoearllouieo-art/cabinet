@@ -3,13 +3,15 @@ import { QRCodeSVG } from 'qrcode.react'
 import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
-import { fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
+import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
 const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
 const NFC_MODE = (import.meta.env.VITE_NFC_MODE || (import.meta.env.DEV ? 'mock' : 'hardware')).toLowerCase()
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
+const PHOTO_STATUS_ATTEMPTS = 12
+const PHOTO_STATUS_RETRY_DELAY_MS = 750
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController()
@@ -176,16 +178,35 @@ export default function App() {
     }
 
     photoEventIdRef.current = eventId
-    setScanPhoto({ eventId, state: 'loading', label: 'Checking…', imageBlob: null, diagnosticError: null })
-    fetchAccessLogPhoto(eventId)
-      .then((photo) => {
-        if (photoEventIdRef.current === eventId) setScanPhoto(photo)
-      })
-      .catch(() => {
-        if (photoEventIdRef.current === eventId) {
-          setScanPhoto({ eventId, state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
+    setScanPhoto({ eventId, state: 'pending', label: 'Pending', imageBlob: null, diagnosticError: null })
+    const refreshPhoto = async () => {
+      for (let attempt = 0; attempt < PHOTO_STATUS_ATTEMPTS; attempt += 1) {
+        if (photoEventIdRef.current !== eventId) return
+        try {
+          const photo = await fetchAccessLogPhoto(eventId)
+          if (photoEventIdRef.current !== eventId) return
+          if (photo.state !== 'pending' && photo.captureStatus !== null) {
+            setScanPhoto(photo)
+            return
+          }
+        } catch {
+          // A fresh capture may still be in progress while the status endpoint recovers.
         }
-      })
+        if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) {
+          await new Promise((resolve) => window.setTimeout(resolve, PHOTO_STATUS_RETRY_DELAY_MS))
+        }
+      }
+      if (photoEventIdRef.current === eventId) {
+        setScanPhoto({ eventId, state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
+      }
+    }
+    void refreshPhoto()
+  }, [])
+
+  const requestScanPhotoCapture = useCallback((event) => {
+    const eventId = getDjangoAccessLogEventId(event)
+    if (!eventId) return
+    captureAccessLogPhoto(eventId).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -325,6 +346,7 @@ export default function App() {
         throw new Error(`NFC event ${eventId} has an unsupported status.`)
       }
 
+      requestScanPhotoCapture(event)
       loadScanPhoto(event)
 
       nfcScanCursorRef.current = eventId
@@ -397,7 +419,7 @@ export default function App() {
       window.clearInterval(intervalId)
       bridgeAbortControllerRef.current?.abort()
     }
-  }, [view, selectedSession, loadScanPhoto])
+  }, [view, selectedSession, loadScanPhoto, requestScanPhotoCapture])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined
@@ -679,6 +701,7 @@ export default function App() {
         const result = await readApiResponse(response)
         data = result.data
         if (response.status === 404 && data.registration_required && data.registration_url) {
+          requestScanPhotoCapture({ django_response: data })
           loadScanPhoto({ django_response: data })
           if (closingScan) rejectCloseAttempt('Unknown NFC card')
           else showUnregisteredCard(mockUid, data.registration_url)
@@ -706,6 +729,7 @@ export default function App() {
         scanUid = data.student_id || data.name
       }
 
+      requestScanPhotoCapture({ django_response: data })
       loadScanPhoto({ django_response: data })
 
       const nextUid = scanUid || data.student_id || data.name

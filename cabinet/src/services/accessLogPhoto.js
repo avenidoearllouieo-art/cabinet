@@ -46,6 +46,7 @@ export async function fetchAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
     return {
       eventId: normalizedEventId,
       ...mapPhotoStatus('failed', false),
+      captureStatus: metadata.capture_status || null,
       capturedAt: metadata.captured_at || null,
       diagnosticError: 'Photo image endpoint is unavailable.',
       imageBlob: null,
@@ -71,6 +72,7 @@ export async function fetchAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
       return {
         eventId: normalizedEventId,
         ...mapPhotoStatus('failed', false),
+        captureStatus: metadata.capture_status || null,
         capturedAt: metadata.captured_at || null,
         diagnosticError: 'Photo image is unavailable.',
         imageBlob: null,
@@ -81,6 +83,7 @@ export async function fetchAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
   return {
     eventId: normalizedEventId,
     ...mappedStatus,
+    captureStatus: metadata.capture_status || null,
     capturedAt: metadata.captured_at || null,
     diagnosticError: metadata.diagnostic_error || null,
     imageBlob,

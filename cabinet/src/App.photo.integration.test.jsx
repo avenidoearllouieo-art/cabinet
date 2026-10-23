@@ -13,7 +13,8 @@ function jsonResponse(payload, status = 200) {
   }
 }
 
-function createFetchForStation(station, djangoEventId) {
+function createFetchForStation(station, djangoEventId, { photoAvailable = false } = {}) {
+  let photoStatusReads = 0
   const fetcher = vi.fn(async (url, options = {}) => {
     if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
       return jsonResponse({
@@ -50,8 +51,36 @@ function createFetchForStation(station, djangoEventId) {
         station: { name: station },
       })
     }
+    if (url === 'http://127.0.0.1:5001/photo/capture') {
+      const request = JSON.parse(options.body)
+      return jsonResponse({ success: true, event_id: request.event_id })
+    }
     if (url === `/api/access-logs/${djangoEventId}/photo/`) {
+      if (photoAvailable) {
+        photoStatusReads += 1
+        return jsonResponse(photoStatusReads === 1
+          ? {
+            event_id: djangoEventId,
+            capture_status: 'pending',
+            image_available: false,
+            image_endpoint: null,
+          }
+          : {
+            event_id: djangoEventId,
+            capture_status: 'success',
+            image_available: true,
+            image_endpoint: `/api/access-logs/${djangoEventId}/photo/image/`,
+          })
+      }
       return jsonResponse({ error: 'Photo service unavailable.' }, 503)
+    }
+    if (url === `/api/access-logs/${djangoEventId}/photo/image/`) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/jpeg' },
+        blob: async () => new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }),
+      }
     }
     throw new Error(`Unexpected Cabinet integration request: ${url}`)
   })
@@ -105,6 +134,10 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
         station: { name: 'Station 2' },
       })
     }
+    if (url === 'http://127.0.0.1:5001/photo/capture') {
+      const request = JSON.parse(options.body)
+      return jsonResponse({ success: true, event_id: request.event_id })
+    }
     if (url === `/api/access-logs/${djangoEventId}/photo/`) {
       return jsonResponse({ error: 'Photo service unavailable.' }, 503)
     }
@@ -136,8 +169,8 @@ describe('Cabinet photo scan integration', () => {
 
     await waitFor(() => expect(screen.getAllByText(`${station} Student`).length).toBeGreaterThanOrEqual(2))
     expect(await screen.findByText('Participants scanned: 1')).toBeTruthy()
-    expect(within(await screen.findByLabelText('Access photo details')).getByText('Unavailable')).toBeTruthy()
-    expect(screen.getByText('No photo is available for this scan.')).toBeTruthy()
+    expect(within(await screen.findByLabelText('Access photo details')).getByText('Pending')).toBeTruthy()
+    expect(screen.getByText('Photo capture is pending.')).toBeTruthy()
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       `/api/access-logs/${djangoEventId}/photo/`,
       expect.objectContaining({
@@ -147,6 +180,36 @@ describe('Cabinet photo scan integration', () => {
       }),
     ))
     expect(screen.queryByRole('alert')).toBeNull()
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:5001/photo/capture',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ event_id: djangoEventId }),
+      }),
+    ))
+  })
+
+  it('captures the cabinet-opening scan event and refreshes the image display', async () => {
+    const djangoEventId = 4303
+    const fetcher = createFetchForStation('Station 1', djangoEventId, { photoAvailable: true })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+    await user.type(await screen.findByLabelText('Mock NFC UID'), 'CABINET-OPEN-STUDENT')
+    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
+
+    expect(await screen.findByRole('img', { name: 'Captured access event' })).toBeTruthy()
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:5001/photo/capture',
+      expect.objectContaining({ body: JSON.stringify({ event_id: djangoEventId }) }),
+    )
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/access-logs/${djangoEventId}/photo/image/`,
+      expect.objectContaining({ method: 'GET', cache: 'no-store' }),
+    )
   })
 
   it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {
@@ -199,7 +262,7 @@ describe('Cabinet photo scan integration', () => {
     await waitFor(() => expect(screen.getAllByText('Closed by').length).toBe(2))
     const closedCountRow = screen.getAllByText('Closed by')[0].closest('.confirm-row')
     expect(within(closedCountRow).getByText('1')).toBeTruthy()
-    expect(within(await screen.findByLabelText('Access photo details')).getByText('Unavailable')).toBeTruthy()
+    expect(within(await screen.findByLabelText('Access photo details')).getByText('Pending')).toBeTruthy()
     expect(fetcher).toHaveBeenCalledWith(
       '/api/access-logs/5202/photo/',
       expect.objectContaining({

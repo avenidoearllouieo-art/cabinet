@@ -6,6 +6,7 @@ import json
 import os
 import re
 import queue
+import secrets
 import sqlite3
 import threading
 import time
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
 
@@ -47,6 +48,8 @@ ALLOWED_ORIGINS = frozenset({
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 REQUEST_TIMEOUT_SECONDS = 5
+PHOTO_CAPTURE_URL = 'http://192.168.1.61/capture'
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 
 class MockNFCReader:
@@ -91,6 +94,140 @@ def sanitize_error(value: object, api_key: str = '') -> str:
     return message[:300] or 'Django verification failed.'
 
 
+class DjangoPhotoCapture:
+    """Capture a fresh camera image and attach it to one Django access log."""
+
+    def __init__(self, verify_url: str, api_key: str, opener=None, camera_url: str = PHOTO_CAPTURE_URL):
+        parsed_url = urlsplit(verify_url)
+        api_path = parsed_url.path.rstrip('/').rsplit('/', 1)[0].rstrip('/')
+        self.api_base_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, api_path, '', '')).rstrip('/')
+        self.api_key = api_key
+        self.opener = opener or urllib.request.urlopen
+        self.camera_url = camera_url
+        self._state_lock = threading.Lock()
+        self._capture_lock = threading.Lock()
+        self._inflight_events = set()
+
+    def _request(self, request, read_limit: int = MAX_PHOTO_BYTES + 1):
+        try:
+            response = self.opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                return response.status, response.read(read_limit), getattr(response, 'headers', {})
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(read_limit), getattr(error, 'headers', {})
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return None, b'', {}
+
+    def _device_request(self, path: str, method: str, body: bytes | None = None, content_type: str | None = None):
+        headers = {'Accept': 'application/json', 'X-API-Key': self.api_key, 'Cache-Control': 'no-cache, no-store'}
+        if content_type:
+            headers['Content-Type'] = content_type
+        request = urllib.request.Request(
+            f'{self.api_base_url}{path}', data=body, headers=headers, method=method,
+        )
+        status_code, response_body, _ = self._request(request)
+        try:
+            payload = json.loads(response_body.decode('utf-8')) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        return status_code, payload
+
+    def _event_photo_path(self, event_id: int) -> str:
+        return f'/access-logs/{event_id}/photo/'
+
+    def _report_status(self, event_id: int, capture_status: str, error: str = '') -> None:
+        path = f'/access-logs/{event_id}/photo-status/'
+        payload = json.dumps({'status': capture_status, 'error': error}).encode('utf-8')
+        self._device_request(path, 'POST', payload, 'application/json')
+
+    def _capture(self, event_id: int) -> bool:
+        photo_path = self._event_photo_path(event_id)
+        status_code, metadata = self._device_request(photo_path, 'GET')
+        if status_code != 200 or metadata.get('event_id') != event_id:
+            self._report_status(event_id, 'failed', 'Unable to verify the access event photo status.')
+            return False
+        if metadata.get('capture_status') == 'success' and metadata.get('image_available') is True:
+            return True
+
+        pending_code, pending = self._device_request(
+            f'/access-logs/{event_id}/photo-status/',
+            'POST',
+            json.dumps({'status': 'pending'}).encode('utf-8'),
+            'application/json',
+        )
+        if pending_code != 200 or pending.get('event_id') != event_id:
+            return False
+
+        camera_request = urllib.request.Request(
+            self.camera_url,
+            headers={
+                'Accept': 'image/jpeg',
+                'Cache-Control': 'no-cache, no-store',
+                'Pragma': 'no-cache',
+            },
+            method='GET',
+        )
+        camera_status, image_bytes, camera_headers = self._request(camera_request)
+        camera_content_type = camera_headers.get('Content-Type', '') if hasattr(camera_headers, 'get') else ''
+        if (
+            camera_status != 200
+            or len(image_bytes) > MAX_PHOTO_BYTES
+            or not image_bytes.startswith(b'\xff\xd8')
+            or (camera_content_type and 'image/jpeg' not in camera_content_type.lower())
+        ):
+            self._report_status(event_id, 'failed', 'Camera capture failed or returned an invalid JPEG image.')
+            return False
+
+        boundary = f'taptrack-{secrets.token_hex(16)}'
+        multipart_body = (
+            f'--{boundary}\r\n'
+            'Content-Disposition: form-data; name="image"; filename="capture.jpg"\r\n'
+            'Content-Type: image/jpeg\r\n\r\n'
+        ).encode('ascii') + image_bytes + f'\r\n--{boundary}--\r\n'.encode('ascii')
+        upload_code, upload_payload = self._device_request(
+            photo_path,
+            'POST',
+            multipart_body,
+            f'multipart/form-data; boundary={boundary}',
+        )
+        if upload_code == 201 and upload_payload.get('event_id') == event_id:
+            return True
+
+        if upload_code == 409:
+            status_code, metadata = self._device_request(photo_path, 'GET')
+            if (
+                status_code == 200
+                and metadata.get('event_id') == event_id
+                and metadata.get('capture_status') == 'success'
+                and metadata.get('image_available') is True
+            ):
+                return True
+
+        self._report_status(event_id, 'failed', 'Photo upload failed.')
+        return False
+
+    def capture(self, event_id: int) -> bool:
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+            return False
+        with self._state_lock:
+            if event_id in self._inflight_events:
+                return False
+            self._inflight_events.add(event_id)
+        try:
+            with self._capture_lock:
+                completed = self._capture(event_id)
+        except Exception:
+            try:
+                self._report_status(event_id, 'failed', 'Photo capture request failed.')
+            except Exception:
+                pass
+            completed = False
+        finally:
+            with self._state_lock:
+                self._inflight_events.discard(event_id)
+        return completed
+
+
 class DjangoVerifier:
     """Make the one server-side verification request for a completed UID."""
 
@@ -100,6 +237,7 @@ class DjangoVerifier:
             os.environ.get('DEVICE_API_KEY') or os.environ.get('TAPTRACK_DEVICE_API_KEY', '')
         ).strip()
         self.opener = opener
+        self.photo_capture = DjangoPhotoCapture(self.url, self.api_key, opener=opener) if self.api_key else None
 
     def _sanitize_error(self, value: object) -> str:
         return sanitize_error(value, self.api_key)
@@ -399,12 +537,18 @@ class NFCServiceState:
 
 
 class NFCService:
-    def __init__(self, reader, store: SQLiteScanEventStore, verifier: DjangoVerifier):
+    def __init__(self, reader, store: SQLiteScanEventStore, verifier: DjangoVerifier, photo_capture=None):
         self.reader = reader
         self.store = store
         self.verifier = verifier
+        self.photo_capture = photo_capture if photo_capture is not None else getattr(verifier, 'photo_capture', None)
         self.state = NFCServiceState(getattr(reader, 'reader_connected', False))
         self._stop_event = threading.Event()
+
+    def capture_access_log_photo(self, event_id: int) -> bool:
+        if self.photo_capture is None:
+            return False
+        return self.photo_capture.capture(event_id)
 
     def process_uid(self, uid: str) -> dict:
         """Verify one completed UID and persist exactly one resulting event."""
@@ -412,6 +556,14 @@ class NFCService:
         event['event_id'] = self.store.append(event)
         self.state.card_detected(event['uid'], event['event_id'])
         django_response = event['django_response']
+        django_event_id = django_response.get('event_id') if isinstance(django_response, dict) else None
+        if isinstance(django_event_id, int) and not isinstance(django_event_id, bool) and django_event_id > 0:
+            threading.Thread(
+                target=self.capture_access_log_photo,
+                args=(django_event_id,),
+                name=f'access-photo-{django_event_id}',
+                daemon=True,
+            ).start()
         print(f"[NFC] UID: {event['uid']}")
         print(f"[Django] Status: {event['http_status'] if event['http_status'] is not None else 'network error'}")
         print(f"[Django] Result: {event['status']}")
@@ -518,6 +670,22 @@ class NFCHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         service = self.server.service
+        if path == '/photo/capture':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                event_id = payload.get('event_id')
+                if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {'success': False, 'error': 'A valid access event ID is required.'})
+                    return
+                if service.photo_capture is None:
+                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {'success': False, 'event_id': event_id})
+                    return
+                captured = service.capture_access_log_photo(event_id)
+                self._send_json(HTTPStatus.OK, {'success': captured, 'event_id': event_id})
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(HTTPStatus.BAD_REQUEST, {'success': False, 'error': 'Invalid photo capture payload.'})
+            return
         if path == '/cabinet/workflow':
             try:
                 length = int(self.headers.get('Content-Length', '0'))

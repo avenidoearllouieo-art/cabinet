@@ -14,6 +14,7 @@ from nfc_service import (
     BRIDGE_PORT,
     DjangoRequestError,
     DjangoVerifier,
+    DjangoPhotoCapture,
     MockNFCReader,
     NFCService,
     SQLiteScanEventStore,
@@ -38,9 +39,10 @@ class FakeVerifier:
 
 
 class FakeResponse:
-    def __init__(self, status, payload):
+    def __init__(self, status, payload, headers=None):
         self.status = status
-        self._body = json.dumps(payload).encode('utf-8')
+        self._body = payload if isinstance(payload, bytes) else json.dumps(payload).encode('utf-8')
+        self.headers = headers or {}
 
     def __enter__(self):
         return self
@@ -48,8 +50,8 @@ class FakeResponse:
     def __exit__(self, *args):
         return False
 
-    def read(self):
-        return self._body
+    def read(self, size=-1):
+        return self._body if size < 0 else self._body[:size]
 
 
 def make_fake_ecodes():
@@ -165,6 +167,107 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data), {'nfc_uid': '12AB'})
         self.assertEqual(request.get_header('X-api-key'), 'unit-test-key')
         self.assertEqual(timeout, 5)
+
+    def test_photo_capture_uses_fresh_camera_image_and_matching_django_event_ids(self):
+        requests = []
+        camera_images = [b'\xff\xd8fresh-image-one', b'\xff\xd8fresh-image-two']
+        uploaded_event_ids = set()
+
+        def opener(request, timeout):
+            requests.append(request)
+            path = request.full_url.replace('http://django.test/api', '')
+            if request.full_url == 'http://192.168.1.61/capture':
+                image = camera_images.pop(0)
+                return FakeResponse(200, image, {'Content-Type': 'image/jpeg'})
+            if request.get_method() == 'GET':
+                event_id = int(path.split('/')[2])
+                return FakeResponse(200, {
+                    'event_id': event_id,
+                    'capture_status': 'success' if event_id in uploaded_event_ids else None,
+                    'image_available': event_id in uploaded_event_ids,
+                })
+            if path.endswith('/photo-status/'):
+                event_id = int(path.split('/')[2])
+                return FakeResponse(200, {'success': True, 'event_id': event_id})
+            event_id = int(path.split('/')[2])
+            uploaded_event_ids.add(event_id)
+            return FakeResponse(201, {'success': True, 'event_id': event_id})
+
+        capture = DjangoPhotoCapture(
+            'http://django.test/api/verify-nfc/',
+            'server-only-test-key',
+            opener=opener,
+        )
+
+        self.assertTrue(capture.capture(81))
+        first_request_count = len(requests)
+        self.assertTrue(capture.capture(81))
+        self.assertEqual(len(requests), first_request_count + 1)
+        self.assertEqual(
+            sum(request.full_url == 'http://192.168.1.61/capture' for request in requests),
+            1,
+        )
+        self.assertTrue(capture.capture(82))
+
+        camera_requests = [request for request in requests if request.full_url == 'http://192.168.1.61/capture']
+        upload_requests = [request for request in requests if request.get_method() == 'POST' and '/photo/' in request.full_url]
+        self.assertEqual(len(camera_requests), 2)
+        self.assertTrue(all(request.get_header('X-api-key') is None for request in camera_requests))
+        self.assertEqual([int(request.full_url.split('/')[5]) for request in upload_requests], [81, 82])
+        self.assertIn(b'fresh-image-one', requests[3].data)
+        self.assertIn(b'fresh-image-two', requests[-1].data)
+        self.assertTrue(all(request.get_header('X-api-key') == 'server-only-test-key' for request in upload_requests))
+
+    def test_camera_failure_is_reported_for_the_same_event(self):
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            if request.full_url.endswith('/photo/'):
+                event_id = int(request.full_url.split('/')[-3])
+                return FakeResponse(200, {'event_id': event_id, 'capture_status': None, 'image_available': False})
+            if request.full_url.endswith('/photo-status/'):
+                event_id = int(request.full_url.split('/')[-3])
+                return FakeResponse(200, {'success': True, 'event_id': event_id})
+            return FakeResponse(503, b'camera unavailable')
+
+        capture = DjangoPhotoCapture('http://django.test/api/verify-nfc/', 'test-key', opener=opener)
+
+        self.assertFalse(capture.capture(95))
+        failure_request = requests[-1]
+        self.assertTrue(failure_request.full_url.endswith('/api/access-logs/95/photo-status/'))
+        self.assertEqual(json.loads(failure_request.data), {
+            'status': 'failed',
+            'error': 'Camera capture failed or returned an invalid JPEG image.',
+        })
+
+    def test_scan_capture_uses_only_the_django_event_id(self):
+        class PhotoCapture:
+            def __init__(self):
+                self.event_ids = []
+                self.captured = threading.Event()
+
+            def capture(self, event_id):
+                self.event_ids.append(event_id)
+                self.captured.set()
+                return True
+
+        photo_capture = PhotoCapture()
+        verifier = FakeVerifier((200, {
+            'success': True,
+            'event_id': 703,
+            'name': 'Avery Example',
+            'student_id': 'STU-001',
+            'role': 'student',
+        }))
+        service = NFCService(MockNFCReader(), self.store, verifier, photo_capture=photo_capture)
+
+        scan_event = service.process_uid('TWO-TAPS')
+        self.assertTrue(photo_capture.captured.wait(timeout=1))
+
+        self.assertEqual(scan_event['event_id'], 1)
+        self.assertEqual(scan_event['django_response']['event_id'], 703)
+        self.assertEqual(photo_capture.event_ids, [703])
 
     def test_django_workflow_proxy_uses_device_key_and_forwards_selected_station(self):
         calls = []
@@ -403,6 +506,29 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             self.post_json('/cabinet/workflow', {'command': 'override_status'})
         self.assertEqual(raised.exception.code, 400)
         raised.exception.close()
+
+    def test_photo_capture_endpoint_requires_a_valid_django_event_id(self):
+        class PhotoCapture:
+            def __init__(self):
+                self.event_ids = []
+
+            def capture(self, event_id):
+                self.event_ids.append(event_id)
+                return True
+
+        photo_capture = PhotoCapture()
+        self.service.photo_capture = photo_capture
+
+        status, captured = self.post_json('/photo/capture', {'event_id': 714})
+        self.assertEqual(status, 200)
+        self.assertEqual(captured, {'success': True, 'event_id': 714})
+        self.assertEqual(photo_capture.event_ids, [714])
+
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.post_json('/photo/capture', {'event_id': True})
+        self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
+        self.assertEqual(photo_capture.event_ids, [714])
 
     def test_api_scans_returns_events_in_order_and_bounds_limit(self):
         for index in range(205):
