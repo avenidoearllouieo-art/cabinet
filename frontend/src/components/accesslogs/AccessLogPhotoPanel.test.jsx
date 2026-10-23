@@ -61,22 +61,23 @@ describe('AccessLogPhotoPanel', () => {
 
     const thumbnail = await screen.findByRole('img', { name: 'Access event 52 photo thumbnail' }, { timeout: 4000 })
     expect(thumbnail.getAttribute('src')).toBe('blob:protected-access-event-photo')
-    expect(api.get).toHaveBeenNthCalledWith(1, '/access-logs/52/photo/', { params: { refresh: 0 } })
-    expect(api.get).toHaveBeenNthCalledWith(2, '/access-logs/52/photo/', { params: { refresh: 1 } })
+    expect(api.get).toHaveBeenNthCalledWith(1, '/access-logs/52/photo/', expect.objectContaining({ params: { refresh: 0 } }))
+    expect(api.get).toHaveBeenNthCalledWith(2, '/access-logs/52/photo/', expect.objectContaining({ params: { refresh: 1 } }))
     expect(api.get).toHaveBeenNthCalledWith(3, '/access-logs/52/photo/image/', {
       responseType: 'blob',
       headers: { Accept: 'image/jpeg' },
       params: { refresh: 1 },
+      signal: expect.any(AbortSignal),
     })
   })
 
-  it('rejects mismatched event metadata and reports the photo unavailable', async () => {
+  it('rejects mismatched event metadata without claiming the photo is missing', async () => {
     api.get.mockResolvedValueOnce({ data: successMetadata(99) })
     render(<AccessLogPhotoPanel eventId={61} allowImage />)
 
-    expect(await screen.findByText('Photo unavailable')).toBeTruthy()
+    expect(await screen.findByText('Photo event could not be verified')).toBeTruthy()
     expect(api.get).toHaveBeenCalledTimes(1)
-    expect(api.get).toHaveBeenCalledWith('/access-logs/61/photo/', { params: { refresh: 0 } })
+    expect(api.get).toHaveBeenCalledWith('/access-logs/61/photo/', expect.objectContaining({ params: { refresh: 0 } }))
   })
 
   it('marks a missing photo record unavailable without retrying', async () => {
@@ -112,13 +113,64 @@ describe('AccessLogPhotoPanel', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Access event photo viewer' })).toBeNull())
   })
 
-  it('shows unavailable when the protected image endpoint fails', async () => {
+  it('keeps a temporary status failure distinct and retries successfully', async () => {
     api.get
+      .mockRejectedValueOnce(new Error('Network unavailable'))
       .mockResolvedValueOnce({ data: successMetadata(83) })
-      .mockRejectedValueOnce({ response: { status: 404 } })
+      .mockResolvedValueOnce({ data: jpeg, headers: { 'content-type': 'image/jpeg' } })
     render(<AccessLogPhotoPanel eventId={83} allowImage />)
 
+    expect(await screen.findByRole('img', { name: 'Access event 83 photo thumbnail' })).toBeTruthy()
+    expect(api.get).toHaveBeenCalledTimes(3)
+  })
+
+  it('shares overlapping status and image requests for the same access event', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: successMetadata(88) })
+      .mockResolvedValueOnce({ data: jpeg, headers: { 'content-type': 'image/jpeg' } })
+    render(<>
+      <AccessLogPhotoPanel eventId={88} allowImage />
+      <AccessLogPhotoPanel eventId={88} allowImage />
+    </>)
+
+    expect(await screen.findAllByRole('img', { name: 'Access event 88 photo thumbnail' })).toHaveLength(2)
+    expect(api.get).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([401, 403])('shows an authorization error for HTTP %i without exposing the protected image', async (status) => {
+    api.get.mockRejectedValueOnce({ response: { status } })
+    render(<AccessLogPhotoPanel eventId={84} allowImage />)
+
+    expect(await screen.findByText('Photo access unavailable')).toBeTruthy()
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not use a response from an old event after the panel changes events', async () => {
+    let resolveOldMetadata
+    api.get
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOldMetadata = resolve }))
+      .mockResolvedValueOnce({ data: successMetadata(86) })
+      .mockResolvedValueOnce({ data: jpeg, headers: { 'content-type': 'image/jpeg' } })
+    const { rerender } = render(<AccessLogPhotoPanel eventId={85} allowImage />)
+
+    rerender(<AccessLogPhotoPanel eventId={86} allowImage />)
+    resolveOldMetadata({ data: successMetadata(85) })
+
+    expect(await screen.findByRole('img', { name: 'Access event 86 photo thumbnail' })).toBeTruthy()
+    expect(api.get).toHaveBeenCalledTimes(3)
+    expect(api.get).not.toHaveBeenCalledWith('/access-logs/85/photo/image/', expect.anything())
+  })
+
+  it('rechecks status after an image-endpoint 404 before confirming absence', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: successMetadata(87) })
+      .mockRejectedValueOnce({ response: { status: 404 } })
+      .mockResolvedValueOnce({ data: { event_id: 87, capture_status: 'success', image_available: false } })
+    render(<AccessLogPhotoPanel eventId={87} allowImage />)
+
     expect(await screen.findByText('Photo unavailable')).toBeTruthy()
-    expect(api.get).toHaveBeenNthCalledWith(2, '/access-logs/83/photo/image/', expect.objectContaining({ responseType: 'blob' }))
+    expect(api.get).toHaveBeenNthCalledWith(2, '/access-logs/87/photo/image/', expect.objectContaining({ responseType: 'blob' }))
+    expect(api.get).toHaveBeenNthCalledWith(3, '/access-logs/87/photo/', expect.objectContaining({ params: { refresh: 1 } }))
+    expect(api.get).toHaveBeenCalledTimes(3)
   })
 })

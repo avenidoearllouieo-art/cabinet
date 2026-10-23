@@ -3,12 +3,92 @@ import { Maximize2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import api from '../../services/api.js'
 
 const PHOTO_STATUS_ATTEMPTS = 5
-const PHOTO_STATUS_RETRY_MS = 1200
+const PHOTO_STATUS_RETRY_BASE_MS = 500
+const inFlightPhotoRequests = new Map()
 
-function mapCaptureStatus(status, imageAvailable) {
-  if (status === 'pending') return { label: 'Pending', state: 'pending' }
-  if (status === 'success' && imageAvailable) return { label: 'Captured', state: 'captured' }
-  return { label: 'Photo unavailable', state: 'unavailable' }
+function requestPhotoEndpoint(url, config, signal) {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason || new DOMException('Request aborted.', 'AbortError'))
+  }
+
+  const requestKey = JSON.stringify([
+    url,
+    config.params || {},
+    config.responseType || '',
+    config.headers?.Accept || '',
+  ])
+  let sharedRequest = inFlightPhotoRequests.get(requestKey)
+  if (!sharedRequest) {
+    const controller = new AbortController()
+    sharedRequest = { controller, subscribers: 0 }
+    sharedRequest.promise = api.get(url, { ...config, signal: controller.signal })
+    inFlightPhotoRequests.set(requestKey, sharedRequest)
+    sharedRequest.promise.then(
+      () => inFlightPhotoRequests.delete(requestKey),
+      () => inFlightPhotoRequests.delete(requestKey),
+    )
+  }
+
+  sharedRequest.subscribers += 1
+  return new Promise((resolve, reject) => {
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      signal.removeEventListener('abort', onAbort)
+      sharedRequest.subscribers -= 1
+      if (sharedRequest.subscribers === 0 && inFlightPhotoRequests.get(requestKey) === sharedRequest) {
+        sharedRequest.controller.abort()
+      }
+    }
+    const onAbort = () => {
+      release()
+      reject(signal.reason || new DOMException('Request aborted.', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    sharedRequest.promise.then(
+      (response) => {
+        if (signal.aborted) return
+        release()
+        resolve(response)
+      },
+      (error) => {
+        if (signal.aborted) return
+        release()
+        reject(error)
+      },
+    )
+  })
+}
+
+function waitForRetry(delay, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason || new DOMException('Request aborted.', 'AbortError'))
+      return
+    }
+
+    const finish = (callback, value) => {
+      window.clearTimeout(timeoutId)
+      signal.removeEventListener('abort', abort)
+      callback(value)
+    }
+    const timeoutId = window.setTimeout(() => finish(resolve), delay)
+    const abort = () => finish(reject, signal.reason || new DOMException('Request aborted.', 'AbortError'))
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+function retryDelay(attempt) {
+  return PHOTO_STATUS_RETRY_BASE_MS * (2 ** attempt)
+}
+
+function getRequestErrorState(error) {
+  const status = error.response?.status
+  if (status === 401 || status === 403) {
+    return { state: 'forbidden', label: 'Photo access unavailable' }
+  }
+  return { state: 'error', label: 'Photo could not be loaded' }
 }
 
 function isExpectedImageEndpoint(endpoint, eventId) {
@@ -99,93 +179,126 @@ function StatusOnly({ captureStatus }) {
 function AuthorizedPhotoDetails({ eventId, compact }) {
   const [photo, setPhoto] = useState({ state: 'loading', label: 'Loading photo…', imageUrl: null, capturedAt: null })
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [retryVersion, setRetryVersion] = useState(0)
 
   useEffect(() => {
-    let active = true
+    const controller = new AbortController()
+    const { signal } = controller
     let objectUrl = null
+    let lastKnownState = 'error'
 
     const loadPhoto = async () => {
+      const normalizedEventId = Number(eventId)
+      if (!Number.isSafeInteger(normalizedEventId) || normalizedEventId < 1) {
+        setPhoto({ state: 'error', label: 'Photo could not be loaded', imageUrl: null, capturedAt: null })
+        return
+      }
+
       for (let attempt = 0; attempt < PHOTO_STATUS_ATTEMPTS; attempt += 1) {
-        if (!active) return
+        if (signal.aborted) return
         try {
-          const metadataResponse = await api.get(`/access-logs/${eventId}/photo/`, { params: { refresh: attempt } })
+          const metadataResponse = await requestPhotoEndpoint(`/access-logs/${normalizedEventId}/photo/`, {
+            params: { refresh: attempt },
+          }, signal)
+          if (signal.aborted) return
           const metadata = metadataResponse.data
-          if (Number(metadata?.event_id) !== Number(eventId)) {
-            if (active) setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
+          if (Number(metadata?.event_id) !== normalizedEventId) {
+            setPhoto({ state: 'error', label: 'Photo event could not be verified', imageUrl: null, capturedAt: null })
             return
           }
 
           if (metadata.capture_status === 'pending') {
-            if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) {
-              await new Promise((resolve) => window.setTimeout(resolve, PHOTO_STATUS_RETRY_MS))
-              continue
-            }
-            if (active) setPhoto({ state: 'pending', label: 'Pending', imageUrl: null, capturedAt: null })
+            lastKnownState = 'pending'
+            setPhoto({ state: 'pending', label: 'Pending', imageUrl: null, capturedAt: null })
+            if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) await waitForRetry(retryDelay(attempt), signal)
+            continue
+          }
+
+          if (
+            metadata.capture_status === 'failed'
+            || (metadata.capture_status == null && metadata.image_available === false)
+            || (metadata.capture_status === 'success' && metadata.image_available === false)
+          ) {
+            setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
             return
           }
 
-          if (metadata.capture_status == null) {
-            if (active) setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
+          if (metadata.capture_status !== 'success' || metadata.image_available !== true) {
+            lastKnownState = 'error'
+            if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) await waitForRetry(retryDelay(attempt), signal)
+            continue
+          }
+
+          lastKnownState = 'error'
+          if (!isExpectedImageEndpoint(metadata.image_endpoint, normalizedEventId)) {
+            setPhoto({ state: 'error', label: 'Photo image endpoint could not be verified', imageUrl: null, capturedAt: null })
             return
           }
 
-          const nextPhoto = {
-            ...mapCaptureStatus(metadata.capture_status, metadata.image_available),
-            imageUrl: null,
-            capturedAt: metadata.captured_at || null,
-          }
-          if (nextPhoto.state !== 'captured') {
-            if (active) setPhoto(nextPhoto)
-            return
-          }
-          if (!isExpectedImageEndpoint(metadata.image_endpoint, eventId)) {
-            if (active) setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
-            return
-          }
-
-          const imageResponse = await api.get(`/access-logs/${eventId}/photo/image/`, {
+          const imageResponse = await requestPhotoEndpoint(`/access-logs/${normalizedEventId}/photo/image/`, {
             responseType: 'blob',
             headers: { Accept: 'image/jpeg' },
             params: { refresh: attempt },
-          })
+          }, signal)
+          if (signal.aborted) return
           const contentType = imageResponse.headers?.['content-type'] || imageResponse.data?.type || ''
-          if (!String(contentType).toLowerCase().startsWith('image/')) {
+          if (!String(contentType).toLowerCase().startsWith('image/') || !(imageResponse.data instanceof Blob)) {
             throw new Error('Photo image response was not an image.')
           }
           const imageUrl = URL.createObjectURL(imageResponse.data)
-          if (active) {
-            objectUrl = imageUrl
-            setPhoto({ ...nextPhoto, imageUrl })
-          } else {
-            URL.revokeObjectURL(imageUrl)
-          }
+          objectUrl = imageUrl
+          setPhoto({
+            state: 'captured',
+            label: 'Captured',
+            imageUrl,
+            capturedAt: metadata.captured_at || null,
+          })
           return
         } catch (error) {
-          const httpStatus = error.response?.status
-          if (httpStatus === 401 || httpStatus === 403 || httpStatus === 404 || attempt + 1 === PHOTO_STATUS_ATTEMPTS) {
-            if (active) setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
+          if (signal.aborted) return
+          const errorState = getRequestErrorState(error)
+          if (errorState.state === 'forbidden') {
+            setPhoto({ ...errorState, imageUrl: null, capturedAt: null })
             return
           }
-          await new Promise((resolve) => window.setTimeout(resolve, PHOTO_STATUS_RETRY_MS))
+          if (lastKnownState !== 'pending') lastKnownState = 'error'
+          if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) await waitForRetry(retryDelay(attempt), signal)
         }
+      }
+
+      if (lastKnownState === 'pending') {
+        setPhoto({ state: 'pending', label: 'Pending', imageUrl: null, capturedAt: null })
+      } else {
+        setPhoto({ state: 'error', label: 'Photo could not be loaded', imageUrl: null, capturedAt: null })
       }
     }
 
     void loadPhoto()
     return () => {
-      active = false
+      controller.abort()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [eventId])
+  }, [eventId, retryVersion])
 
   const markImageUnavailable = () => {
     setViewerOpen(false)
-    setPhoto({ state: 'unavailable', label: 'Photo unavailable', imageUrl: null, capturedAt: null })
+    setPhoto({ state: 'error', label: 'Photo could not be displayed', imageUrl: null, capturedAt: null })
   }
+
+  const retryButton = <button
+    type="button"
+    onClick={() => {
+      setPhoto({ state: 'loading', label: 'Loading photo…', imageUrl: null, capturedAt: null })
+      setRetryVersion((current) => current + 1)
+    }}
+    className="ml-2 text-xs font-medium text-blue-700 underline underline-offset-2"
+  >
+    {photo.state === 'pending' ? 'Check again' : 'Retry'}
+  </button>
 
   if (compact) {
     if (photo.state === 'loading') return <span className="text-xs text-slate-500">Loading photo…</span>
-    if (photo.state !== 'captured' || !photo.imageUrl) return <span className="text-xs text-slate-500">{photo.label}</span>
+    if (photo.state !== 'captured' || !photo.imageUrl) return <span className="text-xs text-slate-500">{photo.label}{['pending', 'error', 'forbidden'].includes(photo.state) && retryButton}</span>
     return <>
       <button type="button" title="Open access event photo" aria-label={`Open photo for access event ${eventId}`} onClick={() => setViewerOpen(true)} className="inline-flex rounded border border-slate-200 p-0.5 focus:outline-none focus:ring-2 focus:ring-blue-600">
         <img src={photo.imageUrl} alt={`Access event ${eventId} photo thumbnail`} className="h-10 w-14 rounded-sm object-cover" onError={markImageUnavailable} />
@@ -201,6 +314,7 @@ function AuthorizedPhotoDetails({ eventId, compact }) {
           <h3 className="text-sm font-semibold text-slate-800">Access event photo</h3>
           <p className="mt-1 text-sm text-slate-600" role={photo.state === 'loading' ? 'status' : undefined}>
             {photo.state === 'loading' ? 'Loading photo…' : photo.label}
+            {['pending', 'error', 'forbidden'].includes(photo.state) && retryButton}
           </p>
           {photo.capturedAt && <time className="mt-1 block text-xs text-slate-500" dateTime={photo.capturedAt}>
             {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(photo.capturedAt))}
