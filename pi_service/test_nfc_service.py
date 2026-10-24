@@ -519,6 +519,37 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(events[0]['event_id'], event)
         self.assertEqual(events[0]['uid'], 'PERSIST-1')
 
+    def test_existing_motor_action_database_adds_dispatch_result_columns(self):
+        legacy_database = Path(self.temp_dir.name) / 'legacy-motor-actions.sqlite3'
+        connection = sqlite3.connect(legacy_database)
+        try:
+            connection.execute('''
+                CREATE TABLE motor_actions (
+                    action_id TEXT PRIMARY KEY,
+                    workflow_session TEXT NOT NULL,
+                    station TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            ''')
+        finally:
+            connection.close()
+
+        SQLiteScanEventStore(legacy_database)
+
+        connection = sqlite3.connect(legacy_database)
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute('PRAGMA table_info(motor_actions)')
+            }
+        finally:
+            connection.close()
+        self.assertIn('command_transmitted', columns)
+        self.assertIn('error', columns)
+
     def test_concurrent_sqlite_writes_receive_unique_event_ids(self):
         def write(index):
             return self.store.append({
@@ -677,7 +708,10 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(result.outcome, MotorOutcome.REJECTED)
         self.assertIn('no serial command was sent', result.error)
         self.assertEqual(self.controller.calls, [])
-        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'FAILED')
+        action = self.store.list_motor_actions()[0]
+        self.assertEqual(action['status'], 'FAILED')
+        self.assertEqual(action['command_transmitted'], 0)
+        self.assertIn('no serial command was sent', action['error'])
 
     def test_service_shutdown_closes_reader_and_shared_motor_controller(self):
         reader_closed = []
@@ -1078,8 +1112,84 @@ class NFCBridgeHTTPTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(payload['session']['status'], 'open')
+        self.assertEqual(payload['motor_dispatch']['outcome'], 'completed')
+        self.assertFalse(payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(payload['motor_dispatch']['physical_movement_verified'])
         self.assertEqual(events, ['django', 'motor'])
         self.assertEqual(controller.calls, [('Station 1', 'OPEN')])
+
+    def test_disabled_motor_dispatch_is_returned_to_the_cabinet_ui(self):
+        class SuccessfulWorkflowVerifier:
+            def workflow(self, command=None, station=None):
+                return 200, {
+                    'mode': 'hardware',
+                    'station': station,
+                    'session': {
+                        'id': 'disabled-session',
+                        'station': station,
+                        'status': 'open',
+                        'workflow_state': 'idle',
+                        'opened_by': [],
+                        'closed_by': [],
+                    },
+                }
+
+        self.service.verifier = SuccessfulWorkflowVerifier()
+
+        status, payload = self.post_json('/cabinet/workflow', {
+            'command': 'finish_open',
+            'station': 'Station 1',
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['session']['workflow_state'], 'idle')
+        self.assertEqual(payload['motor_dispatch']['workflow_action'], 'finish_open')
+        self.assertEqual(payload['motor_dispatch']['outcome'], 'rejected')
+        self.assertFalse(payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(payload['motor_dispatch']['physical_movement_verified'])
+        self.assertIn('no serial command was sent', payload['motor_dispatch']['error'])
+        self.assertEqual(self.service.motor_controller.calls, [])
+        _, duplicate_payload = self.post_json('/cabinet/workflow', {
+            'command': 'finish_open',
+            'station': 'Station 1',
+        })
+        self.assertFalse(duplicate_payload['motor_dispatch']['serial_command_sent'])
+        self.assertIn('no serial command was sent', duplicate_payload['motor_dispatch']['error'])
+
+    def test_disarmed_serial_controller_does_not_report_a_command_as_sent(self):
+        class SuccessfulWorkflowVerifier:
+            def workflow(self, command=None, station=None):
+                return 200, {
+                    'mode': 'hardware',
+                    'station': station,
+                    'session': {
+                        'id': 'disarmed-session',
+                        'station': station,
+                        'status': 'open',
+                        'workflow_state': 'idle',
+                        'opened_by': [],
+                        'closed_by': [],
+                    },
+                }
+
+        controller = SerialMotorController(
+            device='/dev/serial/by-id/usb-TapTrack-test-controller',
+        )
+        self.service.verifier = SuccessfulWorkflowVerifier()
+        self.service.motor_controller = controller
+        self.service.motor_actuation_enabled = True
+
+        status, payload = self.post_json('/cabinet/workflow', {
+            'command': 'finish_open',
+            'station': 'Station 1',
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['motor_dispatch']['outcome'], 'uncertain')
+        self.assertFalse(payload['motor_dispatch']['serial_command_sent'])
+        self.assertEqual(payload['motor_dispatch']['serial_connection'], 'disconnected')
+        self.assertIn('recovery is required', payload['motor_dispatch']['error'])
+        self.assertIsNone(controller._serial)
 
     def test_django_workflow_http_path_dispatches_v2_serial_actions_once(self):
         serial_port = FakeProtocolSerial()
@@ -1109,12 +1219,12 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         ))
 
         with self.assertLogs('nfc_service', level='INFO') as captured:
-            open_status, _ = self.post_json('/cabinet/workflow', {
+            open_status, open_payload = self.post_json('/cabinet/workflow', {
                 'command': 'finish_open',
                 'station': 'Station 1',
             })
             serial_port.command_response_mode = 'malformed'
-            close_status, _ = self.post_json('/cabinet/workflow', {
+            close_status, close_payload = self.post_json('/cabinet/workflow', {
                 'command': 'finish_close',
                 'station': 'Station 2',
             })
@@ -1129,6 +1239,12 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             if frame.startswith(b'CMD,')
         ]
         self.assertEqual((open_status, close_status, duplicate_status), (200, 200, 200))
+        self.assertEqual(open_payload['motor_dispatch']['outcome'], 'completed')
+        self.assertTrue(open_payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(open_payload['motor_dispatch']['physical_movement_verified'])
+        self.assertEqual(close_payload['motor_dispatch']['outcome'], 'uncertain')
+        self.assertTrue(close_payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(close_payload['motor_dispatch']['physical_movement_verified'])
         self.assertEqual(commands, [
             ['CMD', '2', '0123456789abcdef', '1', '1'],
             ['CMD', '2', '0123456789abcdef', '2', '4'],
@@ -1138,6 +1254,11 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             for record in self.store.list_motor_actions()
         }
         self.assertEqual(action_states, {'open-session': 'COMPLETED', 'close-session': 'UNCERTAIN'})
+        action_transmission = {
+            record['workflow_session']: record['command_transmitted']
+            for record in self.store.list_motor_actions()
+        }
+        self.assertEqual(action_transmission, {'open-session': 1, 'close-session': 1})
         self.assertTrue(any(
             'motor_action_result workflow_action=finish_open station=Station 1' in message
             and 'result=completed' in message

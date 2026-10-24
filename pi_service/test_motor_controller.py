@@ -143,6 +143,7 @@ class SerialMotorControllerTests(unittest.TestCase):
                 result = controller.command(station, action)
 
                 self.assertEqual(result.outcome, MotorOutcome.COMPLETED)
+                self.assertTrue(result.command_transmitted)
                 self.assertTrue(result.accepted)
                 self.assertTrue(result.busy)
                 self.assertEqual(result.session_id, SESSION)
@@ -167,6 +168,8 @@ class SerialMotorControllerTests(unittest.TestCase):
         result = controller.command('Station 1', 'OPEN')
 
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertFalse(result.command_transmitted)
+        self.assertIsNone(result.transaction_id)
         self.assertEqual(serial_port.writes, [])
 
     def test_ready_timeout_sends_no_command_and_latches_uncertainty(self):
@@ -176,6 +179,7 @@ class SerialMotorControllerTests(unittest.TestCase):
         result = controller.command('Station 1', 'OPEN')
 
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertFalse(result.command_transmitted)
         self.assertTrue(all(write.startswith(b'HELLO,') for write in serial_port.writes))
         self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 0)
 
@@ -279,8 +283,27 @@ class SerialMotorControllerTests(unittest.TestCase):
                 self.arm_for_bench_test(controller)
                 result = controller.command('Station 1', 'OPEN')
                 self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+                self.assertTrue(result.command_transmitted)
                 controller.command('Station 1', 'OPEN')
                 self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
+
+    def test_command_write_failure_reports_transmission_as_unknown(self):
+        class CommandWriteFailure(FakeSerial):
+            def write(self, payload):
+                if payload.startswith(b'CMD,2,'):
+                    self.writes.append(payload)
+                    raise OSError('serial write failed')
+                return super().write(payload)
+
+        serial_port = CommandWriteFailure()
+        controller = SerialMotorController(serial_instance=serial_port)
+        self.arm_for_bench_test(controller)
+
+        result = controller.command('Station 1', 'OPEN')
+
+        self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertIsNone(result.command_transmitted)
+        self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
 
     def test_disconnect_at_write_and_response_phases_latches(self):
         for command_responses in (

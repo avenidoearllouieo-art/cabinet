@@ -89,6 +89,29 @@ function formatDuration(start, end = new Date()) {
   return `${seconds}s`
 }
 
+function motorDispatchStatus(dispatch, expectedAction) {
+  if (!dispatch || typeof dispatch !== 'object' || Array.isArray(dispatch)) {
+    return 'The Pi service did not report a motor dispatch result.'
+  }
+  if (dispatch.workflow_action !== expectedAction) {
+    return 'The Pi service returned a motor result for a different workflow action.'
+  }
+  if (dispatch.outcome === 'completed' && dispatch.serial_command_sent === true) {
+    return 'The ESP32 completed its command sequence. Physical shutter position was not verified.'
+  }
+  const outcome = typeof dispatch.outcome === 'string' ? dispatch.outcome : 'unknown'
+  const reason = typeof dispatch.error === 'string' && dispatch.error
+    ? ` ${dispatch.error}`
+    : ''
+  if (dispatch.serial_command_sent === null) {
+    return `The Pi could not determine whether a serial command was sent. Manual inspection is required.${reason}`
+  }
+  if (dispatch.outcome === 'completed') {
+    return 'The motor result is inconsistent; serial command completion was not confirmed.'
+  }
+  return `The motor command was not confirmed (${outcome}).${reason}`
+}
+
 export default function App() {
   const [view, setView] = useState('home')
   const [pendingAction, setPendingAction] = useState('open')
@@ -627,7 +650,9 @@ export default function App() {
         const data = await sendCabinetWorkflow('finish_open', { station: selectedStation })
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
-        setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}. Physical shutter movement was not verified.`)
+        setStatusMessage(
+          `Open workflow completed for ${stationLabel(data.station)}. ${motorDispatchStatus(data.motor_dispatch, 'finish_open')}`,
+        )
         setView('cabinet-opened')
       } catch (error) {
         setErrorMessage(error.message || 'The cabinet session could not be opened.')
@@ -654,7 +679,9 @@ export default function App() {
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
-      setStatusMessage(`Close workflow completed for ${stationLabel(data.station)}. Physical shutter movement was not verified.`)
+      setStatusMessage(
+        `Close workflow completed for ${stationLabel(data.station)}. ${motorDispatchStatus(data.motor_dispatch, 'finish_close')}`,
+      )
       setView('cabinet-closed')
     } catch (error) {
       setErrorMessage(error.message || 'The cabinet session could not be closed.')
@@ -1088,6 +1115,7 @@ export default function App() {
             <img className="brand-wordmark compact-wordmark" src="/logo1.png" alt="TapTrack" />
             <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW COMPLETE</strong></div>
             <h2>Open Workflow Complete</h2>
+            <p className="muted" role="status">{statusMessage}</p>
             <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
@@ -1117,7 +1145,8 @@ export default function App() {
           <div className="panel status-panel success-panel">
             <div className="large-state is-closed"><span className="status-dot good" /><strong>CLOSE WORKFLOW COMPLETE</strong></div>
             <h2>Close Workflow Complete</h2>
-            <p className="muted">{stationLabel(selectedStation)} session is marked closed. Physical shutter movement was not verified.</p>
+            <p className="muted" role="status">{statusMessage}</p>
+            <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Opened by</span><strong>{getParticipantCount(closedSession)}</strong></div>
               <div><span>Closed by</span><strong>{closedSession?.closed_by?.length || 0}</strong></div>

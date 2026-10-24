@@ -138,13 +138,21 @@ def motor_result_from_action(action: dict) -> MotorCommandResult:
         'UNCERTAIN': MotorOutcome.UNCERTAIN,
     }
     operation = action['operation']
+    command_transmitted = action.get('command_transmitted')
+    if command_transmitted is not None:
+        command_transmitted = bool(command_transmitted)
+    elif action['status'] == 'COMPLETED':
+        command_transmitted = True
     return MotorCommandResult(
         station=action['station'],
         action=operation,
         command='MOCK',
         outcome=outcomes[action['status']],
         transaction_id=None,
-        error='Action requires manual review.' if action['status'] == 'UNCERTAIN' else None,
+        command_transmitted=command_transmitted,
+        error=action.get('error') or (
+            'Action requires manual review.' if action['status'] == 'UNCERTAIN' else None
+        ),
     )
 
 
@@ -504,6 +512,17 @@ class SQLiteScanEventStore:
                     UNIQUE (workflow_session, station, operation)
                 )
             ''')
+            columns = {
+                row['name']
+                for row in connection.execute('PRAGMA table_info(motor_actions)').fetchall()
+            }
+            if 'command_transmitted' not in columns:
+                connection.execute(
+                    'ALTER TABLE motor_actions ADD COLUMN command_transmitted INTEGER '
+                    'CHECK (command_transmitted IN (0, 1))'
+                )
+            if 'error' not in columns:
+                connection.execute('ALTER TABLE motor_actions ADD COLUMN error TEXT')
 
     def create_motor_action(self, workflow_session: str, station: str, operation: str) -> dict:
         if station not in MOTOR_STATIONS or operation not in {'OPEN', 'CLOSE'}:
@@ -535,15 +554,31 @@ class SQLiteScanEventStore:
             ''', (updated_at, action_id))
             return cursor.rowcount == 1
 
-    def finish_motor_action(self, action_id: str, status: str) -> bool:
+    def finish_motor_action(
+        self,
+        action_id: str,
+        status: str,
+        *,
+        command_transmitted: bool | None = None,
+        error: str | None = None,
+    ) -> bool:
         if status not in MOTOR_ACTION_STATUSES - set(MOTOR_ACTION_IN_PROGRESS):
             raise ValueError('Motor action status must be terminal.')
+        if command_transmitted is not None and not isinstance(command_transmitted, bool):
+            raise ValueError('command_transmitted must be a boolean or None.')
         updated_at = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connection() as connection:
             cursor = connection.execute('''
-                UPDATE motor_actions SET status = ?, updated_at = ?
+                UPDATE motor_actions
+                SET status = ?, updated_at = ?, command_transmitted = ?, error = ?
                 WHERE action_id = ? AND status = 'DISPATCHED'
-            ''', (status, updated_at, action_id))
+            ''', (
+                status,
+                updated_at,
+                None if command_transmitted is None else int(command_transmitted),
+                error,
+                action_id,
+            ))
             return cursor.rowcount == 1
 
     def get_motor_action(self, action_id: str) -> dict | None:
@@ -1005,7 +1040,12 @@ class NFCService:
                     error=MOTOR_ACTUATION_DISABLED,
                 )
                 try:
-                    updated = self.store.finish_motor_action(action_record['action_id'], 'FAILED')
+                    updated = self.store.finish_motor_action(
+                        action_record['action_id'],
+                        'FAILED',
+                        command_transmitted=False,
+                        error=MOTOR_ACTUATION_DISABLED,
+                    )
                 except Exception as error:
                     logger.exception(
                         'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
@@ -1093,7 +1133,12 @@ class NFCService:
                 MotorOutcome.UNCERTAIN: 'UNCERTAIN',
             }.get(result.outcome, 'UNCERTAIN')
             try:
-                updated = self.store.finish_motor_action(action_record['action_id'], action_status)
+                updated = self.store.finish_motor_action(
+                    action_record['action_id'],
+                    action_status,
+                    command_transmitted=result.command_transmitted,
+                    error=result.error,
+                )
             except Exception as error:
                 logger.exception(
                     'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
@@ -1292,7 +1337,31 @@ class NFCHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
                     return
                 status_code, response = service.verifier.workflow(command, station)
-                service.dispatch_motor_transition(command, station, status_code, response)
+                motor_result = service.dispatch_motor_transition(command, station, status_code, response)
+                if command in MOTOR_WORKFLOW_TRANSITIONS and status_code == HTTPStatus.OK:
+                    payload = dict(response) if isinstance(response, dict) else {}
+                    payload['motor_dispatch'] = {
+                        'workflow_action': command,
+                        'outcome': motor_result.outcome.value if motor_result else 'skipped',
+                        'serial_command_sent': (
+                            motor_result.command_transmitted
+                            if isinstance(service.motor_controller, SerialMotorController)
+                            and motor_result is not None
+                            else False
+                        ),
+                        'serial_connection': getattr(
+                            service.motor_controller,
+                            'connection_status',
+                            'not_applicable',
+                        ),
+                        'physical_movement_verified': False,
+                        'error': (
+                            sanitize_error(motor_result.error)
+                            if motor_result and motor_result.error else
+                            'Motor dispatch was skipped because the Django transition response was invalid.'
+                        ),
+                    }
+                    response = payload
                 self._send_json(HTTPStatus(status_code), response)
             except (ValueError, json.JSONDecodeError):
                 self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})

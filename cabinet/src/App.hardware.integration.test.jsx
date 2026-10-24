@@ -145,6 +145,14 @@ describe('Cabinet real NFC bridge mode', () => {
             status: 'open',
             workflow_state: 'idle',
           },
+          motor_dispatch: {
+            workflow_action: 'finish_open',
+            outcome: 'completed',
+            serial_command_sent: true,
+            serial_connection: 'connected',
+            physical_movement_verified: false,
+            error: null,
+          },
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
@@ -167,6 +175,119 @@ describe('Cabinet real NFC bridge mode', () => {
     await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
-    expect(screen.getByText(/physical shutter movement was not verified/i)).toBeTruthy()
+    expect(screen.getByText(/ESP32 completed its command sequence. Physical shutter position was not verified/i)).toBeTruthy()
+  })
+
+  it('shows when Django completed Open but motor dispatch was disabled', async () => {
+    const openingSession = {
+      id: 23,
+      station: 'Station 1',
+      status: 'open',
+      workflow_state: 'opening',
+      opened_by: [{ uid: 'REAL-BRIDGE-UID', studentId: 'HW-001', fullName: 'Hardware Test Student' }],
+      closed_by: [],
+    }
+    const fetcher = vi.fn(async (url, options = {}) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+        if (options.method === 'GET') {
+          return new Response(JSON.stringify({
+            mode: 'hardware',
+            cabinet_name: 'Cabinet 1',
+            stations: [
+              { name: 'Station 1', status: 'occupied', session: openingSession },
+              { name: 'Station 2', status: 'available', session: null },
+            ],
+          }), { status: 200 })
+        }
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          station: 'Station 1',
+          session: {
+            ...openingSession,
+            workflow_state: 'idle',
+          },
+          motor_dispatch: {
+            workflow_action: 'finish_open',
+            outcome: 'rejected',
+            serial_command_sent: false,
+            serial_connection: 'disconnected',
+            physical_movement_verified: false,
+            error: 'Motor actuation is disabled; no serial command was sent.',
+          },
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+    await user.click(screen.getByRole('button', { name: 'CONTINUE' }))
+    await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
+
+    expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
+    expect(screen.getByText(/Open workflow completed for Station 1\. The motor command was not confirmed \(rejected\)\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
+  })
+
+  it('shows uncertain serial transmission details without implying no command was sent', async () => {
+    const openingSession = {
+      id: 24,
+      station: 'Station 1',
+      status: 'open',
+      workflow_state: 'opening',
+      opened_by: [{ uid: 'REAL-BRIDGE-UID', studentId: 'HW-001', fullName: 'Hardware Test Student' }],
+      closed_by: [],
+    }
+    const fetcher = vi.fn(async (url, options = {}) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+        if (options.method === 'GET') {
+          return new Response(JSON.stringify({
+            mode: 'hardware',
+            cabinet_name: 'Cabinet 1',
+            stations: [
+              { name: 'Station 1', status: 'occupied', session: openingSession },
+              { name: 'Station 2', status: 'available', session: null },
+            ],
+          }), { status: 200 })
+        }
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          station: 'Station 1',
+          session: { ...openingSession, workflow_state: 'idle' },
+          motor_dispatch: {
+            workflow_action: 'finish_open',
+            outcome: 'uncertain',
+            serial_command_sent: null,
+            serial_connection: 'connected',
+            physical_movement_verified: false,
+            error: 'Serial write failed; transmission status is unknown.',
+          },
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+    await user.click(screen.getByRole('button', { name: 'CONTINUE' }))
+    await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
+
+    expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
+    expect(screen.getByText(/could not determine whether a serial command was sent\. Manual inspection is required\. Serial write failed/i)).toBeTruthy()
   })
 })

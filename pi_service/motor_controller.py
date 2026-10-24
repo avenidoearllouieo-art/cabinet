@@ -52,6 +52,7 @@ class MotorCommandResult:
     outcome: MotorOutcome
     session_id: str | None = None
     transaction_id: int | None = None
+    command_transmitted: bool | None = False
     responses: tuple[str, ...] = ()
     error: str | None = None
 
@@ -113,10 +114,12 @@ class SerialMotorController:
         try:
             transaction_id = self._next_transaction_id
             transmitted_transaction_id = None
+            write_started = False
+            command_transmitted = False
             if self._unknown or self._closed:
                 return self._result(
                     station, normalized_action, command, MotorOutcome.UNCERTAIN,
-                    transaction_id=transaction_id,
+                    command_transmitted=False,
                     error='Motor outcome is uncertain; explicit operator recovery is required.',
                 )
             if transaction_id > MAX_TRANSACTION_ID:
@@ -137,13 +140,16 @@ class SerialMotorController:
                 self._next_transaction_id += 1
                 transmitted_transaction_id = current_transaction
                 frame = f'CMD,2,{self._session_id},{current_transaction},{command}\n'.encode('ascii')
+                write_started = True
                 self._write_frame(serial_port, frame)
+                command_transmitted = True
                 outcome = self._read_transaction_responses(
                     serial_port, self._session_id, current_transaction, command, responses,
                 )
                 return self._result(
                     station, normalized_action, command, outcome,
                     transaction_id=current_transaction, responses=responses,
+                    command_transmitted=True,
                 )
             except Exception as error:
                 self._unknown = True
@@ -151,6 +157,9 @@ class SerialMotorController:
                     station, normalized_action, command, MotorOutcome.UNCERTAIN,
                     transaction_id=transmitted_transaction_id,
                     responses=responses,
+                    command_transmitted=(
+                        None if write_started and not command_transmitted else command_transmitted
+                    ),
                     error=str(error) or 'Serial command outcome is unknown.',
                 )
         finally:
@@ -393,6 +402,7 @@ class SerialMotorController:
         outcome: MotorOutcome,
         *,
         transaction_id: int | None = None,
+        command_transmitted: bool | None = False,
         responses: list[str] | tuple[str, ...] = (),
         error: str | None = None,
     ) -> MotorCommandResult:
@@ -403,6 +413,7 @@ class SerialMotorController:
             outcome=outcome,
             session_id=self._session_id,
             transaction_id=transaction_id,
+            command_transmitted=command_transmitted,
             responses=tuple(responses),
             error=error,
         )
