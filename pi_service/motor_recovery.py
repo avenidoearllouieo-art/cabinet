@@ -68,9 +68,11 @@ if hasattr(socket, 'AF_UNIX'):
             self.socket_path = Path(socket_path)
             self.socket_path.parent.mkdir(parents=True, exist_ok=True)
             if self.socket_path.exists():
-                if not self.socket_path.is_socket():
-                    raise RuntimeError(f'Motor recovery socket path is not a socket: {self.socket_path}')
-                self.socket_path.unlink()
+                path_kind = 'socket' if self.socket_path.is_socket() else 'non-socket file'
+                raise RuntimeError(
+                    f'Motor recovery path already exists ({path_kind}): {self.socket_path}. '
+                    'Verify no service is using it before removing it.'
+                )
             super().__init__(str(self.socket_path), _RecoveryRequestHandler)
             os.chmod(self.socket_path, 0o600)
 

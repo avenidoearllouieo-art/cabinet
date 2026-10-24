@@ -73,6 +73,11 @@ class MotorRecoverySocketTests(unittest.TestCase):
     def test_socket_permissions_are_owner_only(self):
         self.assertEqual(self.socket_path.stat().st_mode & 0o777, 0o600)
 
+    def test_existing_recovery_socket_is_not_unlinked(self):
+        with self.assertRaisesRegex(RuntimeError, 'Verify no service is using it'):
+            MotorRecoveryServer(self.service, str(self.socket_path))
+        self.assertTrue(self.socket_path.exists())
+
 
 class RecoveryRequestValidationTests(unittest.TestCase):
     def test_requires_exact_true_confirmation_fields(self):

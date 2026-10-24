@@ -1005,6 +1005,24 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(BRIDGE_PORT, 5001)
         self.assertEqual(self.server.server_address[0], '127.0.0.1')
 
+    def test_nfc_status_reports_motor_mode_without_claiming_physical_readiness(self):
+        serial_controller = SerialMotorController(
+            device='/dev/serial/by-id/usb-TapTrack-test-controller',
+        )
+        self.service.motor_controller = serial_controller
+        self.service.motor_actuation_enabled = False
+
+        status, _, payload = self.get_json('/nfc/status')
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['motor'], {
+            'mode': 'serial',
+            'actuation_enabled': False,
+            'serial_connection': 'disconnected',
+            'armed': False,
+        })
+        self.assertIsNone(serial_controller._serial)
+
     def test_api_scans_empty_result_preserves_cursor(self):
         status, _, body = self.get_json('/api/scans?after=19&limit=50')
         self.assertEqual(status, 200)

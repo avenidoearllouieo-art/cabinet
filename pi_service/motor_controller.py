@@ -233,6 +233,10 @@ class SerialMotorController:
             return 'closed'
         return 'connected' if self._serial is not None else 'disconnected'
 
+    @property
+    def armed(self) -> bool:
+        return not self._unknown and not self._closed and self._session_id is not None
+
     def _get_serial(self):
         if self._serial is not None:
             return self._serial

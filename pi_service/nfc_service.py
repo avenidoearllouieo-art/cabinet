@@ -773,6 +773,16 @@ class NFCService:
             return False
         return self.photo_capture.capture(event_id)
 
+    def status_snapshot(self) -> dict:
+        status = self.state.snapshot()
+        status['motor'] = {
+            'mode': 'serial' if isinstance(self.motor_controller, SerialMotorController) else 'mock',
+            'actuation_enabled': self.motor_actuation_enabled,
+            'serial_connection': getattr(self.motor_controller, 'connection_status', 'not_applicable'),
+            'armed': getattr(self.motor_controller, 'armed', False),
+        }
+        return status
+
     def recover_motor_controller(
         self,
         *,
@@ -1217,7 +1227,7 @@ class NFCHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
         if path == '/nfc/status':
-            self._send_json(HTTPStatus.OK, self.server.service.state.snapshot())
+            self._send_json(HTTPStatus.OK, self.server.service.status_snapshot())
             return
         if path == '/cabinet/workflow':
             try:

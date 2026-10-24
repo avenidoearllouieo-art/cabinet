@@ -103,20 +103,20 @@ Important:
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
-The motor integration has two explicit server-side modes: `mock` and `serial`. The deployment template selects `mock` and keeps `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; the Cabinet UI has no motor-mode selector. `serial` creates one shared `SerialMotorController`, but the port is opened lazily and no command is sent while actuation is disabled. Missing or unknown mode configuration fails startup instead of selecting a fallback.
+The motor integration has two explicit server-side modes: `mock` and `serial`. The deployment template selects the real `serial` controller using the previously confirmed stable device path, but keeps `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; the Cabinet UI has no motor-mode selector. While disabled, the service creates one controller but does not open the serial port or send any command. Missing or unknown mode configuration fails startup instead of selecting a fallback.
 
 To configure the serial controller without enabling movement, first identify the exact stable device symlink on the Pi with `ls -l /dev/serial/by-id/`, then edit `/etc/taptrack/nfc.env`:
 
 ```env
 # Replace with the exact path returned on this Pi.
 TAPTRACK_MOTOR_MODE=serial
-TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/serial/by-id/<exact-device-id>
+TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD018279-if00
 TAPTRACK_MOTOR_BAUD_RATE=115200
 TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
 TAPTRACK_MOTOR_ACTUATION_ENABLED=false
 ```
 
-The NFC service checks the stable path syntax and numeric settings at startup, but does not connect to the port until a motor command is allowed. Keep actuation disabled: setting it true also requires explicit true configuration for installed limit switches, an installed emergency stop, and an approved recovery procedure. These flags are assertions, not a substitute for physical inspection or commissioning.
+The NFC service checks the stable path syntax and numeric settings at startup, but does not connect to the port while actuation is disabled. The loopback `/nfc/status` response reports the selected motor mode, actuation flag, serial connection state, and controller armed state. Keep actuation disabled: setting it true also requires explicit true configuration for installed limit switches, an installed emergency stop, and an approved recovery procedure. These flags are assertions, not a substitute for physical inspection or commissioning.
 
 **Physical safety is not confirmed.** The firmware performs fixed-step motion without confirmed endpoint feedback; a `DONE` frame only confirms the firmware's routine completed and does not prove the shutter reached a safe endpoint. Do not enable actuation or connect TB6600 driver power until independent limit switches, an emergency stop, and a documented safe recovery procedure are installed and tested. The controller starts disarmed and will not send a command until an operator performs the non-moving recovery handshake described below. Do not upload firmware or issue motion commands during this deployment.
 
@@ -176,6 +176,8 @@ sudo systemctl restart taptrack-nfc.service
 sudo systemctl status taptrack-nfc.service
 curl -fsS http://127.0.0.1:5001/nfc/status
 ```
+
+Inspect the `motor` object in the status JSON. The safe configured state is `mode: serial`, `actuation_enabled: false`, `serial_connection: disconnected`, `armed: false`.
 
 Mock mode never actuates motors. Do not delete SQLite action history during rollback; uncertain and terminal records are retained to prevent accidental duplicate movement.
 

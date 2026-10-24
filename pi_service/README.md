@@ -92,9 +92,11 @@ The NFC service sends the Django request server-side using `DEVICE_API_KEY` (or 
 
 The SQLite database defaults to `pi_service/nfc_events.sqlite3`; override it with `TAPTRACK_NFC_DB_PATH`. The bridge binds only to `127.0.0.1:5001`, permits CORS only from `http://127.0.0.1:4000` and `http://localhost:4000`, returns events in ascending `event_id` order, and never deletes events on GET.
 
-### Standalone motor serial controller (Stage 2 prototype)
+### Cabinet motor integration (safety-disabled by default)
 
-`motor_controller.py` and `motor/motor.ino` use an unauthenticated V2 line protocol. The real `SerialMotorController` is not connected to Cabinet workflows. In the mock-only integration phase, the NFC service may record a fake dispatch after a successful `finish_open` or `finish_close`; it never opens serial or sends a firmware frame. `TAPTRACK_MOTOR_ACTUATION_ENABLED=true` makes the service fail closed. Frames are ASCII and LF-terminated, at most 96 bytes, with no CR or empty fields:
+The NFC service supports explicit `TAPTRACK_MOTOR_MODE=mock` or `serial`; missing and unknown modes fail startup. The deployment example selects the real serial controller using the confirmed Pi stable path, but leaves `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`, so no serial port is opened and no motor command is sent. Only a successful Django `finish_open`/`finish_close` transition with a matching station and validated final session response can create one durable motor action and dispatch it. GETs, scans, cancellations, intermediate transitions, failed Django responses, invalid stations, duplicates, and uncertain actions never dispatch or retry.
+
+`motor_controller.py` and `motor/motor.ino` use an unauthenticated V2 line protocol. Frames are ASCII and LF-terminated, at most 96 bytes, with no CR or empty fields:
 
 ```text
 HELLO,2,<nonce>\n
@@ -106,21 +108,28 @@ ERR,2,<session_id>,<reason>\n
 
 `session_id` and `nonce` are 16 lowercase hex characters. The firmware refuses CMD frames until a valid HELLO has been exchanged in that boot. Transaction IDs are positive canonical decimal uint32 values and reset to the firmware-reported high-water mark plus one for a new Python process. Commands preserve the mapping: `1` Station 1 OPEN, `2` Station 1 CLOSE, `3` Station 2 OPEN, `4` Station 2 CLOSE. A successful command requires exactly matching `ACCEPTED`, `BUSY`, `DONE` responses in order. `REJECTED` is terminal. The firmware consumes a valid new sequence even when rejecting a command as busy.
 
-Configure the Pi process as before:
+The protocol mapping remains `1` Station 1 OPEN, `2` Station 1 CLOSE, `3` Station 2 OPEN, and `4` Station 2 CLOSE. A successful command requires matching `ACCEPTED`, `BUSY`, `DONE` responses in order. `DONE` confirms only that the fixed-step routine ended; it does not confirm shutter position.
+
+The controller starts disarmed. If and only if physical safeguards and the approved recovery procedure have been verified, serial operation requires:
 
 ```env
-TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/ttyUSB0
+TAPTRACK_MOTOR_MODE=serial
+TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD018279-if00
 TAPTRACK_MOTOR_BAUD_RATE=115200
 TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
+TAPTRACK_MOTOR_ACTUATION_ENABLED=true
+TAPTRACK_MOTOR_LIMIT_SWITCHES_INSTALLED=true
+TAPTRACK_MOTOR_ESTOP_INSTALLED=true
+TAPTRACK_MOTOR_RECOVERY_PROCEDURE_APPROVED=true
 ```
 
-The controller serializes calls within one Python instance; this is not a cross-process lock. It never retries a movement. Each new controller instance starts disarmed and requires an explicit `recover()` call with operator confirmations before any movement. Timeout, disconnect, reset frame, malformed/stale response, or response-order error latches the instance uncertain. Recovery sends only a non-actuating HELLO and requires confirmation that motor-driver power is isolated, the unloaded mechanism is stationary, and the ESP32 was power-cycled. It requires an idle state and a new session when the prior session is known. It cannot verify the operator's physical assertions.
+These settings alone do not establish that safety hardware exists. The service provides an owner-only Unix socket recovery command (`motor_recovery.py`) which performs only a handshake after operator confirmations of driver-power isolation, stationary mechanism, and ESP32 power-cycle. Do not use it unless the travel limits, emergency stop, and written recovery procedure have been independently verified. The service starts disarmed after every restart and requires a new recovery handshake before dispatch. It cannot verify the operator's physical assertions.
 
-There is no persistent Pi transaction journal or firmware durable transaction journal. Python transaction state and firmware sequence/session state are volatile. A process restart therefore starts disarmed and requires manual recovery, but this software-only prototype is not resistant to storage rollback/cloning and cannot guarantee exactly-once physical movement. It has no HMAC, protected key storage, anti-rollback counter, or physical position feedback. `DONE` means only that the programmed step routine ended.
+Timeout, disconnect, malformed/stale response, or response-order error latches uncertainty. The Pi persists an action before dispatch and leaves uncertain/in-progress records non-retryable, including across restart. Firmware session/transaction state remains volatile, so durable Pi records do not prove exactly-once physical execution or position.
 
 The firmware uses a bounded parser and nonblocking movement state machine. It drains/rejects commands received while moving and waits for an input-quiet interval before returning to IDLE. A reset does not resume movement; it creates a new random session. Random session IDs are correlation tokens, not cryptographic identities. GPIO STEP/DIR outputs are initialized inactive in setup, but MCU pins may float during reset; external pull-downs/driver-enable safeguards must be verified.
 
-Automated tests use mocked serial only. They establish Python framing, correlation, state latching, no software retry, and same-instance serialization; they do not validate firmware execution, USB reset/DTR behavior, electrical output levels, buffering, or physical motion. This prototype is only for bounded unloaded bench testing after electrical safety review. Shutters are not installed, and there are no limit switches or emergency stop. No full-travel or UI-connected motor testing is permitted.
+Automated tests use mocked serial only. They establish Python framing, workflow dispatch, correlation, state latching, no software retry, and same-instance serialization; they do not validate firmware execution, USB reset/DTR behavior, electrical output levels, buffering, or physical motion. Independent travel limits, an emergency stop, and an approved safe recovery procedure are not confirmed. Keep actuation disabled and TB6600 driver power disconnected. No full-travel or UI-connected motor test is permitted until those prerequisites are installed and separately approved.
 
 ### Hardware setup
 
