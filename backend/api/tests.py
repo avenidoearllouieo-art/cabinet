@@ -27,6 +27,30 @@ from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Secti
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
+    def test_allowed_hosts_are_parsed_from_comma_separated_environment_value(self):
+        expected_hosts = ['localhost', '127.0.0.1', '192.168.1.43']
+        environment = os.environ.copy()
+        environment['DJANGO_ALLOWED_HOSTS'] = ', '.join(expected_hosts)
+        environment['DJANGO_DEBUG'] = 'true'
+        script = '''
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+from config import settings
+print(json.dumps(settings.ALLOWED_HOSTS))
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', script, str(settings.BASE_DIR)],
+            cwd=settings.BASE_DIR.parent,
+            env=environment,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout), expected_hosts)
+        self.assertIn('192.168.1.43', json.loads(result.stdout))
+
     def test_dotenv_loads_from_settings_path_outside_backend_working_directory(self):
         env_file = settings.BASE_DIR / '.env'
         if not env_file.is_file():
