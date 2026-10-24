@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
+import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 import {
   cancelPasswordRecovery,
   captureAccessLogPhoto,
@@ -97,29 +98,6 @@ function formatDuration(start, end = new Date()) {
   if (hours) return `${hours}h ${minutes}m`
   if (minutes) return `${minutes}m ${seconds}s`
   return `${seconds}s`
-}
-
-function motorDispatchStatus(dispatch, expectedAction) {
-  if (!dispatch || typeof dispatch !== 'object' || Array.isArray(dispatch)) {
-    return 'The Pi service did not report a motor dispatch result.'
-  }
-  if (dispatch.workflow_action !== expectedAction) {
-    return 'The Pi service returned a motor result for a different workflow action.'
-  }
-  if (dispatch.outcome === 'completed' && dispatch.serial_command_sent === true) {
-    return 'The ESP32 completed its command sequence. Physical shutter position was not verified.'
-  }
-  const outcome = typeof dispatch.outcome === 'string' ? dispatch.outcome : 'unknown'
-  const reason = typeof dispatch.error === 'string' && dispatch.error
-    ? ` ${dispatch.error}`
-    : ''
-  if (dispatch.serial_command_sent === null) {
-    return `The Pi could not determine whether a serial command was sent. Manual inspection is required.${reason}`
-  }
-  if (dispatch.outcome === 'completed') {
-    return 'The motor result is inconsistent; serial command completion was not confirmed.'
-  }
-  return `The motor command was not confirmed (${outcome}).${reason}`
 }
 
 export default function App() {

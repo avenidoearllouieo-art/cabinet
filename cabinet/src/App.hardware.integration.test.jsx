@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App.jsx'
+import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 
 vi.mock('./services/nfc/nfcMode', () => ({
   resolveNfcMode: () => 'hardware',
@@ -10,6 +11,41 @@ vi.mock('./services/nfc/nfcMode', () => ({
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+})
+
+describe('Cabinet motor dispatch reporting', () => {
+  it('reports missing dispatch metadata as unavailable, never successful', () => {
+    const message = motorDispatchStatus(undefined, 'finish_open')
+
+    expect(message).toMatch(/Motor dispatch unavailable/i)
+    expect(message).toMatch(/does not confirm motor transmission/i)
+    expect(message).not.toMatch(/motor dispatched/i)
+  })
+
+  it('distinguishes disabled, failed, dispatched, and unknown outcomes', () => {
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'rejected',
+      serial_command_sent: false,
+      error: 'Motor actuation is disabled; no serial command was sent.',
+    }, 'finish_open')).toMatch(/Motor dispatch disabled/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_close',
+      outcome: 'rejected',
+      serial_command_sent: false,
+      error: 'Serial device permission denied.',
+    }, 'finish_close')).toMatch(/Motor dispatch failed/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'completed',
+      serial_command_sent: true,
+    }, 'finish_open')).toMatch(/Motor dispatched/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_close',
+      outcome: 'uncertain',
+      serial_command_sent: null,
+    }, 'finish_close')).toMatch(/Motor outcome unknown/i)
+  })
 })
 
 describe('Cabinet real NFC bridge mode', () => {
@@ -233,7 +269,7 @@ describe('Cabinet real NFC bridge mode', () => {
     await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
-    expect(screen.getByText(/Open workflow completed for Station 1\. The motor command was not confirmed \(rejected\)\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
+    expect(screen.getByText(/Open workflow completed for Station 1\. Motor dispatch disabled\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
   })
 
   it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
