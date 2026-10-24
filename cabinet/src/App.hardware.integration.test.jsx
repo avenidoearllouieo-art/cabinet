@@ -74,7 +74,7 @@ describe('Cabinet real NFC bridge mode', () => {
           return new Response(JSON.stringify({
             mode: 'hardware',
             station,
-            session: { id: 21, station, status: 'open', workflow_state: 'opening', opened_by: [] },
+            session: { id: 21, station, status: 'open', workflow_state: 'opening', opened_by: [], closed_by: [] },
           }), { status: 200 })
         }
         return new Response(JSON.stringify({ error: 'Django rejected final transition.' }), { status: 409 })
@@ -119,6 +119,7 @@ describe('Cabinet real NFC bridge mode', () => {
       status: 'open',
       workflow_state: 'opening',
       opened_by: [{ uid: 'REAL-BRIDGE-UID', studentId: 'HW-001', fullName: 'Hardware Test Student' }],
+      closed_by: [],
     }
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)

@@ -8,24 +8,38 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isValidSession(session, station) {
+  return isRecord(session)
+    && session.id !== undefined
+    && session.id !== null
+    && session.station === station
+    && ['open', 'closed'].includes(session.status)
+    && ['idle', 'opening', 'closing'].includes(session.workflow_state)
+    && Array.isArray(session.opened_by)
+    && Array.isArray(session.closed_by)
+}
+
 function validateWorkflowResponse(payload, command, station, expectedMode) {
   if (!isRecord(payload) || payload.mode !== expectedMode) {
     throw new Error('Cabinet workflow returned an invalid response.')
   }
   if (!command) {
-    if (!Array.isArray(payload.stations)) throw new Error('Cabinet workflow returned an invalid response.')
+    if (!Array.isArray(payload.stations) || !payload.stations.every((item) => (
+      isRecord(item)
+      && typeof item.name === 'string'
+      && Boolean(item.name.trim())
+      && ['available', 'occupied'].includes(item.status)
+      && (item.session === null || isValidSession(item.session, item.name))
+    ))) {
+      throw new Error('Cabinet workflow returned an invalid response.')
+    }
     return payload
   }
 
   const session = payload.session
   if (
     payload.station !== station
-    || !isRecord(session)
-    || session.id === undefined
-    || session.id === null
-    || session.station !== station
-    || !['open', 'closed'].includes(session.status)
-    || !['idle', 'opening', 'closing'].includes(session.workflow_state)
+    || !isValidSession(session, station)
   ) {
     throw new Error('Cabinet workflow returned an invalid session response.')
   }
@@ -44,18 +58,15 @@ function validateWorkflowResponse(payload, command, station, expectedMode) {
   return payload
 }
 
-async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardware', station } = {}) {
-  const mockMode = mode === 'mock'
-  const url = mockMode ? '/api/cabinet/workflow/' : workflowUrl
+async function requestWorkflow(command, { signal, fetcher = fetch, station } = {}) {
   const body = command ? { command, station } : null
   let response
   try {
-    response = await fetcher(url, {
+    response = await fetcher(workflowUrl, {
       method: command ? 'POST' : 'GET',
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        ...(mockMode ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       cache: 'no-store',
@@ -63,14 +74,11 @@ async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardw
     })
   } catch (error) {
     if (error.name === 'AbortError') throw error
-    const message = mockMode
-      ? 'Cabinet API unavailable. Check Django and the development proxy.'
-      : 'NFC bridge unavailable. Check the NFC service connection.'
-    throw new Error(message, { cause: error })
+    throw new Error('NFC bridge unavailable. Check the NFC service connection.', { cause: error })
   }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || `Cabinet workflow returned HTTP ${response.status}.`)
-  return validateWorkflowResponse(payload, command, station, mockMode ? 'mock' : 'hardware')
+  return validateWorkflowResponse(payload, command, station, 'hardware')
 }
 
 export function fetchCabinetWorkflow(options) {

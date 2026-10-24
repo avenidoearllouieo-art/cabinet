@@ -1,4 +1,7 @@
-export function resolveNfcMode(configuredMode, isDevelopment = false) {
+export function resolveNfcMode(configuredMode) {
   const mode = String(configuredMode || 'hardware').trim().toLowerCase()
-  return isDevelopment && mode === 'mock' ? 'mock' : 'hardware'
+  if (mode !== 'hardware') {
+    throw new Error(`Unsupported NFC mode "${mode}". Only hardware mode is supported.`)
+  }
+  return mode
 }

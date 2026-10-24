@@ -165,20 +165,6 @@
   margin: 0 auto;
 }
 .home-action { width: 100%; min-height: clamp(104px, 17vh, 180px); font-size: clamp(1.05rem, 1.8vw, 1.4rem); }
-.recovery-panel { width: 100%; text-align: center; }
-.recovery-token {
-  width: min(100%, 520px);
-  margin: 18px auto;
-  padding: 18px 16px;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--accent-border);
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--heading);
-  font-size: 1.6rem;
-  font-weight: 800;
-}
-
 .nfc-ring {
   position: relative;
   display: flex;
@@ -215,38 +201,6 @@
   border-radius: 12px;
   background: #fff;
 }
-.mock-nfc-form {
-  display: grid;
-  gap: 10px;
-  width: min(100%, 520px);
-  margin: 0 auto 18px;
-  text-align: left;
-}
-.mock-nfc-form label {
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-.mock-nfc-controls { display: flex; gap: 10px; }
-.mock-nfc-controls input {
-  min-width: 0;
-  min-height: 60px;
-  flex: 1;
-  padding: 14px 16px;
-  border: 1px solid var(--accent-border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 1.05rem;
-}
-.mock-nfc-controls input:focus,
-.field input:focus {
-  outline: none;
-  border-color: var(--highlight);
-  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.22);
-}
 .student-readout {
   display: grid;
   gap: 4px;
@@ -263,7 +217,6 @@
 
 .status-chip,
 .clock-card,
-.uid-readout,
 .role-chip,
 .participant-card,
 .feedback-banner,
@@ -293,7 +246,6 @@
   background: #f7f9fc;
 }
 .clock-label,
-.uid-label,
 .confirm-row span { color: var(--muted); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; }
 .clock-time { color: var(--heading); font-size: 1.08rem; font-weight: 750; }
 
@@ -332,7 +284,6 @@
   font-size: 1.1rem;
   font-weight: 750;
 }
-.participant-mock-form { width: min(100%, 560px); }
 .registration-link { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 
 .station-grid {
@@ -390,22 +341,6 @@
 .btn.station-button:disabled { border-color: #d5dbe3; background: #edf0f4; color: #64748b; }
 .btn.station-button:disabled small { color: #64748b; }
 
-.form-grid { display: grid; gap: 14px; text-align: left; }
-.field { display: grid; gap: 8px; }
-.field span { color: var(--text); font-weight: 650; }
-.field input {
-  width: 100%;
-  min-height: 58px;
-  padding: 14px 16px;
-  border: 1px solid var(--accent-border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-.uid-readout { display: grid; gap: 4px; margin-bottom: 16px; padding: 14px 16px; text-align: left; }
-.uid-readout strong { color: var(--heading); font-size: 1rem; }
-.uid-readonly { background: var(--accent-soft); }
 .error-banner {
   padding: 14px 16px;
   border: 1px solid rgba(180, 35, 24, 0.25);

@@ -67,7 +67,6 @@ npm install
 Set Cabinet browser build-time values in `cabinet/.env.production` before building:
 
 ```env
-VITE_NFC_MODE=hardware
 VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
 ```
 
@@ -81,6 +80,8 @@ Important:
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
 The current Cabinet integration uses a `MockMotorController` only. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; enabling it makes the NFC service refuse to start in this phase. No serial port is opened and no ESP32 commands are sent.
+
+A successful Django open/close workflow response confirms the server-side session transition only; it does not verify physical shutter movement. Keep TB6600 motor-driver power disconnected until limit switches and an emergency stop are installed. Do not enable motor actuation, upload firmware, or send motor commands in this phase.
 
 Django commits the `finish_open` or `finish_close` session transition before the Pi receives its successful response. The mock dispatch happens afterward and does not change the existing API response, so that response is not evidence of physical movement. The NFC service stores mock motor-action records in its existing SQLite database with a unique workflow-session/station/operation key. On startup, leftover `PENDING` and `DISPATCHED` records become `UNCERTAIN`; they are never retried automatically. Run one `taptrack-nfc.service` process so startup recovery does not classify another live process's action as abandoned. Durable records prevent duplicate dispatch for the same key, but do not prove exactly-once physical execution or shutter position.
 
@@ -125,7 +126,7 @@ npm run build
 ```
 
 The Vite output directory is the default Vite build folder from `cabinet/package.json` and `cabinet/vite.config.js`.
-The `taptrack-cabinet.service` unit rebuilds the UI after loading `/etc/taptrack/cabinet.env`, so its `VITE_NFC_MODE=hardware` and bridge URL are compiled into the served bundle on service restart.
+The `taptrack-cabinet.service` unit rebuilds the UI after loading `/etc/taptrack/cabinet.env`; the bridge URL is compiled into the served bundle on service restart. The Cabinet always uses the hardware NFC bridge and does not accept a mock provider mode.
 
 ## Start the NFC service
 
@@ -247,7 +248,7 @@ journalctl -u taptrack-cabinet.service -f
 journalctl -u taptrack-nfc.service -f
 ```
 
-Check the reader adapter and confirm that `VITE_NFC_MODE=hardware` is set only when the reader is connected.
+Check the reader adapter and confirm that the NFC service is healthy at `http://127.0.0.1:5001/nfc/status`.
 
 ### Django unavailable
 
@@ -278,14 +279,3 @@ The Cabinet should automatically return to the TapTrack landing screen and displ
 - Do not commit production secrets to Git.
 - Do not expose the Django API or database publicly.
 - The scan bridge must remain bound to loopback port 5001; do not bind it to `0.0.0.0`.
-
-## Mock mode for development
-
-For development or laptop testing, use:
-
-```bash
-cd /home/pi/tap-track/cabinet
-VITE_NFC_MODE=mock npm run dev -- --host 0.0.0.0
-```
-
-This keeps the manual mock NFC input available without requiring a Raspberry Pi reader.

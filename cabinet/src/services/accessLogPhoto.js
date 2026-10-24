@@ -1,5 +1,3 @@
-import { resolveNfcMode } from './nfc/nfcMode.js'
-
 const configuredApiBase = import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api'
 export function resolveDjangoApiBase(configuredBase, isDevelopment = false) {
   const base = String(configuredBase || '/api').replace(/\/$/, '')
@@ -13,11 +11,7 @@ const API_BASE_URL = resolveDjangoApiBase(configuredApiBase, import.meta.env?.DE
 const API_URL_BASE = /^https?:\/\//i.test(API_BASE_URL)
   ? `${API_BASE_URL}/`
   : 'http://cabinet.invalid/'
-const NFC_MODE = resolveNfcMode(import.meta.env?.VITE_NFC_MODE, import.meta.env?.DEV === true)
-const photoReadHeaders = {
-  Accept: 'application/json',
-  ...(NFC_MODE === 'mock' ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
-}
+const photoReadHeaders = { Accept: 'application/json' }
 
 export function getDjangoAccessLogEventId(scanEvent) {
   const eventId = Number(scanEvent?.django_response?.event_id)

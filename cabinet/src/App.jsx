@@ -3,54 +3,12 @@ import { QRCodeSVG } from 'qrcode.react'
 import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
-import { resolveNfcMode } from './services/nfc/nfcMode'
 import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchNfcServiceStatus, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
-const NFC_MODE = resolveNfcMode(import.meta.env.VITE_NFC_MODE, import.meta.env.DEV)
-const PI_SERVICE_URL = NFC_MODE === 'mock'
-  ? (import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765')
-  : null
-const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const PHOTO_STATUS_ATTEMPTS = 12
 const PHOTO_STATUS_RETRY_DELAY_MS = 750
-
-async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } catch (error) {
-    if (error.name === 'AbortError') throw new Error('NFC request timed out. Please try again.', { cause: error })
-    throw error
-  } finally {
-    window.clearTimeout(timeoutId)
-  }
-}
-
-async function readApiResponse(response) {
-  const body = await response.text()
-  if (!body.trim()) {
-    return { data: {}, body: '' }
-  }
-
-  try {
-    return { data: JSON.parse(body), body }
-  } catch {
-    return { data: {}, body }
-  }
-}
-
-function getApiErrorMessage(response, data, body) {
-  const detail = data.error || data.detail || data.message
-  if (detail) return `${detail} (HTTP ${response.status})`
-  if (response.status === 401 || response.status === 403) {
-    return `Django rejected the NFC verification request. (HTTP ${response.status})`
-  }
-  if (!body) return `Django returned an empty response. (HTTP ${response.status})`
-  return `Django returned an invalid response. (HTTP ${response.status})`
-}
 
 function IconNFC({ className = 'icon-lg', pulse = false }) {
   return (
@@ -61,14 +19,6 @@ function IconNFC({ className = 'icon-lg', pulse = false }) {
         <path d="M44 32c0-7-5.4-12.6-12-12.6" />
         <path d="M48 32c0-9.7-7.5-17.6-16.8-17.6" />
       </g>
-    </svg>
-  )
-}
-
-function IconSuccess({ className = 'icon-md' }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden>
-      <path d="M20 6L9 17l-5-5" fill="none" stroke="#5ef29b" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -159,12 +109,8 @@ export default function App() {
   const [bridgeConnectionStatus, setBridgeConnectionStatus] = useState('connecting')
   const [workflowLoaded, setWorkflowLoaded] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
-  const [form, setForm] = useState({ fullName: '', studentId: '', email: '', section: '' })
-  const [nfcUid, setNfcUid] = useState('')
   const [serviceStatus, setServiceStatus] = useState(null)
-  const [passwordRecovery, setPasswordRecovery] = useState({ display: null, error: '', busy: false })
   const [accessState, setAccessState] = useState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
-  const [mockNfcUid, setMockNfcUid] = useState('')
   const nfcScanCursorRef = useRef(loadNfcScanCursor())
   const participantsByUidRef = useRef(new Map())
   const closingParticipantsRef = useRef([])
@@ -215,13 +161,13 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetchCabinetWorkflow({ mode: NFC_MODE })
+    fetchCabinetWorkflow()
       .then((data) => {
         if (cancelled) return
         setBridgeConnectionStatus('connected')
         const stations = (data.stations || []).map((item) => item.name)
         setReaderContext({
-          mode: data.mode || NFC_MODE,
+          mode: data.mode,
           cabinetName: data.cabinet_name,
           stations,
         })
@@ -245,7 +191,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (NFC_MODE !== 'hardware' || (view !== 'home' && view !== 'participant-scan' && view !== 'close-scan')) return undefined
+    if (view !== 'home' && view !== 'participant-scan' && view !== 'close-scan') return undefined
 
     let cancelled = false
     let pauseAfterDecision = false
@@ -433,14 +379,7 @@ export default function App() {
   useEffect(() => {
     if (view !== 'status-screen') return undefined
     let cancelled = false
-    const statusRequest = NFC_MODE === 'mock'
-      ? fetch(`${PI_SERVICE_URL}/status`).then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || 'Service unavailable.')
-        return data
-      })
-      : fetchNfcServiceStatus()
-    statusRequest
+    fetchNfcServiceStatus()
       .then((data) => {
         if (!cancelled) setServiceStatus(data)
       })
@@ -468,7 +407,7 @@ export default function App() {
   }
 
   async function refreshCabinetWorkflow() {
-    const state = await fetchCabinetWorkflow({ mode: NFC_MODE })
+    const state = await fetchCabinetWorkflow()
     setCabinetState({
       sessions: (state.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean),
     })
@@ -476,7 +415,7 @@ export default function App() {
 
   function resetToHome() {
     if (selectedSession && selectedSession.workflow_state !== 'idle') {
-      void sendCabinetWorkflow('cancel', { mode: NFC_MODE, station: selectedStation })
+      void sendCabinetWorkflow('cancel', { station: selectedStation })
         .then(refreshCabinetWorkflow)
         .catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
     }
@@ -495,7 +434,6 @@ export default function App() {
     photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Ready for the next cabinet session.')
-    setNfcUid('')
   }
 
   function startOpenSession() {
@@ -529,7 +467,7 @@ export default function App() {
       setView('close-select')
       return
     }
-    setStatusMessage('Choose an active mock station to close.')
+    setStatusMessage('Choose a station to close.')
     setView('close-select')
   }
 
@@ -567,7 +505,7 @@ export default function App() {
 
     try {
       if (!workflowLoaded) throw new Error('Loading configured stations...')
-      const data = await sendCabinetWorkflow('open', { mode: NFC_MODE, station })
+      const data = await sendCabinetWorkflow('open', { station })
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setSelectedStation(data.station)
@@ -606,7 +544,7 @@ export default function App() {
       return
     }
     try {
-      const data = await sendCabinetWorkflow('start_close', { mode: NFC_MODE, station })
+      const data = await sendCabinetWorkflow('start_close', { station })
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setSelectedStation(data.station)
@@ -626,30 +564,6 @@ export default function App() {
     return isSessionMember(selectedSession, { uid, studentId })
   }
 
-  function recordClosingParticipant(participant) {
-    const result = recordClosingAttendance(selectedSession, closingParticipantsRef.current, participant)
-    if (result.status === 'rejected') return false
-    if (result.status === 'duplicate') {
-      setScanFeedback({ type: 'duplicate', message: 'Already scanned for closing', participant: result.participant })
-      setStatusMessage(`${result.participant.fullName || 'This member'} is already in closing attendance.`)
-      return true
-    }
-
-    const nextParticipants = result.attendance
-    closingParticipantsRef.current = nextParticipants
-    setClosingParticipants(nextParticipants)
-    setScanFeedback({ type: 'success', message: 'Closing attendance recorded', participant })
-    setStatusMessage(`${participant.fullName || 'Member'} added to closing attendance (${nextParticipants.length}).`)
-    setAccessState({ status: 'success', name: participant.fullName || '', studentId: participant.studentId || '', role: 'student', message: '' })
-    return true
-  }
-
-  function rejectCloseAttempt(student = 'Unknown NFC card') {
-    setCloseRejectedStudent(student)
-    setErrorMessage('')
-    setView('close-not-authorized')
-  }
-
   function retryCloseScan() {
     setCloseRejectedStudent('')
     setScanFeedback(null)
@@ -657,18 +571,7 @@ export default function App() {
     photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Tap NFC cards to record closing attendance.')
-    setMockNfcUid('')
     setView('close-scan')
-  }
-
-  function showUnregisteredCard(uid, url) {
-    const registrationUrl = url
-    setPendingRegistration({ uid, registrationUrl })
-    setAccessState({ status: 'registration', name: '', studentId: '', role: '', message: 'Please scan this QR code to register your card.', registrationUrl })
-    setScanFeedback(null)
-    setErrorMessage('')
-    setStatusMessage('This NFC card is not linked to a student.')
-    setView('unregistered-card')
   }
 
   function openRegistrationPage() {
@@ -693,123 +596,6 @@ export default function App() {
     setView('participant-scan')
   }
 
-  async function handleCardScan(uidOverride) {
-    const openingScan = view === 'participant-scan' && pendingAction === 'open'
-    const closingScan = view === 'close-scan' && pendingAction === 'close'
-    if (NFC_MODE !== 'mock' || (!openingScan && !closingScan)) return
-    setErrorMessage('')
-    setStatusMessage('Waiting for the mock NFC service to verify the card...')
-
-    try {
-      const mockUid = String(uidOverride ?? mockNfcUid ?? '').trim()
-      setMockNfcUid('')
-      let data
-      let scanUid
-      if (mockUid) {
-        const response = await fetchWithTimeout('/api/verify-nfc/', {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-TapTrack-Mock-Mode': 'true',
-          },
-          body: JSON.stringify({ nfc_uid: mockUid, station: selectedStation }),
-        })
-        const result = await readApiResponse(response)
-        data = result.data
-        if (response.status === 404 && data.registration_required && data.registration_url) {
-          requestScanPhotoCapture({ django_response: data })
-          loadScanPhoto({ django_response: data })
-          if (closingScan) rejectCloseAttempt('Unknown NFC card')
-          else showUnregisteredCard(mockUid, data.registration_url)
-          return
-        }
-        if (!response.ok || !data.success) {
-          throw new Error(getApiErrorMessage(response, data, result.body))
-        }
-        scanUid = mockUid
-      } else {
-        const response = await fetch(`${PI_SERVICE_URL}/cabinet/mock-access`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        })
-        data = await response.json()
-        if (!response.ok || !data.success) {
-          if (data.registration_required && data.registration_url) {
-            if (closingScan) rejectCloseAttempt('Unknown NFC card')
-            else showUnregisteredCard('', data.registration_url)
-            return
-          }
-          throw new Error(data.error || 'NFC verification failed.')
-        }
-        scanUid = data.student_id || data.name
-      }
-
-      requestScanPhotoCapture({ django_response: data })
-      loadScanPhoto({ django_response: data })
-
-      const nextUid = scanUid || data.student_id || data.name
-      const normalizedUser = {
-        uid: nextUid,
-        fullName: data.name || 'Verified student',
-        studentId: data.student_id || 'Student ID unavailable',
-        section: '',
-      }
-
-      if (String(data.role || '').trim().toLowerCase() !== 'student') {
-        if (closingScan) {
-          rejectCloseAttempt(normalizedUser.fullName || 'Unknown NFC card')
-          return
-        }
-        setScanFeedback({ type: 'warning', message: 'Only student cards can join', participant: null })
-        setStatusMessage('Use a student card for this group.')
-        return
-      }
-
-      if (closingScan) {
-        if (isActiveSessionMember(nextUid, normalizedUser.studentId)) {
-          recordClosingParticipant(normalizedUser)
-          setCloseRejectedStudent('')
-          setErrorMessage('')
-        } else {
-          rejectCloseAttempt(normalizedUser.fullName || normalizedUser.studentId)
-        }
-        return
-      }
-
-      const alreadyAdded = participantsByUidRef.current.has(nextUid)
-        || participants.some((participant) => participant.uid === nextUid)
-      if (alreadyAdded) {
-        setScanFeedback({ type: 'duplicate', message: 'Already scanned', participant: normalizedUser })
-        setErrorMessage('')
-        setStatusMessage(`${normalizedUser.fullName} is already in this session.`)
-        return
-      }
-
-    const newParticipant = {
-      uid: nextUid,
-      fullName: normalizedUser.fullName,
-      studentId: normalizedUser.studentId,
-      section: normalizedUser.section,
-    }
-
-    participantsByUidRef.current.set(nextUid, newParticipant)
-    setParticipants((current) => [...current, newParticipant])
-    setAccessState({ status: 'success', name: normalizedUser.fullName, studentId: normalizedUser.studentId, role: data.role, message: '' })
-    setScanFeedback({ type: 'success', message: 'Participant added', participant: newParticipant })
-    setErrorMessage('')
-    setStatusMessage('Participant added successfully.')
-    } catch (error) {
-      if (closingScan) {
-        rejectCloseAttempt('Unknown or unverified NFC card')
-        return
-      }
-      setErrorMessage(error.message || 'NFC verification failed. Please try again.')
-      setScanFeedback({ type: 'warning', message: 'NFC verification failed', participant: null })
-      setStatusMessage('The mock NFC service could not verify the card.')
-    }
-  }
 
   function continueToConfirmation() {
     if (participants.length === 0) {
@@ -838,7 +624,7 @@ export default function App() {
         return
       }
       try {
-        const data = await sendCabinetWorkflow('finish_open', { mode: NFC_MODE, station: selectedStation })
+        const data = await sendCabinetWorkflow('finish_open', { station: selectedStation })
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
         setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}. Physical shutter movement was not verified.`)
@@ -864,7 +650,7 @@ export default function App() {
     }
 
     try {
-      const data = await sendCabinetWorkflow('finish_close', { mode: NFC_MODE, station: selectedStation })
+      const data = await sendCabinetWorkflow('finish_close', { station: selectedStation })
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
@@ -874,126 +660,6 @@ export default function App() {
       setErrorMessage(error.message || 'The cabinet session could not be closed.')
     }
   }
-
-  async function handleRegistrationSubmit(event) {
-    event.preventDefault()
-
-    if (!nfcUid) {
-      setErrorMessage('A tapped card is required before registration can proceed.')
-      return
-    }
-
-    if (!form.fullName.trim() || !form.studentId.trim() || !form.section.trim()) {
-      setErrorMessage('Please complete all registration fields.')
-      return
-    }
-
-    if (!form.email.trim()) {
-      setErrorMessage('Please enter an email address for the Django account.')
-      return
-    }
-
-    try {
-      const response = await fetch(`${PI_SERVICE_URL}/cabinet/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: form.fullName.trim(),
-          student_id: form.studentId.trim(),
-          email: form.email.trim(),
-          section: form.section.trim(),
-        }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Card registration could not be completed.')
-      setStatusMessage('Card registered in Django successfully.')
-      setErrorMessage('')
-      setView('registration-success')
-    } catch (error) {
-      setErrorMessage(error.message || 'The mock Pi service is unavailable.')
-    }
-  }
-
-  async function captureMockCard() {
-    try {
-      const response = await fetch(`${PI_SERVICE_URL}/cabinet/mock-capture`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      if (!response.ok) throw new Error('The mock NFC service is unavailable.')
-      setNfcUid('captured by mock Pi service')
-      setErrorMessage('')
-    } catch (error) {
-      setErrorMessage(error.message || 'The mock NFC service is unavailable.')
-    }
-  }
-
-  function startPasswordRecovery() {
-    setPasswordRecovery({ display: null, error: '', busy: false })
-    setView('password-recovery')
-  }
-
-  async function sendMockRecoveryScan() {
-    setPasswordRecovery((current) => ({ ...current, busy: true, error: '' }))
-    try {
-      const response = await fetch(`${PI_SERVICE_URL}/password-reset/mock-scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      if (!response.ok) throw new Error('Mock NFC scan was rejected.')
-    } catch {
-      setPasswordRecovery((current) => ({ ...current, busy: false, error: 'NFC verification failed. Make sure the mock Pi service has an active reset request.' }))
-    }
-  }
-
-  async function retryPasswordRecovery() {
-    setPasswordRecovery((current) => ({ ...current, busy: true, error: '' }))
-    try {
-      const response = await fetch(`${PI_SERVICE_URL}/password-reset/retry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      if (!response.ok) throw new Error('Recovery retry was rejected.')
-    } catch {
-      setPasswordRecovery((current) => ({ ...current, busy: false, error: 'The recovery service is unavailable. Please start a new reset request.' }))
-    }
-  }
-
-  async function finishPasswordRecovery() {
-    try {
-      await fetch(`${PI_SERVICE_URL}/password-reset/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-    } catch {
-      // Returning home is still safe; the short-lived display state remains local to the mock service.
-    }
-    setPasswordRecovery({ display: null, error: '', busy: false })
-    resetToHome()
-  }
-
-  useEffect(() => {
-    if (view !== 'password-recovery') return undefined
-
-    let cancelled = false
-    const pollDisplay = async () => {
-      try {
-        const response = await fetch(`${PI_SERVICE_URL}/password-reset/display`)
-        if (!response.ok) throw new Error('Display state unavailable.')
-        const display = await response.json()
-        if (!cancelled) setPasswordRecovery((current) => ({ ...current, display, busy: false }))
-      } catch {
-        if (!cancelled) setPasswordRecovery((current) => ({ ...current, error: 'The mock Pi service is unavailable. Start it before scanning.', busy: false }))
-      }
-    }
-
-    pollDisplay()
-    const intervalId = window.setInterval(pollDisplay, 700)
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
-  }, [view])
 
   return (
     <div className="app-root">
@@ -1005,13 +671,11 @@ export default function App() {
               <div className="title-block">
                 <h1 className="title">Cabinet Management</h1>
                 <p className="muted" role="status">
-                  {NFC_MODE === 'mock'
-                    ? 'Mock NFC test mode (development).'
-                    : bridgeConnectionStatus === 'connected'
-                      ? 'Connected to the real NFC bridge.'
-                      : bridgeConnectionStatus === 'unavailable'
-                        ? 'NFC bridge unavailable. Check the NFC service connection.'
-                        : 'Connecting to the NFC bridge…'}
+                  {bridgeConnectionStatus === 'connected'
+                    ? 'Connected to the real NFC bridge.'
+                    : bridgeConnectionStatus === 'unavailable'
+                      ? 'NFC bridge unavailable. Check the NFC service connection.'
+                      : 'Connecting to the NFC bridge…'}
                 </p>
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
@@ -1038,7 +702,6 @@ export default function App() {
               <button className="btn primary home-action" onClick={startOpenSession}>OPEN CABINET</button>
               <button className="btn secondary home-action" onClick={startCloseSession}>CLOSE CABINET</button>
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
-              {NFC_MODE === 'mock' && <button className="btn ghost home-action" onClick={startPasswordRecovery}>Password Recovery</button>}
             </div>
             {errorMessage && <div className="error-banner" role="alert">{errorMessage}</div>}
           </div>
@@ -1101,15 +764,7 @@ export default function App() {
                 ))}
             </div>
             {errorMessage && <div className="error-banner">{errorMessage}</div>}
-            {NFC_MODE === 'mock'
-              ? <form className="mock-nfc-form participant-mock-form" onSubmit={(event) => { event.preventDefault(); void handleCardScan() }}>
-                <label htmlFor="close-mock-nfc-uid">Mock NFC UID</label>
-                <div className="mock-nfc-controls">
-                  <input id="close-mock-nfc-uid" value={mockNfcUid} onChange={(event) => setMockNfcUid(event.target.value)} placeholder="Enter a session member's UID" autoComplete="off" />
-                  <button className="btn primary" type="submit">CHECK NFC</button>
-                </div>
-              </form>
-              : <div className="scan-prompt" role="status">Tap member NFC cards on the NFC reader to record closing attendance.</div>}
+            <div className="scan-prompt" role="status">Tap member NFC cards on the NFC reader to record closing attendance.</div>
             <div className="button-row stacked">
               <button className="btn primary" onClick={continueToCloseConfirmation} disabled={closingParticipants.length === 0}>CLOSE CABINET</button>
               <button className="btn ghost" onClick={() => setView('close-select')}>CANCEL</button>
@@ -1205,95 +860,13 @@ export default function App() {
         </Screen>
       )}
 
-      {NFC_MODE === 'mock' && view === 'password-recovery' && (
-        <Screen>
-          <div className="panel recovery-panel">
-            {passwordRecovery.display?.state === 'code' ? (
-              <>
-                <div className="success-badge"><IconSuccess className="icon-md" /></div>
-                <h2>PASSWORD RESET CODE</h2>
-                <p className="muted">Your one-time reset code:</p>
-                <div className="recovery-token" aria-label="One-time reset code">{passwordRecovery.display.reset_token}</div>
-                <p className="muted">Enter this code on the Password Recovery page.<br />This code expires soon.</p>
-                <div className="button-row"><button className="btn primary" onClick={finishPasswordRecovery}>Done</button></div>
-              </>
-            ) : (
-              <>
-                <div className="nfc-ring small-ring"><IconNFC pulse /></div>
-                <h2>PASSWORD RECOVERY</h2>
-                <p className="muted">Please tap your registered NFC card<br />to verify your identity.</p>
-                {passwordRecovery.display?.state === 'error' && <div className="error-banner">{passwordRecovery.display.message}</div>}
-                {passwordRecovery.error && <div className="error-banner">{passwordRecovery.error}</div>}
-                <div className="button-row stacked">
-                  <button className="btn primary scan-action" onClick={sendMockRecoveryScan} disabled={passwordRecovery.busy}>Tap NFC Card</button>
-                  {(passwordRecovery.display?.state === 'error' || passwordRecovery.error) && <button className="btn secondary" onClick={retryPasswordRecovery} disabled={passwordRecovery.busy}>Try Again</button>}
-                  <button className="btn ghost" onClick={finishPasswordRecovery} disabled={passwordRecovery.busy}>Cancel</button>
-                </div>
-              </>
-            )}
-          </div>
-        </Screen>
-      )}
-
-      {NFC_MODE === 'mock' && view === 'register-card' && (
-        <Screen>
-          <div className="panel form-panel">
-            <h2>Register Card</h2>
-            <p className="muted">Capture a mock card and save the student account through Django.</p>
-            <div className="uid-readout uid-readonly">
-              <span className="uid-label">Captured NFC UID</span>
-              <strong>{nfcUid || 'Tap a card to capture a UID'}</strong>
-            </div>
-            <form className="form-grid" onSubmit={handleRegistrationSubmit}>
-              <label className="field">
-                <span>Full Name</span>
-                <input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Enter full name" />
-              </label>
-              <label className="field">
-                <span>Student ID</span>
-                <input value={form.studentId} onChange={(event) => setForm((current) => ({ ...current, studentId: event.target.value }))} placeholder="Enter student ID" />
-              </label>
-              <label className="field">
-                <span>Email</span>
-                <input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} placeholder="Enter account email" />
-              </label>
-              <label className="field">
-                <span>Section</span>
-                <input value={form.section} onChange={(event) => setForm((current) => ({ ...current, section: event.target.value }))} placeholder="Enter section" />
-              </label>
-              {errorMessage && <div className="error-banner">{errorMessage}</div>}
-              <div className="button-row">
-                <button className="btn primary" type="button" onClick={captureMockCard}>Capture Card</button>
-                <button className="btn primary" type="submit" disabled={!nfcUid}>Save Card</button>
-              </div>
-              <button className="btn ghost" type="button" onClick={resetToHome}>Back</button>
-            </form>
-          </div>
-        </Screen>
-      )}
-
-      {view === 'registration-success' && (
-        <Screen>
-          <div className="panel status-panel success-panel">
-            <div className="success-badge">
-              <IconSuccess className="icon-md" />
-            </div>
-            <h2>Card Registered</h2>
-            <p className="muted">The new student profile is ready for the next NFC scan.</p>
-            <div className="button-row">
-              <button className="btn primary" onClick={resetToHome}>Back to Home</button>
-            </div>
-          </div>
-        </Screen>
-      )}
-
       {view === 'station-select' && (
         <Screen>
           <div className="panel">
             <h2>Select Station</h2>
             {!workflowLoaded && <div className="empty-state" role="status">Loading configured stations...</div>}
             {workflowLoaded && readerStations.length === 0 && (
-              <div className="empty-state" role="status">No mock stations are configured.</div>
+              <div className="empty-state" role="status">No stations are configured.</div>
             )}
             <div className="station-grid">
               {readerStations.map((station) => {
@@ -1454,18 +1027,7 @@ export default function App() {
             </div>
 
             <div className="button-row stacked">
-              {NFC_MODE === 'mock'
-                ? <>
-                  <form className="mock-nfc-form participant-mock-form" onSubmit={(event) => { event.preventDefault(); void handleCardScan() }}>
-                    <label htmlFor="participant-mock-nfc-uid">Mock NFC UID</label>
-                    <div className="mock-nfc-controls">
-                      <input id="participant-mock-nfc-uid" value={mockNfcUid} onChange={(event) => setMockNfcUid(event.target.value)} placeholder="Enter a student UID" autoComplete="off" />
-                      <button className="btn primary" type="submit">CHECK NFC</button>
-                    </div>
-                  </form>
-                  <button className="btn secondary scan-action" onClick={() => { setMockNfcUid(''); void handleCardScan('') }}>Use Pi mock reader</button>
-                </>
-                : <div className="scan-prompt" role="status">Tap a student NFC card on the NFC reader…</div>}
+              <div className="scan-prompt" role="status">Tap a student NFC card on the NFC reader…</div>
               <div className="button-row inline">
                 <button className="btn secondary" onClick={continueToConfirmation}>CONTINUE</button>
                 <button className="btn ghost" onClick={resetToHome}>CANCEL</button>
@@ -1590,15 +1152,8 @@ export default function App() {
         <Screen>
           <div className="panel">
             <h2>Cabinet Status</h2>
-            <p className="muted">{NFC_MODE === 'mock' ? 'Local cabinet session history.' : 'Current cabinet state and session history.'}</p>
-              {NFC_MODE === 'mock' && serviceStatus && (
-              <div className="status-card">
-                <strong>Mock Pi service: {serviceStatus.mode}</strong>
-                <p>Django API: {serviceStatus.django_api || 'unavailable'}</p>
-                <small>Physical hardware: {serviceStatus.physical_hardware || 'not connected'} · Cabinet actions: {serviceStatus.cabinet_actions || 'mock only'}</small>
-              </div>
-            )}
-            {NFC_MODE === 'hardware' && serviceStatus && (
+            <p className="muted">Current cabinet state and session history.</p>
+            {serviceStatus && (
               <div className="status-card" role="status">
                 <strong>NFC bridge: {serviceStatus.service === 'ready' ? 'Connected' : 'Unavailable'}</strong>
                 {serviceStatus.reader_connected !== undefined && (

@@ -13,12 +13,14 @@ function jsonResponse(payload, status = 200) {
   }
 }
 
-function createFetchForStation(station, djangoEventId, { photoAvailable = false } = {}) {
+function createFetchForStation(station, djangoEventId, { photoAvailable = false, unregistered = false } = {}) {
   let photoStatusReads = 0
+  let workflowStarted = false
   const fetcher = vi.fn(async (url, options = {}) => {
-    if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+    const requestUrl = String(url)
+    if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method !== 'POST') {
       return jsonResponse({
-        mode: 'mock',
+        mode: 'hardware',
         cabinet_name: 'Cabinet 1',
         stations: ['Station 1', 'Station 2'].map((name) => ({
           name,
@@ -27,8 +29,9 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
         })),
       })
     }
-    if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+    if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST') {
       const request = JSON.parse(options.body)
+      if (request.command === 'open') workflowStarted = true
       const workflowState = {
         open: ['open', 'opening'],
         finish_open: ['open', 'idle'],
@@ -37,7 +40,7 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
         cancel: ['closed', 'opening'],
       }[request.command] || ['open', 'idle']
       return jsonResponse({
-        mode: 'mock',
+        mode: 'hardware',
         station: request.station,
         session: {
           id: `session-${request.station}`,
@@ -45,25 +48,38 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
           status: workflowState[0],
           workflow_state: workflowState[1],
           opened_by: [],
+          closed_by: [],
         },
       })
     }
-    if (url === '/api/verify-nfc/') {
+    if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      const after = Number(new URL(requestUrl).searchParams.get('after'))
+      const events = workflowStarted && after < 1
+        ? [{
+          event_id: 1,
+          uid: `REAL-BRIDGE-${station.replace(' ', '-')}`,
+          status: unregistered ? 'unregistered' : 'registered',
+          name: `${station} Student`,
+          student_id: `${station.replace(' ', '')}-STUDENT`,
+          role: 'student',
+          ...(unregistered ? {
+            registration_required: true,
+            registration_url: 'https://portal.example/register?token=fixture-token',
+          } : {}),
+          django_response: { event_id: djangoEventId },
+        }]
+        : []
       return jsonResponse({
-        success: true,
-        event_id: djangoEventId,
-        nfc_uid: `UID-${station.replace(' ', '-')}`,
-        name: `${station} Student`,
-        student_id: `${station.replace(' ', '')}-STUDENT`,
-        role: 'student',
-        station: { name: station },
+        events,
+        next_cursor: events.length ? 1 : after,
+        has_more: false,
       })
     }
-    if (url === 'http://127.0.0.1:5001/photo/capture') {
+    if (requestUrl === 'http://127.0.0.1:5001/photo/capture') {
       const request = JSON.parse(options.body)
       return jsonResponse({ success: true, event_id: request.event_id })
     }
-    if (url === `/api/access-logs/${djangoEventId}/photo/`) {
+    if (requestUrl === `/api/access-logs/${djangoEventId}/photo/`) {
       if (photoAvailable) {
         photoStatusReads += 1
         return jsonResponse(photoStatusReads === 1
@@ -82,7 +98,7 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
       }
       return jsonResponse({ error: 'Photo service unavailable.' }, 503)
     }
-    if (url === `/api/access-logs/${djangoEventId}/photo/image/`) {
+    if (requestUrl === `/api/access-logs/${djangoEventId}/photo/image/`) {
       return {
         ok: true,
         status: 200,
@@ -96,10 +112,12 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
 }
 
 function createFetchForCloseStation(djangoEventId, memberUid) {
+  let closingStarted = false
   return vi.fn(async (url, options = {}) => {
-    if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+    const requestUrl = String(url)
+    if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method !== 'POST') {
       return jsonResponse({
-        mode: 'mock',
+        mode: 'hardware',
         cabinet_name: 'Cabinet 1',
         stations: [
           { name: 'Station 1', status: 'available', session: null },
@@ -118,9 +136,10 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
         ],
       })
     }
-    if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+    if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST') {
+      if (JSON.parse(options.body).command === 'start_close') closingStarted = true
       return jsonResponse({
-        mode: 'mock',
+        mode: 'hardware',
         station: 'Station 2',
         session: {
           id: 'session-Station 2',
@@ -132,22 +151,30 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
         },
       })
     }
-    if (url === '/api/verify-nfc/') {
+    if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      const after = Number(new URL(requestUrl).searchParams.get('after'))
+      const events = closingStarted && after < 1
+        ? [{
+          event_id: 1,
+          uid: memberUid,
+          status: 'registered',
+          name: 'Station 2 Student',
+          student_id: 'Station2-STUDENT',
+          role: 'student',
+          django_response: { event_id: djangoEventId },
+        }]
+        : []
       return jsonResponse({
-        success: true,
-        event_id: djangoEventId,
-        nfc_uid: memberUid,
-        name: 'Station 2 Student',
-        student_id: 'Station2-STUDENT',
-        role: 'student',
-        station: { name: 'Station 2' },
+        events,
+        next_cursor: events.length ? 1 : after,
+        has_more: false,
       })
     }
-    if (url === 'http://127.0.0.1:5001/photo/capture') {
+    if (requestUrl === 'http://127.0.0.1:5001/photo/capture') {
       const request = JSON.parse(options.body)
       return jsonResponse({ success: true, event_id: request.event_id })
     }
-    if (url === `/api/access-logs/${djangoEventId}/photo/`) {
+    if (requestUrl === `/api/access-logs/${djangoEventId}/photo/`) {
       return jsonResponse({ error: 'Photo service unavailable.' }, 503)
     }
     throw new Error(`Unexpected Cabinet close integration request: ${url}`)
@@ -173,8 +200,6 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText(station.toUpperCase()).closest('button'))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), `UID-${station.replace(' ', '-')}`)
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
 
     await waitFor(() => expect(screen.getAllByText(`${station} Student`).length).toBeGreaterThanOrEqual(2))
     expect(await screen.findByText('Participants scanned: 1')).toBeTruthy()
@@ -185,7 +210,7 @@ describe('Cabinet photo scan integration', () => {
       expect.objectContaining({
         method: 'GET',
         credentials: 'same-origin',
-        headers: expect.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
+        headers: expect.not.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
       }),
     ))
     expect(screen.queryByRole('alert')).toBeNull()
@@ -207,8 +232,6 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText('STATION 1').closest('button'))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), 'CABINET-OPEN-STUDENT')
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
 
     expect(await screen.findByRole('img', { name: 'Captured access event' })).toBeTruthy()
     expect(fetcher).toHaveBeenCalledWith(
@@ -229,8 +252,6 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText('STATION 1').closest('button'))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), 'OPEN-WORKFLOW-STUDENT')
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
     await user.click(await screen.findByRole('button', { name: 'CONTINUE' }))
     await user.click(await screen.findByRole('button', { name: 'OPEN CABINET' }))
 
@@ -240,30 +261,48 @@ describe('Cabinet photo scan integration', () => {
 
   it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {
     const registrationUrl = 'http://10.109.175.241:5177/register?token=enrollment-token-123'
+    let workflowStarted = false
     const fetcher = vi.fn(async (url, options = {}) => {
-      if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method !== 'POST') {
         return jsonResponse({
-          mode: 'mock',
+          mode: 'hardware',
           cabinet_name: 'Cabinet 1',
           stations: ['Station 1', 'Station 2'].map((name) => ({ name, status: 'available', session: null })),
         })
       }
-      if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST') {
         const request = JSON.parse(options.body)
+        if (request.command === 'open') workflowStarted = true
         return jsonResponse({
-          mode: 'mock',
+          mode: 'hardware',
           station: request.station,
           session: {
             id: `session-${request.station}`,
             station: request.station,
             status: 'open',
             workflow_state: 'opening',
+            opened_by: [],
+            closed_by: [],
           },
         })
       }
-      if (url === '/api/verify-nfc/') {
-        return jsonResponse({ registration_required: true, registration_url: registrationUrl }, 404)
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const events = workflowStarted && after < 1
+          ? [{
+            event_id: 1,
+            uid: 'UNREGISTERED-TEST-FIXTURE',
+            status: 'unregistered',
+            registration_required: true,
+            registration_url: registrationUrl,
+            django_response: { event_id: 5101 },
+          }]
+          : []
+        return jsonResponse({ events, next_cursor: events.length ? 1 : after, has_more: false })
       }
+      if (requestUrl === 'http://127.0.0.1:5001/photo/capture') return jsonResponse({ success: true, event_id: 5101 })
+      if (requestUrl === '/api/access-logs/5101/photo/') return jsonResponse({ error: 'Photo unavailable.' }, 503)
       throw new Error(`Unexpected Cabinet integration request: ${url}`)
     })
     vi.stubGlobal('fetch', fetcher)
@@ -272,10 +311,8 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText('STATION 1').closest('button'))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), 'UNREGISTERED-CARD')
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
 
-    expect(container.querySelector('.registration-qr svg')).toBeTruthy()
+    await waitFor(() => expect(container.querySelector('.registration-qr svg')).toBeTruthy())
     await user.click(await screen.findByRole('button', { name: 'REGISTER THIS CARD' }))
     const registrationFrame = screen.getByTitle('NFC card registration')
     expect(registrationFrame.getAttribute('src')).toBe(registrationUrl)
@@ -291,8 +328,6 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /close cabinet/i }))
     await user.click(await screen.findByRole('button', { name: /close station 2/i }))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), memberUid)
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
 
     await waitFor(() => expect(screen.getAllByText('Closed by').length).toBe(2))
     const closedCountRow = screen.getAllByText('Closed by')[0].closest('.confirm-row')
@@ -303,7 +338,7 @@ describe('Cabinet photo scan integration', () => {
       expect.objectContaining({
         method: 'GET',
         credentials: 'same-origin',
-        headers: expect.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
+        headers: expect.not.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
       }),
     )
     expect(screen.queryByRole('alert')).toBeNull()
@@ -320,10 +355,12 @@ describe('Cabinet photo scan integration', () => {
       opened_by: [member],
       closed_by: [],
     }
+    let closingStarted = false
     const fetcher = vi.fn(async (url, options = {}) => {
-      if (url === '/api/cabinet/workflow/' && options.method !== 'POST') {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method !== 'POST') {
         return jsonResponse({
-          mode: 'mock',
+          mode: 'hardware',
           cabinet_name: 'Cabinet 1',
           stations: [
             { name: 'Station 1', status: 'available', session: null },
@@ -331,24 +368,31 @@ describe('Cabinet photo scan integration', () => {
           ],
         })
       }
-      if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST') {
         const { command } = JSON.parse(options.body)
+        if (command === 'start_close') closingStarted = true
         const session = command === 'finish_close'
           ? { ...openedSession, status: 'closed', workflow_state: 'idle', closed_at: '2026-10-15T10:30:00Z', closed_by: [member] }
           : { ...openedSession, workflow_state: 'closing' }
-        return jsonResponse({ mode: 'mock', station: 'Station 2', session })
+        return jsonResponse({ mode: 'hardware', station: 'Station 2', session })
       }
-      if (url === '/api/verify-nfc/') {
-        return jsonResponse({
-          success: true,
-          event_id: 6202,
-          nfc_uid: member.uid,
-          name: member.fullName,
-          student_id: member.studentId,
-          role: 'student',
-        })
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const events = closingStarted && after < 1
+          ? [{
+            event_id: 1,
+            uid: member.uid,
+            status: 'registered',
+            name: member.fullName,
+            student_id: member.studentId,
+            role: 'student',
+            django_response: { event_id: 6202 },
+          }]
+          : []
+        return jsonResponse({ events, next_cursor: events.length ? 1 : after, has_more: false })
       }
-      if (url === '/api/access-logs/6202/photo/') return jsonResponse({ error: 'Photo service unavailable.' }, 503)
+      if (requestUrl === 'http://127.0.0.1:5001/photo/capture') return jsonResponse({ success: true, event_id: 6202 })
+      if (requestUrl === '/api/access-logs/6202/photo/') return jsonResponse({ error: 'Photo service unavailable.' }, 503)
       throw new Error(`Unexpected Cabinet integration request: ${url}`)
     })
     vi.stubGlobal('fetch', fetcher)
@@ -357,8 +401,6 @@ describe('Cabinet photo scan integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /close cabinet/i }))
     await user.click(await screen.findByRole('button', { name: /close station 2/i }))
-    await user.type(await screen.findByLabelText('Mock NFC UID'), member.uid)
-    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
     await user.click(await screen.findByRole('button', { name: 'CLOSE CABINET' }))
     await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 2' }))
 

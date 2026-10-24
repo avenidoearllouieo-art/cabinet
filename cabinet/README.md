@@ -2,7 +2,7 @@
 
 ## Raspberry Pi preparation
 
-This is the official Raspberry Pi Cabinet touchscreen UI, built with React 19 and Vite 8. In hardware mode it reads verification results from the Pi-local scan bridge; it does not submit real NFC UIDs to Django.
+This is the official Raspberry Pi Cabinet touchscreen UI, built with React 19 and Vite 8. It reads verification results from the Pi-local NFC scan bridge, which forwards real NFC scans and cabinet workflow requests to the configured Django API. The browser never receives the server-side device API key.
 
 Requirements: Raspberry Pi OS 64-bit recommended, Node.js 22.12 or newer, npm 10 or newer, a browser for the LCD, and network access to the computer running Django.
 
@@ -13,11 +13,11 @@ node --version
 npm --version
 ```
 
-Use `/home/pi/apps/taptrack-cabinet` on the Pi for the full repository. Clone the repository there, then run:
+Use `/home/pi/tap-track` on the Pi; the systemd units in `pi_service/deploy` use this checkout. Clone the repository there, then run:
 
 ```bash
-git clone <your-repository-url> /home/pi/apps/taptrack-cabinet
-cd /home/pi/apps/taptrack-cabinet/cabinet
+git clone <your-repository-url> /home/pi/tap-track
+cd /home/pi/tap-track/cabinet
 npm install
 ```
 
@@ -37,17 +37,16 @@ nvm install 22.12.0
 nvm alias default 22.12.0
 ```
 
-Create `.env.production` in `/home/pi/apps/taptrack-cabinet/cabinet`:
+Create `.env.production` in `/home/pi/tap-track/cabinet`:
 
 ```env
-VITE_NFC_MODE=hardware
 VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
 ```
 
 The Cabinet uses the registration URL returned by Django without rewriting its host or token. Configure `TAPTRACK_NFC_REGISTRATION_URL_BASE` in `backend/.env` as documented in the root README. Build and run:
 
 ```bash
-cd /home/pi/apps/taptrack-cabinet/cabinet
+cd /home/pi/tap-track/cabinet
 npm run build
 npm run preview
 ```
@@ -61,7 +60,7 @@ chromium --kiosk --app=http://127.0.0.1:4000
 Start the registration Portal so phones on the same Wi-Fi can reach it:
 
 ```bash
-cd /home/pi/apps/taptrack-cabinet/frontend
+cd /home/pi/tap-track/frontend
 npm install
 npm run dev -- --host 0.0.0.0 --port 5177
 ```
@@ -73,7 +72,7 @@ On the Django computer, configure one device key mapped to the Cabinet in `TAPTR
 The NFC service uses only Python's standard library, so no Python package installation is required. From the copied repository, run it separately from the Cabinet UI:
 
 ```bash
-cd /home/pi/apps/taptrack-cabinet/pi_service
+cd /home/pi/tap-track/pi_service
 export TAPTRACK_NFC_MODE=production
 export TAPTRACK_NFC_BIND_HOST=127.0.0.1
 export TAPTRACK_NFC_PORT=5000
@@ -82,33 +81,11 @@ python3 nfc_service.py
 
 The NFC service reads the card, sends the UID to Django with its server-side device key, and exposes scan results and workflow commands through its localhost bridge. Django derives the station and cabinet from the authenticated reader identity and owns the active session.
 
-For local mock development, use `npm run dev` from `cabinet`. The Vite development proxy may use `DEVICE_API_KEY` from the local backend environment; it is not included in production browser assets. Hardware mode reads only from the local bridge.
+The Cabinet UI has no mock NFC mode or manual UID entry. Automated tests use isolated fake providers; normal users must scan a real card on the NFC reader.
 
 The hardware bridge contract is `GET http://127.0.0.1:5001/api/scans?after=<event_id>&limit=50` and `GET/POST http://127.0.0.1:5001/cabinet/workflow`. The browser sends only workflow commands to the local Pi bridge; it does not send audit fields or receive the device API key.
 
-## Browser mock NFC registration test
-
-For laptop testing, start Django and the Portal development server first. Seed the existing test roster from `backend` if it is not already present:
-
-```powershell
-python manage.py loaddata api/fixtures/taptrack_test_data.json
-```
-
-Start the Cabinet with a local Django proxy and localhost registration URL. The Vite development proxy reads `DEVICE_API_KEY` from the local backend environment and injects it server-side; no API key is configured as a `VITE_` variable.
-
-```powershell
-$env:VITE_DJANGO_SERVER_URL = 'http://127.0.0.1:8000'
-npm run dev -- --port 4001
-```
-
-In the Cabinet, select **OPEN CABINET** and use the mock UID field on **Scan Group Members**:
-
-- `1268010402` is the fixture's unregistered test card. Use roster student ID `TAPTRACK-TEST-001` on the existing registration page. After successful registration, return to the Cabinet tab and scan `1268010402` again; the student should be added while any earlier students remain.
-- After that card is registered, scanning `1268010402` again in the same group reports **Already scanned** and does not add a duplicate.
-- To test another unregistered card, use a fresh development-only value such as `MOCK-UNREGISTERED-001` and register it to a different existing roster student without an NFC UID. The registration endpoint links a card to an existing roster student; it does not create a new student record.
-- **SKIP FOR NOW** returns to scanning without discarding registered students. Continue through station selection and confirmation to test opening; close from the active session without scanning opening students again.
-
-The QR contains the registration URL and short-lived token returned by Django. The Cabinet does not override the registration URL; the Django setting is the single source of truth.
+The QR contains the registration URL and short-lived token returned by Django. The Cabinet does not override the registration URL; the Django setting is the single source of truth. A successful open/close workflow response confirms the Django session transition only; it does not verify physical shutter movement. Keep TB6600 motor-driver power disconnected until limit switches and an emergency stop are installed.
 
 <!-- Cabinet deployment instructions above are the project documentation. -->
 

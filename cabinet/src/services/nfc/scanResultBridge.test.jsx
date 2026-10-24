@@ -2,21 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { fetchCabinetWorkflow, fetchNfcServiceStatus, fetchScanEvents, sendCabinetWorkflow } from './scanResultBridge.js'
 
 describe('Cabinet workflow status requests', () => {
-  it('uses the API proxy and mock-mode header for a mock GET', async () => {
+  it('uses the real NFC bridge for workflow reads without mock headers', async () => {
     let request
     const result = await fetchCabinetWorkflow({
-      mode: 'mock',
       fetcher: async (url, options) => {
         request = { url, options }
-        return new Response(JSON.stringify({ mode: 'mock', stations: [] }), { status: 200 })
+        return new Response(JSON.stringify({ mode: 'hardware', stations: [] }), { status: 200 })
       },
     })
 
-    expect(request.url).toBe('/api/cabinet/workflow/')
+    expect(request.url).toBe('http://127.0.0.1:5001/cabinet/workflow')
     expect(request.options.method).toBe('GET')
-    expect(request.options.headers['X-TapTrack-Mock-Mode']).toBe('true')
+    expect(request.options.headers['X-TapTrack-Mock-Mode']).toBeUndefined()
     expect(request.options.body).toBeUndefined()
-    expect(result.mode).toBe('mock')
+    expect(result.mode).toBe('hardware')
   })
 
   it('keeps hardware status reads on the bridge without a mock header', async () => {
@@ -48,11 +47,19 @@ describe('Cabinet workflow status requests', () => {
     })).rejects.toThrow('NFC bridge unavailable. Check the NFC service connection.')
   })
 
-  it('identifies a missing Django proxy for explicit mock workflow reads', async () => {
+  it('reports failed backend workflow requests instead of returning simulated data', async () => {
     await expect(fetchCabinetWorkflow({
-      mode: 'mock',
       fetcher: async () => { throw new TypeError('Failed to fetch') },
-    })).rejects.toThrow('Cabinet API unavailable. Check Django and the development proxy.')
+    })).rejects.toThrow('NFC bridge unavailable. Check the NFC service connection.')
+  })
+
+  it('rejects malformed station data before returning the workflow state', async () => {
+    await expect(fetchCabinetWorkflow({
+      fetcher: async () => new Response(JSON.stringify({
+        mode: 'hardware',
+        stations: [{ name: '', status: 'available', session: null }],
+      }), { status: 200 }),
+    })).rejects.toThrow('Cabinet workflow returned an invalid response.')
   })
 
   it('reads the NFC bridge status endpoint without using the legacy mock service', async () => {

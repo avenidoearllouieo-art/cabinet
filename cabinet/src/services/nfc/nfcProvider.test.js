@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createNfcProvider } from './nfcProvider.js'
 import { HardwareNfcProvider } from './hardwareNfcProvider.js'
-import { MockNfcProvider } from './mockNfcProvider.js'
+import { MockNfcProvider } from './__fixtures__/mockNfcProvider.js'
 
-test('only explicit mock mode creates the mock NFC provider', () => {
-  assert.ok(createNfcProvider({ mode: 'mock' }) instanceof MockNfcProvider)
-  assert.throws(() => createNfcProvider({ mode: undefined }), /explicitly set/)
-  assert.throws(() => createNfcProvider({ mode: 'unknown' }), /explicitly set/)
+test('mock provider remains an isolated test fixture, not a production provider option', () => {
+  assert.ok(new MockNfcProvider())
+  assert.throws(() => createNfcProvider({ mode: 'mock' }), /Only hardware mode is supported/)
+  assert.throws(() => createNfcProvider({ mode: undefined }), /Only hardware mode is supported/)
+  assert.throws(() => createNfcProvider({ mode: 'unknown' }), /Only hardware mode is supported/)
 })
 
 test('hardware mode requires the configured service URL', () => {
