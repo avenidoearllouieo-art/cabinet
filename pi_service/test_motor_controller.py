@@ -196,6 +196,19 @@ class SerialMotorControllerTests(unittest.TestCase):
         self.assertFalse(serial_port.rts)
         self.assertTrue(serial_port.opened)
 
+    def test_close_closes_the_shared_serial_port_and_prevents_future_commands(self):
+        serial_port = FakeSerial()
+        controller = SerialMotorController(serial_instance=serial_port)
+        self.arm_for_bench_test(controller)
+
+        controller.close()
+        controller.close()
+
+        self.assertTrue(serial_port.closed)
+        result = controller.command('Station 1', 'OPEN')
+        self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertFalse(any(write.startswith(b'CMD,') for write in serial_port.writes))
+
     def test_invalid_frames_and_transaction_ids_are_rejected(self):
         invalid_frames = (
             b'RSP,2,,1,ACCEPTED,1\n',

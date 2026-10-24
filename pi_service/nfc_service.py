@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import queue
@@ -22,7 +23,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 from uuid import uuid4
 
-from motor_controller import MotorCommandResult, MotorOutcome
+from motor_controller import (
+    DEFAULT_BAUD_RATE,
+    DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+    MotorCommandResult,
+    MotorOutcome,
+    SerialMotorController,
+)
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
 
 
@@ -60,6 +67,7 @@ MOTOR_WORKFLOW_TRANSITIONS = {
 MOTOR_STATIONS = frozenset({'Station 1', 'Station 2'})
 MOTOR_ACTION_STATUSES = frozenset({'PENDING', 'DISPATCHED', 'COMPLETED', 'FAILED', 'UNCERTAIN'})
 MOTOR_ACTION_IN_PROGRESS = ('PENDING', 'DISPATCHED')
+MOTOR_ACTUATION_DISABLED = 'Motor actuation is disabled; no serial command was sent.'
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +108,7 @@ class MockMotorController:
     def __init__(self):
         self.calls = []
         self._lock = threading.Lock()
+        self.closed = False
 
     def command(self, station: str, action: str) -> MotorCommandResult:
         with self._lock:
@@ -109,10 +118,14 @@ class MockMotorController:
             station=station,
             action=action,
             command='MOCK',
-            outcome=MotorOutcome.COMPLETED,
+            outcome=MotorOutcome.REJECTED,
             session_id='MOCK-ONLY',
             transaction_id=transaction_id,
+            error='Mock mode never actuates physical motors.',
         )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def motor_result_from_action(action: dict) -> MotorCommandResult:
@@ -134,10 +147,63 @@ def motor_result_from_action(action: dict) -> MotorCommandResult:
     )
 
 
-def create_motor_controller():
-    if os.environ.get('TAPTRACK_MOTOR_ACTUATION_ENABLED', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
-        raise RuntimeError('Real motor actuation is disabled in this mock-only integration phase.')
-    return MockMotorController()
+def _motor_actuation_enabled() -> bool:
+    configured = os.environ.get('TAPTRACK_MOTOR_ACTUATION_ENABLED', 'false').strip().lower()
+    if configured not in {'true', 'false'}:
+        raise RuntimeError('TAPTRACK_MOTOR_ACTUATION_ENABLED must be true or false.')
+    return configured == 'true'
+
+
+def create_motor_controller() -> MockMotorController | SerialMotorController:
+    mode = os.environ.get('TAPTRACK_MOTOR_MODE', '').strip().lower()
+    if mode not in {'mock', 'serial'}:
+        raise RuntimeError('TAPTRACK_MOTOR_MODE must be explicitly set to mock or serial.')
+
+    actuation_enabled = _motor_actuation_enabled()
+    if mode == 'mock':
+        if actuation_enabled:
+            raise RuntimeError('TAPTRACK_MOTOR_ACTUATION_ENABLED cannot be true in mock mode.')
+        return MockMotorController()
+
+    if actuation_enabled:
+        required_confirmations = (
+            'TAPTRACK_MOTOR_LIMIT_SWITCHES_INSTALLED',
+            'TAPTRACK_MOTOR_ESTOP_INSTALLED',
+            'TAPTRACK_MOTOR_RECOVERY_PROCEDURE_APPROVED',
+        )
+        if any(os.environ.get(name, '').strip().lower() != 'true' for name in required_confirmations):
+            raise RuntimeError(
+                'Serial motor actuation requires confirmed limit switches, an emergency stop, '
+                'and an approved recovery procedure.'
+            )
+
+    device = os.environ.get('TAPTRACK_MOTOR_SERIAL_DEVICE', '').strip()
+    device_id = device.removeprefix('/dev/serial/by-id/')
+    if (
+        not device.startswith('/dev/serial/by-id/')
+        or not device_id
+        or '/' in device_id
+        or '\\' in device_id
+        or device_id in {'.', '..'}
+    ):
+        raise RuntimeError('Serial mode requires the exact stable /dev/serial/by-id/ device path.')
+    if '<' in device_id or '>' in device_id:
+        raise RuntimeError('Replace the serial-device placeholder with the exact stable device path.')
+    try:
+        baud_rate = int(os.environ.get('TAPTRACK_MOTOR_BAUD_RATE', str(DEFAULT_BAUD_RATE)))
+        response_timeout = float(os.environ.get(
+            'TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS',
+            str(DEFAULT_RESPONSE_TIMEOUT_SECONDS),
+        ))
+    except ValueError as error:
+        raise RuntimeError('Motor baud rate and response timeout must be numeric.') from error
+    if baud_rate <= 0 or not math.isfinite(response_timeout) or response_timeout <= 0:
+        raise RuntimeError('Motor baud rate and response timeout must be positive.')
+    return SerialMotorController(
+        device=device,
+        baud_rate=baud_rate,
+        response_timeout=response_timeout,
+    )
 
 
 def sanitize_error(value: object, api_key: str = '') -> str:
@@ -678,15 +744,21 @@ class NFCService:
         verifier: DjangoVerifier,
         photo_capture=None,
         motor_controller=None,
+        motor_actuation_enabled: bool | None = None,
     ):
         self.reader = reader
         self.store = store
         self.verifier = verifier
         self.photo_capture = photo_capture if photo_capture is not None else getattr(verifier, 'photo_capture', None)
         selected_motor_controller = motor_controller if motor_controller is not None else create_motor_controller()
-        if not isinstance(selected_motor_controller, MockMotorController):
-            raise RuntimeError('Only MockMotorController is allowed in this integration phase.')
+        if not callable(getattr(selected_motor_controller, 'command', None)) or not callable(
+            getattr(selected_motor_controller, 'close', None)
+        ):
+            raise TypeError('Motor controller must provide command() and close() methods.')
         self.motor_controller = selected_motor_controller
+        if motor_actuation_enabled is not None and not isinstance(motor_actuation_enabled, bool):
+            raise TypeError('motor_actuation_enabled must be a boolean.')
+        self.motor_actuation_enabled = _motor_actuation_enabled() if motor_actuation_enabled is None else motor_actuation_enabled
         self._motor_command_lock = threading.Lock()
         if self.store is not None:
             self.recovered_motor_actions = self.store.recover_in_progress_motor_actions()
@@ -701,6 +773,8 @@ class NFCService:
         return self.photo_capture.capture(event_id)
 
     def dispatch_motor_transition(self, command: str, station: str, status_code: int, response: dict):
+        if self._stop_event.is_set():
+            return None
         action = MOTOR_WORKFLOW_TRANSITIONS.get(command)
         if action is None or status_code != HTTPStatus.OK or station not in MOTOR_STATIONS:
             return None
@@ -711,7 +785,9 @@ class NFCService:
         expected_status = 'open' if command == 'finish_open' else 'closed'
         if (
             not isinstance(session, dict)
-            or session.get('id') is None
+            or isinstance(session.get('id'), bool)
+            or not isinstance(session.get('id'), (str, int))
+            or not str(session.get('id')).strip()
             or session.get('station') != station
             or session.get('status') != expected_status
             or session.get('workflow_state') != 'idle'
@@ -782,6 +858,45 @@ class NFCService:
                     outcome=MotorOutcome.UNCERTAIN,
                     error='Action state is unavailable; dispatch skipped.',
                 )
+
+            if not self.motor_actuation_enabled:
+                logger.warning(
+                    'Motor action %s for %s was recorded without actuation; '
+                    'TAPTRACK_MOTOR_ACTUATION_ENABLED is false.',
+                    action,
+                    station,
+                )
+                result = MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK' if isinstance(self.motor_controller, MockMotorController) else '',
+                    outcome=MotorOutcome.REJECTED,
+                    error=MOTOR_ACTUATION_DISABLED,
+                )
+                try:
+                    updated = self.store.finish_motor_action(action_record['action_id'], 'FAILED')
+                except Exception as error:
+                    logger.error(
+                        'Unable to persist disabled motor action (%s); manual review is required.',
+                        type(error).__name__,
+                    )
+                    return MotorCommandResult(
+                        station=station,
+                        action=action,
+                        command=result.command,
+                        outcome=MotorOutcome.UNCERTAIN,
+                        error='Disabled action could not be persisted; manual review is required.',
+                    )
+                if not updated:
+                    logger.error('Disabled motor action state changed unexpectedly.')
+                    return MotorCommandResult(
+                        station=station,
+                        action=action,
+                        command=result.command,
+                        outcome=MotorOutcome.UNCERTAIN,
+                        error='Disabled action state changed unexpectedly; manual review is required.',
+                    )
+                return result
 
             try:
                 result = self.motor_controller.command(station, action)
@@ -869,9 +984,26 @@ class NFCService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        close = getattr(self.reader, 'close', None)
-        if close:
-            close()
+        close_errors = []
+        for name, resource in (
+            ('NFC reader', self.reader),
+            ('motor controller', self.motor_controller),
+        ):
+            is_motor_controller = name == 'motor controller'
+            if is_motor_controller:
+                self._motor_command_lock.acquire()
+            close = getattr(resource, 'close', None)
+            try:
+                if close:
+                    close()
+            except Exception as error:
+                logger.exception('Unable to close %s cleanly.', name)
+                close_errors.append(error)
+            finally:
+                if is_motor_controller:
+                    self._motor_command_lock.release()
+        if close_errors:
+            raise RuntimeError('One or more NFC service resources did not close cleanly.') from close_errors[0]
 
 
 class NFCHandler(BaseHTTPRequestHandler):
@@ -1030,9 +1162,11 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        service.stop()
-        server.shutdown()
-        server.server_close()
+        try:
+            service.stop()
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == '__main__':

@@ -39,17 +39,19 @@ nvm alias default 22.12.0
 
 ## Repository setup
 
-Use the confirmed checkout path `/home/pi/tap-track`:
+The confirmed live NFC-service checkout is `/home/taptrack/tap-track`. Verify the active unit before changing it:
 
 ```bash
-git clone <repo-url> /home/pi/tap-track
-cd /home/pi/tap-track
+sudo systemctl cat taptrack-nfc.service
+sudo systemctl show taptrack-nfc.service -p User -p WorkingDirectory -p ExecStart
+cd /home/taptrack/tap-track
+git status --short
 ```
 
 ## Install Python dependencies
 
 ```bash
-cd /home/pi/tap-track/pi_service
+cd /home/taptrack/tap-track/pi_service
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -58,7 +60,7 @@ pip install -r requirements.txt
 ## Install Cabinet dependencies
 
 ```bash
-cd /home/pi/tap-track/cabinet
+cd /home/taptrack/tap-track/cabinet
 npm install
 ```
 
@@ -79,36 +81,68 @@ Important:
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
-The current Cabinet integration uses a `MockMotorController` only. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; enabling it makes the NFC service refuse to start in this phase. No serial port is opened and no ESP32 commands are sent.
+The motor integration has two explicit server-side modes: `mock` and `serial`. The deployment template selects `mock` and keeps `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; the Cabinet UI has no motor-mode selector. `serial` creates one shared `SerialMotorController`, but the port is opened lazily and no command is sent while actuation is disabled. Missing or unknown mode configuration fails startup instead of selecting a fallback.
 
-A successful Django open/close workflow response confirms the server-side session transition only; it does not verify physical shutter movement. Keep TB6600 motor-driver power disconnected until limit switches and an emergency stop are installed. Do not enable motor actuation, upload firmware, or send motor commands in this phase.
-
-Django commits the `finish_open` or `finish_close` session transition before the Pi receives its successful response. The mock dispatch happens afterward and does not change the existing API response, so that response is not evidence of physical movement. The NFC service stores mock motor-action records in its existing SQLite database with a unique workflow-session/station/operation key. On startup, leftover `PENDING` and `DISPATCHED` records become `UNCERTAIN`; they are never retried automatically. Run one `taptrack-nfc.service` process so startup recovery does not classify another live process's action as abandoned. Durable records prevent duplicate dispatch for the same key, but do not prove exactly-once physical execution or shutter position.
-
-For a future separately approved hardware phase, identify the stable device symlink on the Pi with `ls -l /dev/serial/by-id/` and configure that exact path, rather than a changing `/dev/ttyACM*` or `/dev/ttyUSB*` name. The existing controller expects 115200 baud and a 10-second response timeout:
+To configure the serial controller without enabling movement, first identify the exact stable device symlink on the Pi with `ls -l /dev/serial/by-id/`, then edit `/etc/taptrack/nfc.env`:
 
 ```env
-# Replace with the exact path returned by /dev/serial/by-id/ after safety approval.
+# Replace with the exact path returned on this Pi.
+TAPTRACK_MOTOR_MODE=serial
 TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/serial/by-id/<exact-device-id>
 TAPTRACK_MOTOR_BAUD_RATE=115200
 TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
+TAPTRACK_MOTOR_ACTUATION_ENABLED=false
 ```
 
-These serial settings are documentation only during the mock-only phase and are not consumed by the NFC service.
+The NFC service checks the stable path syntax and numeric settings at startup, but does not connect to the port until a motor command is allowed. Keep actuation disabled: setting it true also requires explicit true configuration for installed limit switches, an installed emergency stop, and an approved recovery procedure. These flags are assertions, not a substitute for physical inspection or commissioning.
 
-`pyserial` is included in `pi_service/requirements.txt`. The NFC systemd unit runs as `pi`; grant that user access to the USB serial device, commonly through `dialout`, and restart the service (or reboot so the new group membership applies):
+**Physical safety is not confirmed.** The firmware performs fixed-step motion without confirmed endpoint feedback; a `DONE` frame only confirms the firmware's routine completed and does not prove the shutter reached a safe endpoint. Do not enable actuation or connect TB6600 driver power until independent limit switches, an emergency stop, and a documented safe recovery procedure are installed and tested. The controller starts disarmed and has no service-level operator recovery mechanism. Do not upload firmware or issue motion commands during this deployment.
+
+### Safe commissioning checklist
+
+Commissioning is currently blocked. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false` and TB6600 driver power disconnected unless and until every item below is independently verified and approved:
+
+- [ ] Independent limit switches are installed at the required endpoints and verified to inhibit unsafe travel.
+- [ ] A hardwired emergency stop is installed and verified to remove motor-driver enable/power safely.
+- [ ] The no-load/reset behavior has been reviewed so Pi/ESP32 startup, reset, disconnect, and brownout cannot cause unintended motion.
+- [ ] A written recovery procedure covers power isolation, stationary-mechanism confirmation, ESP32 reset, and ambiguous/uncertain actions; operators are trained to follow it.
+- [ ] The firmware and existing V2 protocol mapping have been reviewed against the installed hardware; `DONE` is not treated as position feedback.
+- [ ] The exact `/dev/serial/by-id/` device path and `taptrack` serial permissions have been verified without issuing a movement command.
+- [ ] A separate safety reviewer has approved the physical installation and recovery procedure before any future actuation authorization.
+
+If an item is unchecked, do not energize the driver or enable actuation. The current service intentionally provides no remote recovery/arming endpoint, and this change does not authorize commissioning.
+
+The V2 protocol was checked against `motor/motor.ino`: the controller sends a nonce-correlated `HELLO,2` and expects `READY,2`, then sends the existing numeric station/action mapping and accepts only the matching `ACCEPTED`, `BUSY`, `DONE` response sequence. The controller does not retry a movement command. A timeout, malformed response, disconnect, or interrupted process leaves the durable action un-retryable and requiring manual review. Startup converts leftover `PENDING`/`DISPATCHED` actions to `UNCERTAIN`; run exactly one NFC service process to avoid one process recovering another live process's action. Persistent action records suppress duplicates but do not prove exactly-once physical execution or position.
+
+`pyserial` is included in `pi_service/requirements.txt`. The confirmed service account is `taptrack`; verify serial-group access before commissioning:
 
 ```bash
-sudo usermod -aG dialout pi
+id taptrack
+sudo usermod -aG dialout taptrack
 sudo systemctl restart taptrack-nfc.service
-ls -l /dev/ttyUSB0
+ls -l /dev/serial/by-id/
 ```
 
-Confirm the actual device path on the Pi before use, because USB device numbering can change. The Stage 2 controller uses V2 LF-delimited messages: `HELLO/READY` establishes a per-boot random session, `CMD` carries a session-scoped transaction ID and existing digit mapping, and matching `RSP` frames must arrive as `ACCEPTED`, `BUSY`, `DONE`. It sends no movement retry. Frames are unauthenticated and firmware transaction state is volatile.
+After adding a user to `dialout`, start a new login session or reboot before checking the group. Do not restart the production service merely to test access unless you have verified the active checkout and unit first.
 
-Each Python process starts disarmed. After timeout, disconnect, reset, or malformed response, it stays uncertain. The only prototype recovery operation is a non-actuating handshake that requires operator confirmation that motor-driver power is isolated, the unloaded mechanism is stationary, and the ESP32 was power-cycled. It is not persistent or production-safe and cannot detect storage cloning/rollback. Recovery never proves position.
+### Safe rollback to mock motor mode
 
-The V2 prototype is not connected to the Cabinet UI, scan bridge, NFC routes, or Django workflow. Pyserial mocked tests do not test actual serial hardware or firmware. Use only for bounded unloaded bench testing after verifying reset-time electrical safeguards. Shutters are not installed; limit switches and an emergency stop are absent. Do not test full travel or connect UI motor actuation.
+To disable serial use without changing the Cabinet UI or Django authentication, edit `/etc/taptrack/nfc.env`:
+
+```env
+TAPTRACK_MOTOR_MODE=mock
+TAPTRACK_MOTOR_ACTUATION_ENABLED=false
+```
+
+Then restart only the NFC service and verify it is healthy:
+
+```bash
+sudo systemctl restart taptrack-nfc.service
+sudo systemctl status taptrack-nfc.service
+curl -fsS http://127.0.0.1:5001/nfc/status
+```
+
+Mock mode never actuates motors. Do not delete SQLite action history during rollback; uncertain and terminal records are retained to prevent accidental duplicate movement.
 
 The Pi, shared physical NFC reader, and Cabinet screen use one unique `DEVICE_API_KEY`. Map that device to the Cabinet on the Django server with `TAPTRACK_NFC_DEVICE_MAP`; do not bind it to a logical station:
 
@@ -121,7 +155,7 @@ Django derives the Cabinet from the authenticated device. The Cabinet screen sel
 ## Build the Cabinet UI
 
 ```bash
-cd /home/pi/tap-track/cabinet
+cd /home/taptrack/tap-track/cabinet
 npm run build
 ```
 
@@ -133,9 +167,11 @@ The `taptrack-cabinet.service` unit rebuilds the UI after loading `/etc/taptrack
 Use a systemd service:
 
 ```bash
-sudo cp /home/pi/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/
+sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/
 sudo install -d -m 700 /etc/taptrack
-sudo install -m 600 /home/pi/tap-track/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
+if [ ! -e /etc/taptrack/nfc.env ]; then
+  sudo install -m 600 /home/taptrack/tap-track/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
+fi
 # Edit /etc/taptrack/nfc.env locally and set DEVICE_API_KEY; do not commit this file.
 sudo systemctl daemon-reload
 sudo systemctl enable taptrack-nfc.service
@@ -143,14 +179,14 @@ sudo systemctl start taptrack-nfc.service
 sudo systemctl status taptrack-nfc.service
 ```
 
-The service starts from `/home/pi/tap-track/pi_service`, restarts if it crashes, detects `IC Reader IC Reader`, and binds the read-only scan bridge to `127.0.0.1:5001`. SQLite events are stored at `/home/pi/tap-track/pi_service/nfc_events.sqlite3` by default. The Django device key is read only from `/etc/taptrack/nfc.env`.
+The service starts from `/home/taptrack/tap-track/pi_service`, runs as `taptrack`, restarts if it crashes, detects `IC Reader IC Reader`, and binds the read-only scan bridge to `127.0.0.1:5001`. SQLite events are stored at `/home/taptrack/tap-track/pi_service/nfc_events.sqlite3` by default. The Django device key is read only from `/etc/taptrack/nfc.env`. Preserve the existing secret file when updating code; do not overwrite it with the example template.
 
 ## Start the Cabinet UI
 
 Use the preview server from the built app:
 
 ```bash
-sudo cp /home/pi/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/
+sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable taptrack-cabinet.service
 sudo systemctl start taptrack-cabinet.service
@@ -165,7 +201,7 @@ Install a desktop autostart file:
 
 ```bash
 mkdir -p /home/pi/.config/autostart
-cp /home/pi/tap-track/pi_service/deploy/taptrack-kiosk.desktop /home/pi/.config/autostart/
+cp /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.desktop /home/pi/.config/autostart/
 ```
 
 This launches Chromium in kiosk mode and hides browser controls.

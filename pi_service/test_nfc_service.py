@@ -28,7 +28,7 @@ from nfc_service import (
     normalize_uid,
 )
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, UIDKeyParser, build_key_map
-from motor_controller import MotorCommandResult, MotorOutcome
+from motor_controller import MotorCommandResult, MotorOutcome, SerialMotorController
 
 
 class FakeVerifier:
@@ -132,6 +132,7 @@ class FakeEvdev:
         return next(device for device in self.devices if device.path == path)
 
 
+@patch.dict(os.environ, {'TAPTRACK_MOTOR_MODE': 'mock', 'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false'})
 class NFCServiceTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -499,6 +500,7 @@ class NFCServiceTests(unittest.TestCase):
         self.assertIsInstance(__import__('nfc_service').build_reader(mode='hardware', evdev_module=FakeEvdev([], make_fake_ecodes())), EvdevNFCReader)
 
 
+@patch.dict(os.environ, {'TAPTRACK_MOTOR_MODE': 'mock', 'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false'})
 class MotorDispatchTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -510,6 +512,7 @@ class MotorDispatchTests(unittest.TestCase):
             self.store,
             FakeVerifier((200, {})),
             motor_controller=self.controller,
+            motor_actuation_enabled=True,
         )
 
     def tearDown(self):
@@ -533,14 +536,170 @@ class MotorDispatchTests(unittest.TestCase):
             payload = self.response('session-1', station, session_status)
         return self.service.dispatch_motor_transition(command, station, status, payload)
 
-    def test_factory_uses_only_mock_and_refuses_actuation_enable_flag(self):
-        with patch.dict(os.environ, {'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false'}):
-            self.assertIsInstance(create_motor_controller(), MockMotorController)
-        with patch.dict(os.environ, {'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true'}):
-            with self.assertRaisesRegex(RuntimeError, 'disabled in this mock-only integration phase'):
+    def test_factory_requires_an_explicit_known_mode_and_strict_boolean_configuration(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, 'explicitly set'):
                 create_motor_controller()
-        with self.assertRaisesRegex(RuntimeError, 'Only MockMotorController is allowed'):
-            NFCService(MockNFCReader(), self.store, FakeVerifier((200, {})), motor_controller=object())
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'hardware',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false',
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'mock or serial'):
+                create_motor_controller()
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'mock',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false',
+        }):
+            self.assertIsInstance(create_motor_controller(), MockMotorController)
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'mock',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true',
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'cannot be true in mock mode'):
+                create_motor_controller()
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'mock',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'sometimes',
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'must be true or false'):
+                create_motor_controller()
+        with self.assertRaisesRegex(TypeError, 'command\\(\\) and close\\(\\)'):
+            NFCService(
+                MockNFCReader(),
+                self.store,
+                FakeVerifier((200, {})),
+                motor_controller=object(),
+                motor_actuation_enabled=False,
+            )
+
+    def test_serial_factory_requires_stable_device_path_and_never_opens_it(self):
+        serial_environment = {
+            'TAPTRACK_MOTOR_MODE': 'serial',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false',
+            'TAPTRACK_MOTOR_SERIAL_DEVICE': '/dev/serial/by-id/usb-TapTrack-controller',
+            'TAPTRACK_MOTOR_BAUD_RATE': '115200',
+            'TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS': '10',
+        }
+        with patch.dict(os.environ, serial_environment):
+            controller = create_motor_controller()
+        self.assertIsInstance(controller, SerialMotorController)
+        self.assertEqual(controller.device, serial_environment['TAPTRACK_MOTOR_SERIAL_DEVICE'])
+        self.assertEqual(controller.baud_rate, 115200)
+        self.assertEqual(controller.response_timeout, 10)
+        self.assertIsNone(controller._serial)
+
+        for invalid_timeout in ('nan', 'inf', '0'):
+            with self.subTest(timeout=invalid_timeout), patch.dict(os.environ, {
+                **serial_environment,
+                'TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS': invalid_timeout,
+            }):
+                with self.assertRaisesRegex(RuntimeError, 'positive'):
+                    create_motor_controller()
+
+        for invalid_device in (
+            '',
+            '/dev/ttyACM0',
+            '/dev/serial/by-id/<exact-device-id>',
+            '/dev/serial/by-id/../ttyACM0',
+            '/dev/serial/by-id/',
+        ):
+            with self.subTest(device=invalid_device), patch.dict(os.environ, {
+                **serial_environment,
+                'TAPTRACK_MOTOR_SERIAL_DEVICE': invalid_device,
+            }):
+                with self.assertRaisesRegex(RuntimeError, 'stable'):
+                    create_motor_controller()
+
+    def test_serial_actuation_enable_requires_every_safety_confirmation(self):
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'serial',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true',
+            'TAPTRACK_MOTOR_SERIAL_DEVICE': '/dev/serial/by-id/usb-TapTrack-controller',
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'limit switches, an emergency stop'):
+                create_motor_controller()
+
+    def test_disabled_actuation_records_final_transition_without_calling_controller(self):
+        service = NFCService(
+            MockNFCReader(),
+            self.store,
+            FakeVerifier((200, {})),
+            motor_controller=self.controller,
+            motor_actuation_enabled=False,
+        )
+        result = service.dispatch_motor_transition(
+            'finish_open',
+            'Station 1',
+            200,
+            self.response('disabled-session', 'Station 1', 'open'),
+        )
+        self.assertEqual(result.outcome, MotorOutcome.REJECTED)
+        self.assertIn('no serial command was sent', result.error)
+        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'FAILED')
+
+    def test_service_shutdown_closes_reader_and_shared_motor_controller(self):
+        reader_closed = []
+
+        class ClosableReader(MockNFCReader):
+            def close(self):
+                reader_closed.append(True)
+
+        controller = FakeMotorController()
+        service = NFCService(
+            ClosableReader(),
+            self.store,
+            FakeVerifier((200, {})),
+            motor_controller=controller,
+            motor_actuation_enabled=False,
+        )
+        service.stop()
+        self.assertEqual(reader_closed, [True])
+        self.assertTrue(controller.closed)
+
+    def test_shutdown_waits_for_in_flight_motor_action_before_closing_controller(self):
+        events = []
+
+        class TrackingController(FakeMotorController):
+            def close(self):
+                events.append('close')
+                super().close()
+
+        controller = TrackingController(block=True, events=events)
+        service = NFCService(
+            MockNFCReader(),
+            self.store,
+            FakeVerifier((200, {})),
+            motor_controller=controller,
+            motor_actuation_enabled=True,
+        )
+        dispatch_results = []
+        worker = threading.Thread(target=lambda: dispatch_results.append(self.dispatch_with_service(
+            service,
+            'shutdown-session',
+        )))
+        worker.start()
+        self.assertTrue(controller.entered.wait(timeout=1))
+
+        shutdown = threading.Thread(target=service.stop)
+        shutdown.start()
+        self.assertFalse(controller.closed)
+        controller.release.set()
+        worker.join(timeout=2)
+        shutdown.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(shutdown.is_alive())
+        self.assertEqual(events, ['motor', 'close'])
+        self.assertEqual(dispatch_results[0].outcome, MotorOutcome.COMPLETED)
+
+    def dispatch_with_service(self, service, session_id):
+        return service.dispatch_motor_transition(
+            'finish_open',
+            'Station 1',
+            200,
+            self.response(session_id, 'Station 1', 'open'),
+        )
 
     def test_only_validated_successful_final_transitions_dispatch(self):
         self.dispatch()
@@ -572,6 +731,8 @@ class MotorDispatchTests(unittest.TestCase):
                     'workflow_state': 'idle',
                 },
             }),
+            ('finish_open', 'Station 1', 200, self.response(True, 'Station 1', 'open')),
+            ('finish_open', 'Station 1', 200, self.response('   ', 'Station 1', 'open')),
             ('finish_open', 'Station 1', 200, self.response('session-1', 'Station 2', 'open')),
             ('finish_open', 'Station 1', 200, self.response('session-1', 'Station 1', 'opening')),
         )
@@ -580,6 +741,21 @@ class MotorDispatchTests(unittest.TestCase):
                 self.service.dispatch_motor_transition(command, station, status, payload)
 
         self.assertEqual(self.controller.calls, [])
+
+    def test_serial_mode_constructs_one_shared_controller_and_closes_it_on_shutdown(self):
+        controller = FakeMotorController()
+        with patch.dict(os.environ, {
+            'TAPTRACK_MOTOR_MODE': 'serial',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false',
+            'TAPTRACK_MOTOR_SERIAL_DEVICE': '/dev/serial/by-id/usb-TapTrack-controller',
+        }):
+            with patch('nfc_service.SerialMotorController', return_value=controller) as factory:
+                service = NFCService(MockNFCReader(), self.store, FakeVerifier((200, {})))
+
+        factory.assert_called_once()
+        self.assertIs(service.motor_controller, controller)
+        service.stop()
+        self.assertTrue(controller.closed)
 
     def test_duplicate_transition_reuses_durable_action_without_redispatch(self):
         first = self.dispatch()
@@ -671,6 +847,7 @@ class MotorDispatchTests(unittest.TestCase):
         second_service = NFCService(
             MockNFCReader(), second_store, FakeVerifier((200, {})),
             motor_controller=second_controller,
+            motor_actuation_enabled=True,
         )
         barrier = threading.Barrier(2)
         results = []
@@ -707,6 +884,7 @@ class MotorDispatchTests(unittest.TestCase):
             restarted_store,
             FakeVerifier((200, {})),
             motor_controller=restarted_controller,
+            motor_actuation_enabled=True,
         )
 
         self.assertEqual(restarted_service.recovered_motor_actions, 2)
@@ -747,7 +925,13 @@ class NFCBridgeHTTPTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.store = SQLiteScanEventStore(Path(self.temp_dir.name) / 'http-events.sqlite3')
-        self.service = NFCService(MockNFCReader(), self.store, FakeVerifier((200, {})))
+        self.service = NFCService(
+            MockNFCReader(),
+            self.store,
+            FakeVerifier((200, {})),
+            motor_controller=MockMotorController(),
+            motor_actuation_enabled=False,
+        )
         self.server = create_http_server(self.store, self.service, host='127.0.0.1', port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -825,6 +1009,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         controller = FakeMotorController(events=events)
         self.service.verifier = SuccessfulWorkflowVerifier()
         self.service.motor_controller = controller
+        self.service.motor_actuation_enabled = True
 
         status, payload = self.post_json('/cabinet/workflow', {
             'command': 'finish_open',
