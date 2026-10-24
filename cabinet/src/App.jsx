@@ -825,7 +825,7 @@ export default function App() {
         const data = await sendCabinetWorkflow('finish_open', { mode: NFC_MODE, station: selectedStation })
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
-        setStatusMessage(`Cabinet opened on ${stationLabel(data.station)}.`)
+        setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}. Physical shutter movement was not verified.`)
         setView('cabinet-opened')
       } catch (error) {
         setErrorMessage(error.message || 'The cabinet session could not be opened.')
@@ -852,7 +852,7 @@ export default function App() {
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
-      setStatusMessage(`Cabinet closed on ${stationLabel(data.station)}.`)
+      setStatusMessage(`Close workflow completed for ${stationLabel(data.station)}. Physical shutter movement was not verified.`)
       setView('cabinet-closed')
     } catch (error) {
       setErrorMessage(error.message || 'The cabinet session could not be closed.')
@@ -1499,8 +1499,9 @@ export default function App() {
         <Screen>
           <div className="panel status-panel success-panel">
             <img className="brand-wordmark compact-wordmark" src="/logo1.png" alt="TapTrack" />
-            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>CABINET OPEN</strong></div>
-            <h2>Cabinet Open</h2>
+            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW COMPLETE</strong></div>
+            <h2>Open Workflow Complete</h2>
+            <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
               <div><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
@@ -1517,7 +1518,7 @@ export default function App() {
               ))}
             </div>
             <div className="button-row stacked">
-              <button className="btn primary" onClick={startCloseSession}>CLOSE CABINET</button>
+              <button className="btn primary" onClick={startCloseSession}>START CLOSE WORKFLOW</button>
               <button className="btn ghost" onClick={resetToHome}>BACK TO HOME</button>
             </div>
           </div>
@@ -1527,9 +1528,9 @@ export default function App() {
       {view === 'cabinet-closed' && (
         <Screen>
           <div className="panel status-panel success-panel">
-            <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
-            <h2>Cabinet Closed</h2>
-            <p className="muted">{stationLabel(selectedStation)} is closed.</p>
+            <div className="large-state is-closed"><span className="status-dot good" /><strong>CLOSE WORKFLOW COMPLETE</strong></div>
+            <h2>Close Workflow Complete</h2>
+            <p className="muted">{stationLabel(selectedStation)} session is marked closed. Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Opened by</span><strong>{getParticipantCount(closedSession)}</strong></div>
               <div><span>Closed by</span><strong>{closedSession?.closed_by?.length || 0}</strong></div>

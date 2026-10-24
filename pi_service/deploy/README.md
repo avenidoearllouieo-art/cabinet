@@ -78,13 +78,20 @@ Important:
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
-The standalone Stage 2 motor prototype can use these settings in `/etc/taptrack/nfc.env`:
+The current Cabinet integration uses a `MockMotorController` only. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false`; enabling it makes the NFC service refuse to start in this phase. No serial port is opened and no ESP32 commands are sent.
+
+Django commits the `finish_open` or `finish_close` session transition before the Pi receives its successful response. The mock dispatch happens afterward and does not change the existing API response, so that response is not evidence of physical movement. Before any real integration, define a durable intent/completion contract and recovery policy; the current duplicate cache is process-local and is not exactly-once protection across service restarts.
+
+For a future separately approved hardware phase, identify the stable device symlink on the Pi with `ls -l /dev/serial/by-id/` and configure that exact path, rather than a changing `/dev/ttyACM*` or `/dev/ttyUSB*` name. The existing controller expects 115200 baud and a 10-second response timeout:
 
 ```env
-TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/ttyUSB0
+# Replace with the exact path returned by /dev/serial/by-id/ after safety approval.
+TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/serial/by-id/<exact-device-id>
 TAPTRACK_MOTOR_BAUD_RATE=115200
 TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
 ```
+
+These serial settings are documentation only during the mock-only phase and are not consumed by the NFC service.
 
 `pyserial` is included in `pi_service/requirements.txt`. The NFC systemd unit runs as `pi`; grant that user access to the USB serial device, commonly through `dialout`, and restart the service (or reboot so the new group membership applies):
 

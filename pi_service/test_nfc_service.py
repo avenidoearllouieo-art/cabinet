@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -7,6 +8,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from nfc_service import (
     ALLOWED_ORIGINS,
@@ -16,13 +18,16 @@ from nfc_service import (
     DjangoVerifier,
     DjangoPhotoCapture,
     MockNFCReader,
+    MockMotorController,
     NFCService,
     SQLiteScanEventStore,
+    create_motor_controller,
     create_http_server,
     make_scan_event,
     normalize_uid,
 )
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, UIDKeyParser, build_key_map
+from motor_controller import MotorCommandResult, MotorOutcome
 
 
 class FakeVerifier:
@@ -36,6 +41,44 @@ class FakeVerifier:
         if self.error:
             raise self.error
         return self.result
+
+
+class FakeMotorController:
+    def __init__(self, outcome=MotorOutcome.COMPLETED, block=False, error=None, events=None):
+        self.outcome = outcome
+        self.block = block
+        self.error = error
+        self.events = events
+        self.calls = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    def command(self, station, action):
+        with self._lock:
+            self.calls.append((station, action))
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        if self.events is not None:
+            self.events.append('motor')
+        self.entered.set()
+        try:
+            if self.block:
+                self.release.wait(timeout=2)
+            if self.error:
+                raise self.error
+            return MotorCommandResult(
+                station=station,
+                action=action,
+                command='MOCK',
+                outcome=self.outcome,
+                transaction_id=len(self.calls),
+            )
+        finally:
+            with self._lock:
+                self.in_flight -= 1
 
 
 class FakeResponse:
@@ -314,6 +357,21 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(len(stored), 1)
         self.assertFalse(has_more)
 
+    def test_nfc_scan_never_dispatches_a_motor_transition(self):
+        verifier = FakeVerifier((200, {
+            'success': True,
+            'event_id': 9031,
+            'name': 'Avery Example',
+            'student_id': 'STU-001',
+            'role': 'student',
+        }))
+        service = NFCService(MockNFCReader(), self.store, verifier)
+
+        event = service.process_uid('NFC-SCAN-ONLY')
+
+        self.assertEqual(event['status'], 'registered')
+        self.assertEqual(service.motor_controller.calls, [])
+
     def test_unregistered_404_response_preserves_registration_fields(self):
         payload = {
             'success': False,
@@ -439,6 +497,166 @@ class NFCServiceTests(unittest.TestCase):
         self.assertIsInstance(__import__('nfc_service').build_reader(mode='hardware', evdev_module=FakeEvdev([], make_fake_ecodes())), EvdevNFCReader)
 
 
+class MotorDispatchTests(unittest.TestCase):
+    def setUp(self):
+        self.controller = FakeMotorController()
+        self.service = NFCService(
+            MockNFCReader(),
+            None,
+            FakeVerifier((200, {})),
+            motor_controller=self.controller,
+        )
+
+    @staticmethod
+    def response(session_id, station, status):
+        return {
+            'station': station,
+            'session': {
+                'id': session_id,
+                'station': station,
+                'status': status,
+                'workflow_state': 'idle',
+            },
+        }
+
+    def dispatch(self, command='finish_open', station='Station 1', status=200, payload=None):
+        if payload is None:
+            session_status = 'open' if command == 'finish_open' else 'closed'
+            payload = self.response('session-1', station, session_status)
+        return self.service.dispatch_motor_transition(command, station, status, payload)
+
+    def test_factory_uses_only_mock_and_refuses_actuation_enable_flag(self):
+        with patch.dict(os.environ, {'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'false'}):
+            self.assertIsInstance(create_motor_controller(), MockMotorController)
+        with patch.dict(os.environ, {'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true'}):
+            with self.assertRaisesRegex(RuntimeError, 'disabled in this mock-only integration phase'):
+                create_motor_controller()
+
+    def test_only_validated_successful_final_transitions_dispatch(self):
+        self.dispatch()
+        self.dispatch(
+            command='finish_close',
+            station='Station 2',
+            payload=self.response('session-2', 'Station 2', 'closed'),
+        )
+
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN'), ('Station 2', 'CLOSE')])
+
+    def test_get_nonfinal_invalid_and_failed_transitions_do_not_dispatch(self):
+        valid_open = self.response('session-1', 'Station 1', 'open')
+        cases = (
+            (None, 'Station 1', 200, valid_open),
+            ('open', 'Station 1', 200, valid_open),
+            ('start_close', 'Station 1', 200, valid_open),
+            ('cancel', 'Station 1', 200, valid_open),
+            ('finish_open', 'Station 3', 200, valid_open),
+            ('finish_open', 'Station 1', 403, valid_open),
+            ('finish_open', 'Station 1', 409, valid_open),
+            ('finish_open', 'Station 1', 200, ['not', 'a', 'response', 'object']),
+            ('finish_open', 'Station 1', 200, {'station': 'Station 1'}),
+            ('finish_open', 'Station 1', 200, {
+                'station': 'Station 1',
+                'session': {
+                    'station': 'Station 1',
+                    'status': 'open',
+                    'workflow_state': 'idle',
+                },
+            }),
+            ('finish_open', 'Station 1', 200, self.response('session-1', 'Station 2', 'open')),
+            ('finish_open', 'Station 1', 200, self.response('session-1', 'Station 1', 'opening')),
+        )
+        for command, station, status, payload in cases:
+            with self.subTest(command=command, station=station, status=status):
+                self.service.dispatch_motor_transition(command, station, status, payload)
+
+        self.assertEqual(self.controller.calls, [])
+
+    def test_duplicate_transition_returns_cached_result_without_redispatch(self):
+        first = self.dispatch()
+        duplicate = self.dispatch()
+
+        self.assertIs(duplicate, first)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+
+    def test_uncertain_result_is_cached_and_never_retried(self):
+        self.controller.outcome = MotorOutcome.UNCERTAIN
+
+        first = self.dispatch()
+        duplicate = self.dispatch()
+
+        self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
+        self.assertIs(duplicate, first)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+
+    def test_controller_exception_is_cached_as_uncertain_without_retry(self):
+        self.controller.error = OSError('simulated serial failure')
+
+        first = self.dispatch()
+        duplicate = self.dispatch()
+
+        self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
+        self.assertIs(duplicate, first)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+
+    def test_concurrent_transitions_never_call_controller_concurrently(self):
+        self.controller.block = True
+        first_result = []
+        worker = threading.Thread(target=lambda: first_result.append(self.dispatch()))
+        worker.start()
+        self.assertTrue(self.controller.entered.wait(timeout=1))
+
+        second = self.dispatch(
+            command='finish_close',
+            station='Station 2',
+            payload=self.response('session-2', 'Station 2', 'closed'),
+        )
+        self.controller.release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(first_result[0].outcome, MotorOutcome.COMPLETED)
+        self.assertEqual(second.outcome, MotorOutcome.BUSY)
+        self.assertEqual(self.controller.max_in_flight, 1)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+
+    def test_concurrent_duplicate_transition_dispatches_only_once(self):
+        self.controller.block = True
+        first_result = []
+        worker = threading.Thread(target=lambda: first_result.append(self.dispatch()))
+        worker.start()
+        self.assertTrue(self.controller.entered.wait(timeout=1))
+
+        duplicate = self.dispatch()
+        self.controller.release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(first_result[0].outcome, MotorOutcome.COMPLETED)
+        self.assertEqual(duplicate.outcome, MotorOutcome.BUSY)
+        self.assertEqual(self.controller.max_in_flight, 1)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        self.assertIs(self.dispatch(), first_result[0])
+
+    def test_deduplication_cache_is_process_local_and_resets_with_service_instance(self):
+        first_result = self.dispatch()
+        restarted_service = NFCService(
+            MockNFCReader(),
+            None,
+            FakeVerifier((200, {})),
+            motor_controller=self.controller,
+        )
+        restarted_result = restarted_service.dispatch_motor_transition(
+            'finish_open',
+            'Station 1',
+            200,
+            self.response('session-1', 'Station 1', 'open'),
+        )
+
+        self.assertEqual(first_result.outcome, MotorOutcome.COMPLETED)
+        self.assertEqual(restarted_result.outcome, MotorOutcome.COMPLETED)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN'), ('Station 1', 'OPEN')])
+
+
 class NFCBridgeHTTPTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -500,6 +718,56 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(verifier.commands, [(None, None), ('open', 'Station 2')])
         self.assertEqual(current['station'], 'Station 1')
         self.assertEqual(opened['session']['workflow_state'], 'open')
+        self.assertEqual(self.service.motor_controller.calls, [])
+
+    def test_successful_final_transition_dispatches_after_django_confirms_success(self):
+        events = []
+
+        class SuccessfulWorkflowVerifier:
+            def workflow(self, command=None, station=None):
+                events.append('django')
+                return 200, {
+                    'station': station,
+                    'session': {
+                        'id': 42,
+                        'station': station,
+                        'status': 'open',
+                        'workflow_state': 'idle',
+                    },
+                }
+
+        controller = FakeMotorController(events=events)
+        self.service.verifier = SuccessfulWorkflowVerifier()
+        self.service.motor_controller = controller
+
+        status, payload = self.post_json('/cabinet/workflow', {
+            'command': 'finish_open',
+            'station': 'Station 1',
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['session']['status'], 'open')
+        self.assertEqual(events, ['django', 'motor'])
+        self.assertEqual(controller.calls, [('Station 1', 'OPEN')])
+
+    def test_failed_django_final_transition_does_not_dispatch(self):
+        class FailedWorkflowVerifier:
+            def workflow(self, command=None, station=None):
+                return 409, {'error': 'No opening workflow to finish.'}
+
+        controller = FakeMotorController()
+        self.service.verifier = FailedWorkflowVerifier()
+        self.service.motor_controller = controller
+
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.post_json('/cabinet/workflow', {
+                'command': 'finish_open',
+                'station': 'Station 1',
+            })
+
+        self.assertEqual(raised.exception.code, 409)
+        raised.exception.close()
+        self.assertEqual(controller.calls, [])
 
     def test_cabinet_workflow_rejects_unsupported_commands(self):
         with self.assertRaises(urllib.error.HTTPError) as raised:

@@ -94,7 +94,7 @@ The SQLite database defaults to `pi_service/nfc_events.sqlite3`; override it wit
 
 ### Standalone motor serial controller (Stage 2 prototype)
 
-`motor_controller.py` and `motor/motor.ino` use an unauthenticated V2 line protocol. This standalone prototype is deliberately not connected to the Cabinet UI, NFC bridge/routes, or Django workflows. Frames are ASCII and LF-terminated, at most 96 bytes, with no CR or empty fields:
+`motor_controller.py` and `motor/motor.ino` use an unauthenticated V2 line protocol. The real `SerialMotorController` is not connected to Cabinet workflows. In the mock-only integration phase, the NFC service may record a fake dispatch after a successful `finish_open` or `finish_close`; it never opens serial or sends a firmware frame. `TAPTRACK_MOTOR_ACTUATION_ENABLED=true` makes the service fail closed. Frames are ASCII and LF-terminated, at most 96 bytes, with no CR or empty fields:
 
 ```text
 HELLO,2,<nonce>\n

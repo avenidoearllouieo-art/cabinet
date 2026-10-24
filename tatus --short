@@ -1,0 +1,73 @@
+[1mdiff --git a/backend/api/tests.py b/backend/api/tests.py[m
+[1mindex 2c41019..c939d79 100644[m
+[1m--- a/backend/api/tests.py[m
+[1m+++ b/backend/api/tests.py[m
+[36m@@ -1,7 +1,8 @@[m
+ from django.core.files.uploadedfile import SimpleUploadedFile[m
+ from django.core.exceptions import ValidationError[m
+ from django.contrib import admin as django_admin[m
+[31m-from django.test import Client, RequestFactory, TestCase, override_settings[m
+[32m+[m[32mfrom django.conf import settings[m
+[32m+[m[32mfrom django.test import Client, RequestFactory, SimpleTestCase, TestCase, override_settings[m
+ from django.test import TransactionTestCase[m
+ from django.db import connection[m
+ from django.db.migrations.executor import MigrationExecutor[m
+[36m@@ -12,6 +13,9 @@[m [mfrom rest_framework.test import APIClient[m
+ from io import BytesIO[m
+ from PIL import Image[m
+ import os[m
+[32m+[m[32mimport json[m
+[32m+[m[32mimport subprocess[m
+[32m+[m[32mimport sys[m
+ import tempfile[m
+ from datetime import timedelta[m
+ from urllib.parse import parse_qs, urlparse[m
+[36m@@ -22,6 +26,48 @@[m [mfrom .admin import AccessLogAdmin[m
+ from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession[m
+ [m
+ [m
+[32m+[m[32mclass BackendEnvironmentLoadingTests(SimpleTestCase):[m
+[32m+[m[32m    def test_dotenv_loads_from_settings_path_outside_backend_working_directory(self):[m
+[32m+[m[32m        env_file = settings.BASE_DIR / '.env'[m
+[32m+[m[32m        if not env_file.is_file():[m
+[32m+[m[32m            self.skipTest('Local backend/.env is not available.')[m
+[32m+[m
+[32m+[m[32m        environment = os.environ.copy()[m
+[32m+[m[32m        for name in ('DJANGO_DEBUG', 'DJANGO_SECRET_KEY', 'DEVICE_API_KEY'):[m
+[32m+[m[32m            environment.pop(name, None)[m
+[32m+[m
+[32m+[m[32m        script = '''[m
+[32m+[m[32mimport json[m
+[32m+[m[32mimport os[m
+[32m+[m[32mimport sys[m
+[32m+[m[32msys.path.insert(0, sys.argv[1])[m
+[32m+[m[32mfrom config import settings[m
+[32m+[m[32mraw_debug = os.environ.get('DJANGO_DEBUG', '').strip().lower()[m
+[32m+[m[32mexpected_debug = raw_debug in {'1', 'true', 'yes', 'on'}[m
+[32m+[m[32msecret_key = os.environ.get('DJANGO_SECRET_KEY', '')[m
+[32m+[m[32mprint(json.dumps({[m
+[32m+[m[32m    'debug_loaded': settings.DEBUG == expected_debug,[m
+[32m+[m[32m    'secret_key_loaded': not secret_key or settings.SECRET_KEY == secret_key,[m
+[32m+[m[32m    'device_key_loaded': bool(os.environ.get('DEVICE_API_KEY')),[m
+[32m+[m[32m}))[m
+[32m+[m[32m'''[m
+[32m+[m[32m        result = subprocess.run([m
+[32m+[m[32m            [sys.executable, '-c', script, str(settings.BASE_DIR)],[m
+[32m+[m[32m            cwd=settings.BASE_DIR.parent,[m
+[32m+[m[32m            env=environment,[m
+[32m+[m[32m            capture_output=True,[m
+[32m+[m[32m            check=True,[m
+[32m+[m[32m            text=True,[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        loaded = json.loads(result.stdout)[m
+[32m+[m[32m        self.assertEqual(loaded, {[m
+[32m+[m[32m            'debug_loaded': True,[m
+[32m+[m[32m            'secret_key_loaded': True,[m
+[32m+[m[32m            'device_key_loaded': True,[m
+[32m+[m[32m        })[m
+[32m+[m
+[32m+[m
+ class InstructorSectionOverviewScopeTests(TestCase):[m
+     def setUp(self):[m
+         self.client = APIClient()[m

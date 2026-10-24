@@ -212,6 +212,23 @@ describe('Cabinet photo scan integration', () => {
     )
   })
 
+  it('reports open workflow completion without claiming physical movement', async () => {
+    const fetcher = createFetchForStation('Station 1', 4304)
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+    await user.type(await screen.findByLabelText('Mock NFC UID'), 'OPEN-WORKFLOW-STUDENT')
+    await user.click(screen.getByRole('button', { name: 'CHECK NFC' }))
+    await user.click(await screen.findByRole('button', { name: 'CONTINUE' }))
+    await user.click(await screen.findByRole('button', { name: 'OPEN CABINET' }))
+
+    expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
+    expect(screen.getByText(/physical shutter movement was not verified/i)).toBeTruthy()
+  })
+
   it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {
     const registrationUrl = 'http://10.109.175.241:5177/register?token=enrollment-token-123'
     const fetcher = vi.fn(async (url, options = {}) => {
@@ -327,7 +344,8 @@ describe('Cabinet photo scan integration', () => {
     await user.click(await screen.findByRole('button', { name: 'CLOSE CABINET' }))
     await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 2' }))
 
-    expect(await screen.findByRole('heading', { name: 'Cabinet Closed' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Close Workflow Complete' })).toBeTruthy()
+    expect(screen.getByText(/physical shutter movement was not verified/i)).toBeTruthy()
     expect(screen.getAllByText('Opened by')[0].parentElement.textContent).toContain('1')
     expect(screen.getAllByText('Closed by')[0].parentElement.textContent).toContain('1')
     expect(screen.getAllByText(member.fullName)).toHaveLength(2)

@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
+from motor_controller import MotorCommandResult, MotorOutcome
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
 
 
@@ -50,6 +51,11 @@ MAX_LIMIT = 200
 REQUEST_TIMEOUT_SECONDS = 5
 PHOTO_CAPTURE_URL = 'http://192.168.1.61/capture'
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
+MOTOR_WORKFLOW_TRANSITIONS = {
+    'finish_open': 'OPEN',
+    'finish_close': 'CLOSE',
+}
+MOTOR_STATIONS = frozenset({'Station 1', 'Station 2'})
 
 
 class MockNFCReader:
@@ -80,6 +86,33 @@ class DjangoRequestError(RuntimeError):
     def __init__(self, message: str, http_status: int | None = None):
         super().__init__(message)
         self.http_status = http_status
+
+
+class MockMotorController:
+    """Mock-only command sink; it never opens or writes to a serial port."""
+
+    def __init__(self):
+        self.calls = []
+        self._lock = threading.Lock()
+
+    def command(self, station: str, action: str) -> MotorCommandResult:
+        with self._lock:
+            self.calls.append((station, action))
+            transaction_id = len(self.calls)
+        return MotorCommandResult(
+            station=station,
+            action=action,
+            command='MOCK',
+            outcome=MotorOutcome.COMPLETED,
+            session_id='MOCK-ONLY',
+            transaction_id=transaction_id,
+        )
+
+
+def create_motor_controller():
+    if os.environ.get('TAPTRACK_MOTOR_ACTUATION_ENABLED', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
+        raise RuntimeError('Real motor actuation is disabled in this mock-only integration phase.')
+    return MockMotorController()
 
 
 def sanitize_error(value: object, api_key: str = '') -> str:
@@ -537,11 +570,23 @@ class NFCServiceState:
 
 
 class NFCService:
-    def __init__(self, reader, store: SQLiteScanEventStore, verifier: DjangoVerifier, photo_capture=None):
+    def __init__(
+        self,
+        reader,
+        store: SQLiteScanEventStore,
+        verifier: DjangoVerifier,
+        photo_capture=None,
+        motor_controller=None,
+    ):
         self.reader = reader
         self.store = store
         self.verifier = verifier
         self.photo_capture = photo_capture if photo_capture is not None else getattr(verifier, 'photo_capture', None)
+        self.motor_controller = motor_controller if motor_controller is not None else create_motor_controller()
+        self._motor_dispatch_state_lock = threading.Lock()
+        self._motor_command_lock = threading.Lock()
+        self._motor_dispatch_inflight = set()
+        self._motor_dispatch_results = {}
         self.state = NFCServiceState(getattr(reader, 'reader_connected', False))
         self._stop_event = threading.Event()
 
@@ -549,6 +594,61 @@ class NFCService:
         if self.photo_capture is None:
             return False
         return self.photo_capture.capture(event_id)
+
+    def dispatch_motor_transition(self, command: str, station: str, status_code: int, response: dict):
+        action = MOTOR_WORKFLOW_TRANSITIONS.get(command)
+        if action is None or status_code != HTTPStatus.OK or station not in MOTOR_STATIONS:
+            return None
+        if not isinstance(response, dict) or response.get('station') != station:
+            return None
+
+        session = response.get('session')
+        expected_status = 'open' if command == 'finish_open' else 'closed'
+        if (
+            not isinstance(session, dict)
+            or session.get('id') is None
+            or session.get('station') != station
+            or session.get('status') != expected_status
+            or session.get('workflow_state') != 'idle'
+        ):
+            return None
+
+        transition_key = (str(session['id']), command)
+        busy_result = MotorCommandResult(
+            station=station,
+            action=action,
+            command='MOCK',
+            outcome=MotorOutcome.BUSY,
+            error='A motor transition is already in progress.',
+        )
+        with self._motor_dispatch_state_lock:
+            if transition_key in self._motor_dispatch_results:
+                return self._motor_dispatch_results[transition_key]
+            if transition_key in self._motor_dispatch_inflight:
+                return busy_result
+            if not self._motor_command_lock.acquire(blocking=False):
+                self._motor_dispatch_results[transition_key] = busy_result
+                return busy_result
+            self._motor_dispatch_inflight.add(transition_key)
+
+        try:
+            result = self.motor_controller.command(station, action)
+            if not isinstance(result, MotorCommandResult):
+                raise TypeError('Motor controller returned an invalid result.')
+        except Exception:
+            result = MotorCommandResult(
+                station=station,
+                action=action,
+                command='MOCK',
+                outcome=MotorOutcome.UNCERTAIN,
+                error='Motor dispatch outcome is uncertain; automatic retry is disabled.',
+            )
+        finally:
+            with self._motor_dispatch_state_lock:
+                self._motor_dispatch_inflight.discard(transition_key)
+                self._motor_dispatch_results[transition_key] = result
+            self._motor_command_lock.release()
+        return result
 
     def process_uid(self, uid: str) -> dict:
         """Verify one completed UID and persist exactly one resulting event."""
@@ -696,6 +796,7 @@ class NFCHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
                     return
                 status_code, response = service.verifier.workflow(command, station)
+                service.dispatch_motor_transition(command, station, status_code, response)
                 self._send_json(HTTPStatus(status_code), response)
             except (ValueError, json.JSONDecodeError):
                 self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})
