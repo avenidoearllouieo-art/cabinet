@@ -2255,12 +2255,13 @@ class PasswordResetRequestView(APIView):
     throttle_classes = [PasswordResetRateThrottle]
 
     def post(self, request, *args, **kwargs):
-        student_id = (request.data.get('student_id') or '').strip()
-        email = (request.data.get('email') or '').strip()
-
-        if not student_id or not email:
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        student_id = serializer.validated_data['student_id'].strip()
+        email = serializer.validated_data['email'].strip()
+        if not student_id:
             return Response(
-                {'error': 'Student ID and email are required.'},
+                {'student_id': ['Student ID is required.']},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

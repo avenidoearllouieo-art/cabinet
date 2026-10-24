@@ -1850,6 +1850,30 @@ class PasswordResetFlowTests(TestCase):
         self.assertEqual(valid_expired.status_code, invalid_expired.status_code)
         self.assertEqual(valid_expired.json(), invalid_expired.json())
 
+    def test_password_reset_request_rejects_missing_and_malformed_fields(self):
+        invalid_payloads = [
+            {},
+            {'student_id': '', 'email': 'student-a@example.com'},
+            {'student_id': 'STU-001'},
+            {'student_id': ['STU-001'], 'email': 'student-a@example.com'},
+            {'student_id': 'STU-001', 'email': ['student-a@example.com']},
+            {'student_id': '   ', 'email': 'student-a@example.com'},
+            {'student_id': 'STU-001', 'email': 'not-an-email'},
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    '/api/auth/password-reset/request/',
+                    payload,
+                    format='json',
+                )
+
+                self.assertEqual(response.status_code, 400, response.json())
+                self.assertTrue(isinstance(response.json(), dict))
+
+        self.assertFalse(PasswordResetRequest.objects.exists())
+
     def test_invalid_account_details_do_not_leak_through_cabinet_handoff(self):
         valid_response = self.client.post('/api/auth/password-reset/request/', {
             'student_id': 'STU-001',

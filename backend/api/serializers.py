@@ -418,14 +418,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 
-class PasswordResetRequestSerializer(serializers.ModelSerializer):
-    student_id = serializers.CharField(required=True, allow_blank=False)
+class PasswordResetRequestSerializer(serializers.Serializer):
+    student_id = serializers.CharField(required=True, allow_blank=False, max_length=50)
     email = serializers.EmailField(required=True)
-
-    class Meta:
-        model = PasswordResetRequest
-        fields = ['request_id', 'user', 'student_id_snapshot', 'email_snapshot', 'status', 'requested_at', 'expires_at']
-        read_only_fields = ['request_id', 'user', 'student_id_snapshot', 'email_snapshot', 'status', 'requested_at', 'expires_at']
 
 
 class PasswordResetNFCVerificationSerializer(serializers.Serializer):
