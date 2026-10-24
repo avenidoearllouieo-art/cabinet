@@ -85,6 +85,8 @@ The Cabinet UI has no mock NFC mode or manual UID entry. Automated tests use iso
 
 The hardware bridge contract is `GET http://127.0.0.1:5001/api/scans?after=<event_id>&limit=50` and `GET/POST http://127.0.0.1:5001/cabinet/workflow`. The browser sends only workflow commands to the local Pi bridge; it does not send audit fields or receive the device API key.
 
+Password Recovery uses the same active Pi NFC service: Cabinet sends the opaque `request_id` to `POST http://127.0.0.1:5001/password-reset/handoff`; the Pi claims it with Django's device key and routes only the next card to `/api/auth/password-reset/verify-nfc/`. The Web UI polls Django's `POST /api/auth/password-reset/status/` and advances only when the backend returns `verified` with a short-lived reset authorization. The Cabinet polls backend and local reader status but never receives that authorization. Recovery scans are separate from normal access events, photo capture, and motor workflow dispatch. The legacy `pi_service/password_reset_service.py` prototype on port 8765 is not the production scanner.
+
 The QR contains the registration URL and short-lived token returned by Django. The Cabinet does not override the registration URL; the Django setting is the single source of truth. A successful open/close workflow response confirms the Django session transition only; it does not verify physical shutter movement. Keep TB6600 motor-driver power disconnected until limit switches and an emergency stop are installed.
 
 <!-- Cabinet deployment instructions above are the project documentation. -->

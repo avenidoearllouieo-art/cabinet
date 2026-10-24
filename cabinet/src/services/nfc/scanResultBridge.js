@@ -3,9 +3,134 @@ const DEFAULT_SCAN_BRIDGE_URL = 'http://127.0.0.1:5001/api/scans'
 const scanBridgeUrl = (import.meta.env.VITE_NFC_BRIDGE_URL || DEFAULT_SCAN_BRIDGE_URL).replace(/\/$/, '')
 const bridgeOrigin = new URL(scanBridgeUrl).origin
 const workflowUrl = `${bridgeOrigin}/cabinet/workflow`
+const recoveryHandoffUrl = `${bridgeOrigin}/password-reset/handoff`
+const recoveryCancelUrl = `${bridgeOrigin}/password-reset/cancel`
+const recoveryStatusUrl = `${bridgeOrigin}/password-reset/bridge-status`
+const djangoApiBase = (import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')
+const passwordResetStatusUrl = `${djangoApiBase}/auth/password-reset/status/`
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function postJson(url, body, { fetcher = fetch, signal, credentials } = {}, label) {
+  let response
+  try {
+    response = await fetcher(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      ...(signal ? { signal } : {}),
+      ...(credentials ? { credentials } : {}),
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    throw new Error(`${label} service unavailable. Check the connection and try again.`, { cause: error })
+  }
+  let payload
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error(`${label} returned malformed JSON.`)
+  }
+  if (!isRecord(payload)) throw new Error(`${label} returned an invalid response.`)
+  if (!response.ok) throw new Error(payload.error || `${label} returned HTTP ${response.status}.`)
+  return payload
+}
+
+export async function startPasswordRecovery(requestId, options = {}) {
+  const normalizedRequestId = String(requestId || '')
+  if (!normalizedRequestId || normalizedRequestId.length > 128 || normalizedRequestId.trim() !== normalizedRequestId) {
+    throw new Error('Enter a valid password-reset request ID.')
+  }
+  const payload = await postJson(
+    recoveryHandoffUrl,
+    { request_id: normalizedRequestId },
+    options,
+    'Password-recovery handoff',
+  )
+  if (
+    payload.request_id !== normalizedRequestId
+    || payload.state !== 'waiting'
+    || typeof payload.message !== 'string'
+    || typeof payload.expires_at !== 'string'
+  ) {
+    throw new Error('Password-recovery bridge returned an invalid handoff response.')
+  }
+  return payload
+}
+
+export async function cancelPasswordRecovery(requestId, options = {}) {
+  const payload = await postJson(
+    recoveryCancelUrl,
+    { request_id: String(requestId || '') },
+    options,
+    'Password-recovery cancellation',
+  )
+  if (typeof payload.cancelled !== 'boolean') {
+    throw new Error('Password-recovery bridge returned an invalid cancellation response.')
+  }
+  return payload
+}
+
+export async function fetchPasswordRecoveryBridgeStatus(requestId, { signal, fetcher = fetch } = {}) {
+  const url = new URL(recoveryStatusUrl)
+  url.searchParams.set('request_id', String(requestId || ''))
+  let response
+  try {
+    response = await fetcher(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    throw new Error('Password-recovery bridge unavailable. Check the NFC service connection.', { cause: error })
+  }
+  let payload
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error('Password-recovery bridge returned malformed JSON.')
+  }
+  if (!response.ok || !isRecord(payload)) {
+    throw new Error(payload?.error || `Password-recovery bridge returned HTTP ${response.status}.`)
+  }
+  if (payload.state !== 'idle' && (
+    payload.request_id !== String(requestId)
+    || typeof payload.state !== 'string'
+    || typeof payload.message !== 'string'
+  )) {
+    throw new Error('Password-recovery bridge returned an invalid status response.')
+  }
+  return payload
+}
+
+export async function fetchPasswordRecoveryStatus(requestId, { signal, fetcher = fetch } = {}) {
+  const payload = await postJson(
+    passwordResetStatusUrl,
+    { request_id: String(requestId || '') },
+    { signal, fetcher, credentials: 'same-origin' },
+    'Password-reset status',
+  )
+  const status = payload.status ?? payload.state
+  if (
+    (payload.request_id !== undefined && payload.request_id !== String(requestId))
+    || typeof status !== 'string'
+    || !status.trim()
+  ) {
+    throw new Error('Password-reset status returned an invalid response.')
+  }
+  const normalizedStatus = status.toLowerCase()
+  if (normalizedStatus === 'verified' && (
+    typeof payload.reset_authorization !== 'string'
+    || !payload.reset_authorization
+  )) {
+    throw new Error('Password-reset status returned an invalid verification response.')
+  }
+  return { ...payload, status: normalizedStatus }
 }
 
 function isValidSession(session, station) {

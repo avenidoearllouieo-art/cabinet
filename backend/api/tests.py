@@ -1749,7 +1749,7 @@ class PasswordResetFlowTests(TestCase):
             nfc_uid='NFC-USER-002',
         )
 
-    def test_password_reset_request_is_bound_to_existing_user_and_requires_nfc_verification(self):
+    def test_password_reset_request_is_bound_to_user_and_status_issues_authorization_after_nfc(self):
         response = self.client.post('/api/auth/password-reset/request/', {
             'student_id': 'STU-001',
             'email': 'student-a@example.com',
@@ -1758,35 +1758,45 @@ class PasswordResetFlowTests(TestCase):
         self.assertEqual(response.status_code, 200, response.json())
         payload = response.json()
         self.assertIn('request_id', payload)
+        self.assertNotIn('user_id', payload)
 
         reset_request = PasswordResetRequest.objects.get(request_id=payload['request_id'])
         self.assertEqual(reset_request.user_id, self.student_a.pk)
+
+        pending_response = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': reset_request.request_id,
+        }, format='json')
+        self.assertEqual(pending_response.status_code, 200)
+        self.assertEqual(pending_response.json(), {'status': 'pending'})
+        self.assertNotIn('reset_authorization', pending_response.json())
 
         handoff_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
             'request_id': reset_request.request_id,
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
         self.assertEqual(handoff_response.status_code, 200, handoff_response.json())
+        self.assertNotIn('student_id', handoff_response.json())
 
         verify_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
             'request_id': reset_request.request_id,
-            'student_id': 'STU-001',
             'nfc_uid': 'NFC-USER-001',
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
 
         self.assertEqual(verify_response.status_code, 200, verify_response.json())
         verify_payload = verify_response.json()
-        self.assertIn('reset_token', verify_payload)
+        self.assertNotIn('reset_token', verify_payload)
 
-        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+        validation_response = self.client.post('/api/auth/password-reset/status/', {
             'request_id': reset_request.request_id,
-            'reset_token': verify_payload['reset_token'],
         }, format='json')
 
         self.assertEqual(validation_response.status_code, 200, validation_response.json())
         validation_payload = validation_response.json()
-        self.assertTrue(validation_payload['valid'])
+        self.assertEqual(validation_payload['status'], 'verified')
         self.assertIn('reset_authorization', validation_payload)
-        self.assertNotIn('reset_token', validation_payload)
+        repeated_poll = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': reset_request.request_id,
+        }, format='json')
+        self.assertEqual(repeated_poll.json()['reset_authorization'], validation_payload['reset_authorization'])
 
         confirm_response = self.client.post('/api/auth/password-reset/confirm/', {
             'request_id': reset_request.request_id,
@@ -1799,7 +1809,90 @@ class PasswordResetFlowTests(TestCase):
         self.student_a.refresh_from_db()
         self.assertTrue(self.student_a.check_password('NewPassword123!'))
 
-    def test_reset_request_rejects_mismatched_student_id_or_nfc_uid(self):
+    def test_valid_and_invalid_account_requests_have_generic_same_shape(self):
+        valid_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-001',
+            'email': 'student-a@example.com',
+        }, format='json')
+        invalid_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-001',
+            'email': 'other@example.com',
+        }, format='json')
+
+        self.assertEqual(valid_response.status_code, invalid_response.status_code)
+        self.assertEqual(valid_response.status_code, 200)
+        self.assertEqual(set(valid_response.json()), set(invalid_response.json()))
+        self.assertEqual(valid_response.json()['message'], invalid_response.json()['message'])
+        self.assertNotEqual(valid_response.json()['request_id'], invalid_response.json()['request_id'])
+        self.assertNotIn('user_id', invalid_response.json())
+        invalid_reset_request = PasswordResetRequest.objects.get(
+            request_id=invalid_response.json()['request_id'],
+        )
+        self.assertIsNone(invalid_reset_request.user_id)
+        pending = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': invalid_reset_request.request_id,
+        }, format='json')
+        self.assertEqual(pending.json(), {'status': 'pending'})
+
+        valid_reset_request = PasswordResetRequest.objects.get(
+            request_id=valid_response.json()['request_id'],
+        )
+        past = timezone.now() - timedelta(minutes=1)
+        PasswordResetRequest.objects.filter(
+            pk__in=[valid_reset_request.pk, invalid_reset_request.pk],
+        ).update(expires_at=past)
+        valid_expired = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': valid_reset_request.request_id,
+        }, format='json')
+        invalid_expired = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': invalid_reset_request.request_id,
+        }, format='json')
+        self.assertEqual(valid_expired.status_code, invalid_expired.status_code)
+        self.assertEqual(valid_expired.json(), invalid_expired.json())
+
+    def test_invalid_account_details_do_not_leak_through_cabinet_handoff(self):
+        valid_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-001',
+            'email': 'student-a@example.com',
+        }, format='json')
+        invalid_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': 'STU-001',
+            'email': 'wrong@example.com',
+        }, format='json')
+
+        handoff_responses = [
+            self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+                'request_id': response.json()['request_id'],
+            }, HTTP_X_API_KEY=self.device_api_key, format='json')
+            for response in (valid_response, invalid_response)
+        ]
+
+        self.assertEqual([response.status_code for response in handoff_responses], [200, 200])
+        self.assertEqual(
+            [set(response.json()) for response in handoff_responses],
+            [{'request_id', 'expires_at'}, {'request_id', 'expires_at'}],
+        )
+        repeated_handoffs = [
+            self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+                'request_id': response.json()['request_id'],
+            }, HTTP_X_API_KEY=self.device_api_key, format='json')
+            for response in (valid_response, invalid_response)
+        ]
+        self.assertEqual([response.status_code for response in repeated_handoffs], [200, 200])
+
+        invalid_request_id = invalid_response.json()['request_id']
+        invalid_verification = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': invalid_request_id,
+            'nfc_uid': 'NFC-USER-001',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(invalid_verification.status_code, 404)
+
+        pending = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': invalid_request_id,
+        }, format='json')
+        self.assertEqual(pending.json(), {'status': 'pending'})
+
+    def test_nfc_verification_requires_exact_owner_and_does_not_accept_student_id(self):
         response = self.client.post('/api/auth/password-reset/request/', {
             'student_id': 'STU-002',
             'email': 'student-b@example.com',
@@ -1815,12 +1908,16 @@ class PasswordResetFlowTests(TestCase):
 
         mismatched_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
             'request_id': reset_request.request_id,
-            'student_id': 'STU-001',
-            'nfc_uid': 'NFC-USER-002',
+            'nfc_uid': 'NFC-USER-001',
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
 
         self.assertEqual(mismatched_response.status_code, 403, mismatched_response.json())
         self.assertIn('does not match', mismatched_response.json()['error'])
+        correct_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'nfc_uid': 'NFC-USER-002',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(correct_response.status_code, 200, correct_response.json())
 
     def _create_verified_reset_request(self, user=None):
         target = user or self.student_a
@@ -1836,65 +1933,64 @@ class PasswordResetFlowTests(TestCase):
             raise AssertionError(handoff_response.json())
         verify_response = self.client.post('/api/auth/password-reset/verify-nfc/', {
             'request_id': reset_request.request_id,
-            'student_id': target.student_id,
             'nfc_uid': target.nfc_uid,
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
-        return reset_request, verify_response.json()['reset_token']
+        if verify_response.status_code != 200:
+            raise AssertionError(verify_response.json())
+        return reset_request, verify_response
 
     def test_invalid_token_is_rejected_without_authorization(self):
         reset_request, _ = self._create_verified_reset_request()
 
-        response = self.client.post('/api/auth/password-reset/validate-token/', {
+        response = self.client.post('/api/auth/password-reset/confirm/', {
             'request_id': reset_request.request_id,
-            'reset_token': 'invalid-token',
+            'reset_authorization': 'invalid-token',
+            'new_password': 'NewPassword123!',
+            'confirm_password': 'NewPassword123!',
         }, format='json')
 
         self.assertEqual(response.status_code, 400)
-        self.assertNotIn('reset_authorization', response.json())
 
-    def test_expired_token_is_rejected(self):
-        reset_request, reset_token = self._create_verified_reset_request()
+    def test_expired_request_status_does_not_issue_authorization(self):
+        reset_request, _ = self._create_verified_reset_request()
         reset_request.expires_at = timezone.now() - timedelta(minutes=1)
         reset_request.save(update_fields=['expires_at'])
 
-        response = self.client.post('/api/auth/password-reset/validate-token/', {
+        response = self.client.post('/api/auth/password-reset/status/', {
             'request_id': reset_request.request_id,
-            'reset_token': reset_token,
         }, format='json')
 
-        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'status': 'expired'})
 
     def test_token_cannot_validate_against_another_request(self):
-        first_request, reset_token = self._create_verified_reset_request(self.student_a)
+        first_request, _ = self._create_verified_reset_request(self.student_a)
         second_request, _ = self._create_verified_reset_request(self.student_b)
-
-        response = self.client.post('/api/auth/password-reset/validate-token/', {
+        first_status = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': first_request.request_id,
+        }, format='json').json()
+        second_status = self.client.post('/api/auth/password-reset/status/', {
             'request_id': second_request.request_id,
-            'reset_token': reset_token,
-        }, format='json')
-
-        self.assertEqual(response.status_code, 400)
-        first_request.refresh_from_db()
-        self.assertEqual(first_request.status, PasswordResetRequest.StatusChoices.VERIFIED)
+        }, format='json').json()
+        self.assertNotEqual(first_status['reset_authorization'], second_status['reset_authorization'])
 
     def test_used_token_is_rejected(self):
-        reset_request, reset_token = self._create_verified_reset_request()
+        reset_request, _ = self._create_verified_reset_request()
         reset_request.status = PasswordResetRequest.StatusChoices.USED
         reset_request.used_at = timezone.now()
         reset_request.save(update_fields=['status', 'used_at'])
 
-        response = self.client.post('/api/auth/password-reset/validate-token/', {
+        response = self.client.post('/api/auth/password-reset/status/', {
             'request_id': reset_request.request_id,
-            'reset_token': reset_token,
         }, format='json')
 
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'status': 'used'})
 
     def test_expired_authorization_cannot_confirm_password(self):
-        reset_request, reset_token = self._create_verified_reset_request()
-        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+        reset_request, _ = self._create_verified_reset_request()
+        validation_response = self.client.post('/api/auth/password-reset/status/', {
             'request_id': reset_request.request_id,
-            'reset_token': reset_token,
         }, format='json')
         reset_request.refresh_from_db()
         reset_request.reset_authorization_expires_at = timezone.now() - timedelta(minutes=1)
@@ -1907,13 +2003,12 @@ class PasswordResetFlowTests(TestCase):
             'confirm_password': 'NewPassword123!',
         }, format='json')
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 410)
 
     def test_reset_authorization_is_single_use(self):
-        reset_request, reset_token = self._create_verified_reset_request()
-        validation_response = self.client.post('/api/auth/password-reset/validate-token/', {
+        reset_request, _ = self._create_verified_reset_request()
+        validation_response = self.client.post('/api/auth/password-reset/status/', {
             'request_id': reset_request.request_id,
-            'reset_token': reset_token,
         }, format='json')
         authorization = validation_response.json()['reset_authorization']
 
@@ -1931,14 +2026,13 @@ class PasswordResetFlowTests(TestCase):
             'new_password': 'AnotherPassword123!',
             'confirm_password': 'AnotherPassword123!',
         }, format='json')
-        self.assertEqual(replay_response.status_code, 400)
+        self.assertEqual(replay_response.status_code, 409)
 
     def test_nfc_endpoint_requires_device_api_key(self):
         reset_request, _ = self._create_verified_reset_request()
 
         response = self.client.post('/api/auth/password-reset/verify-nfc/', {
             'request_id': reset_request.request_id,
-            'student_id': self.student_a.student_id,
             'nfc_uid': self.student_a.nfc_uid,
         }, format='json')
 
@@ -1953,7 +2047,6 @@ class PasswordResetFlowTests(TestCase):
 
         response = self.client.post('/api/auth/password-reset/verify-nfc/', {
             'request_id': request_id,
-            'student_id': self.student_a.student_id,
             'nfc_uid': self.student_a.nfc_uid,
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
 
@@ -1991,7 +2084,11 @@ class PasswordResetFlowTests(TestCase):
         second_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
             'request_id': reset_request.request_id,
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
-        self.assertEqual(second_response.status_code, 409, second_response.json())
+        self.assertEqual(second_response.status_code, 200, second_response.json())
+        self.assertEqual(
+            second_response.json()['expires_at'],
+            first_response.json()['expires_at'],
+        )
 
         reset_request.refresh_from_db()
         reset_request.cabinet_handoff_expires_at = timezone.now() - timedelta(seconds=1)
@@ -2009,10 +2106,18 @@ class PasswordResetFlowTests(TestCase):
         }, format='json')
         self.assertEqual(login_response.status_code, 200, login_response.json())
 
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
         nfc_response = self.client.post('/api/verify-nfc/', {
             'nfc_uid': self.student_a.nfc_uid,
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
         self.assertEqual(nfc_response.status_code, 200, nfc_response.json())
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.PENDING)
+        self.assertFalse(reset_request.nfc_uid_verified)
 
     def test_password_reset_request_still_works(self):
         response = self.client.post('/api/auth/password-reset/request/', {

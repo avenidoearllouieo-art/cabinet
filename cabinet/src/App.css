@@ -165,6 +165,37 @@
   margin: 0 auto;
 }
 .home-action { width: 100%; min-height: clamp(104px, 17vh, 180px); font-size: clamp(1.05rem, 1.8vw, 1.4rem); }
+.recovery-panel { width: min(720px, 100%); margin: 0 auto; }
+.recovery-form {
+  display: grid;
+  gap: 12px;
+  width: min(520px, 100%);
+  margin: 24px auto;
+  text-align: left;
+}
+.recovery-form label { color: var(--heading); font-weight: 700; }
+.recovery-form input {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--heading);
+  font: inherit;
+}
+.recovery-form input:focus { outline: 3px solid rgba(0, 85, 150, 0.2); border-color: var(--accent); }
+.recovery-status {
+  width: min(520px, 100%);
+  margin: 24px auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+}
+.recovery-status strong { color: var(--heading); }
+.recovery-status p { margin: 8px 0 0; color: var(--muted); line-height: 1.5; }
+.recovery-request-id { overflow-wrap: anywhere; font-size: 0.875rem; }
 .nfc-ring {
   position: relative;
   display: flex;

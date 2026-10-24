@@ -236,6 +236,117 @@ describe('Cabinet real NFC bridge mode', () => {
     expect(screen.getByText(/Open workflow completed for Station 1\. The motor command was not confirmed \(rejected\)\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
   })
 
+  it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
+    const recoveryRequestId = 'opaque-request-id'
+    const fetcher = vi.fn(async (url, options = {}) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          cabinet_name: 'Cabinet 1',
+          stations: [
+            { name: 'Station 1', status: 'available', session: null },
+            { name: 'Station 2', status: 'available', session: null },
+          ],
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      if (requestUrl === 'http://127.0.0.1:5001/password-reset/handoff') {
+        expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
+        return new Response(JSON.stringify({
+          request_id: recoveryRequestId,
+          state: 'waiting',
+          message: 'Request accepted. Tap the NFC card linked to this account.',
+          expires_at: '2026-10-24T12:00:00Z',
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
+        return new Response(JSON.stringify({
+          request_id: recoveryRequestId,
+          active: false,
+          state: 'verified',
+          message: 'The backend confirmed NFC recovery verification.',
+        }), { status: 200 })
+      }
+      if (requestUrl === '/api/auth/password-reset/status/') {
+        expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
+        expect(options.credentials).toBe('same-origin')
+        return new Response(JSON.stringify({
+          request_id: recoveryRequestId,
+          status: 'verified',
+          reset_authorization: 'never-render-this-authorization',
+        }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /password recovery/i }))
+    await user.type(screen.getByLabelText('Password-reset request ID'), recoveryRequestId)
+    await user.click(screen.getByRole('button', { name: 'START NFC RECOVERY' }))
+
+    expect(await screen.findByText('Django confirmed password-recovery status: verified.')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('never-render-this-authorization')
+    expect(fetcher.mock.calls.some(([url, options]) => (
+      String(url) === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST'
+    ))).toBe(false)
+    expect(fetcher.mock.calls.some(([url]) => String(url) === 'http://127.0.0.1:5001/password-reset/handoff')).toBe(true)
+  })
+
+  it('shows a wrong-card response from the recovery reader without processing it as an access scan', async () => {
+    const recoveryRequestId = 'opaque-wrong-card'
+    const fetcher = vi.fn(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          cabinet_name: 'Cabinet 1',
+          stations: [{ name: 'Station 1', status: 'available', session: null }],
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      if (requestUrl === 'http://127.0.0.1:5001/password-reset/handoff') {
+        return new Response(JSON.stringify({
+          request_id: recoveryRequestId,
+          state: 'waiting',
+          message: 'Tap the card linked to this account.',
+          expires_at: '2026-10-24T12:00:00Z',
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
+        return new Response(JSON.stringify({
+          request_id: recoveryRequestId,
+          state: 'failed',
+          message: 'This card does not match the password-reset request.',
+        }), { status: 200 })
+      }
+      if (requestUrl === '/api/auth/password-reset/status/') {
+        return new Response(JSON.stringify({ request_id: recoveryRequestId, status: 'pending' }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /password recovery/i }))
+    await user.type(screen.getByLabelText('Password-reset request ID'), recoveryRequestId)
+    await user.click(screen.getByRole('button', { name: 'START NFC RECOVERY' }))
+
+    expect(await screen.findByText('This card does not match the password-reset request.')).toBeTruthy()
+    expect(fetcher.mock.calls.some(([url, options]) => (
+      String(url).startsWith('http://127.0.0.1:5001/api/scans') && options.method === 'POST'
+    ))).toBe(false)
+  })
+
   it('shows uncertain serial transmission details without implying no command was sent', async () => {
     const openingSession = {
       id: 24,

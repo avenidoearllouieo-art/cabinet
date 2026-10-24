@@ -535,13 +535,16 @@ class PasswordResetRequest(models.Model):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='password_reset_requests'
+        related_name='password_reset_requests',
+        null=True,
+        blank=True,
     )
     request_id = models.CharField(max_length=64, unique=True, blank=True, default='')
     student_id_snapshot = models.CharField(max_length=50, blank=True, default='')
     email_snapshot = models.EmailField(blank=True, default='')
     reset_token_hash = models.CharField(max_length=255, blank=True, default='')
     reset_authorization_hash = models.CharField(max_length=255, blank=True, default='')
+    reset_authorization_nonce = models.CharField(max_length=64, blank=True, default='')
     reset_authorization_expires_at = models.DateTimeField(null=True, blank=True)
     reset_authorization_used_at = models.DateTimeField(null=True, blank=True)
     cabinet_handoff_claimed_at = models.DateTimeField(null=True, blank=True)
@@ -593,7 +596,7 @@ class PasswordResetRequest(models.Model):
         return timezone.now() > self.expires_at
 
     def __str__(self):
-        return f"Password reset for {self.user_id} ({self.status})"
+        return f"Password reset ({self.status})"
 
     class Meta:
         ordering = ['-requested_at']

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCabinetWorkflow, fetchNfcServiceStatus, fetchScanEvents, sendCabinetWorkflow } from './scanResultBridge.js'
+import {
+  cancelPasswordRecovery,
+  fetchCabinetWorkflow,
+  fetchNfcServiceStatus,
+  fetchPasswordRecoveryBridgeStatus,
+  fetchPasswordRecoveryStatus,
+  fetchScanEvents,
+  sendCabinetWorkflow,
+  startPasswordRecovery,
+} from './scanResultBridge.js'
 
 describe('Cabinet workflow status requests', () => {
   it('uses the real NFC bridge for workflow reads without mock headers', async () => {
@@ -91,5 +100,63 @@ describe('Cabinet workflow status requests', () => {
         fetcher: async () => new Response(JSON.stringify(payload), { status: 200 }),
       })).rejects.toThrow(/invalid session response|did not confirm/i)
     }
+  })
+
+  it('starts and cancels opaque password recovery requests through the loopback bridge', async () => {
+    const calls = []
+    const fetcher = async (url, options) => {
+      calls.push({ url: String(url), options })
+      return new Response(JSON.stringify(
+        options.method === 'POST' && String(url).endsWith('/handoff')
+          ? {
+            request_id: 'opaque-id',
+            state: 'waiting',
+            message: 'Tap the registered card.',
+            expires_at: '2026-10-24T12:00:00Z',
+          }
+          : { cancelled: true },
+      ), { status: 200 })
+    }
+
+    await startPasswordRecovery('opaque-id', { fetcher })
+    await cancelPasswordRecovery('opaque-id', { fetcher })
+
+    expect(calls[0].url).toBe('http://127.0.0.1:5001/password-reset/handoff')
+    expect(JSON.parse(calls[0].options.body)).toEqual({ request_id: 'opaque-id' })
+    expect(calls[1].url).toBe('http://127.0.0.1:5001/password-reset/cancel')
+    expect(JSON.parse(calls[1].options.body)).toEqual({ request_id: 'opaque-id' })
+    await expect(startPasswordRecovery('')).rejects.toThrow('Enter a valid password-reset request ID.')
+  })
+
+  it('polls Django recovery status separately and rejects malformed responses', async () => {
+    const requests = []
+    const status = await fetchPasswordRecoveryStatus('opaque-id', {
+      fetcher: async (url, options) => {
+        requests.push({ url: String(url), options })
+        return new Response(JSON.stringify({
+          request_id: 'opaque-id',
+          status: 'verified',
+          reset_authorization: 'never-render-this-authorization',
+        }), { status: 200 })
+      },
+    })
+    expect(requests[0].url).toBe('/api/auth/password-reset/status/')
+    expect(requests[0].options.credentials).toBe('same-origin')
+    expect(JSON.parse(requests[0].options.body)).toEqual({ request_id: 'opaque-id' })
+    expect(status.status).toBe('verified')
+
+    await expect(fetchPasswordRecoveryStatus('opaque-id', {
+      fetcher: async () => new Response(JSON.stringify({
+        request_id: 'opaque-id',
+        status: 'verified',
+      }), { status: 200 }),
+    })).rejects.toThrow('Password-reset status returned an invalid verification response.')
+
+    await expect(fetchPasswordRecoveryStatus('opaque-id', {
+      fetcher: async () => new Response('not-json', { status: 200 }),
+    })).rejects.toThrow('Password-reset status returned malformed JSON.')
+    await expect(fetchPasswordRecoveryBridgeStatus('opaque-id', {
+      fetcher: async () => new Response(JSON.stringify({ request_id: 'different', state: 'waiting', message: 'wait' }), { status: 200 }),
+    })).rejects.toThrow('Password-recovery bridge returned an invalid status response.')
   })
 })

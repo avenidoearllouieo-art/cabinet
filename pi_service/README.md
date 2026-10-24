@@ -1,6 +1,6 @@
-# TapTrack Raspberry Pi Password-Reset Service
+# TapTrack Raspberry Pi NFC Service
 
-This service is the device-side bridge for the password-recovery flow. It is separate from the React cabinet prototype and should run on the Raspberry Pi.
+The production Cabinet service is `nfc_service.py`. `password_reset_service.py` is a separate legacy prototype with unimplemented production scanner/display adapters; it listens on port 8765 and must not be used for production NFC recovery.
 
 ## Security boundary
 
@@ -28,9 +28,9 @@ $env:TAPTRACK_MOCK_NFC_UID = 'a-registered-demo-uid'
 python password_reset_service.py
 ```
 
-## Browser handoff
+## Prototype handoff (not production)
 
-The future Password Recovery web screen can POST to the local service:
+The legacy prototype accepts a browser handoff at:
 
 ```http
 POST http://127.0.0.1:8765/password-reset/handoff
@@ -39,7 +39,7 @@ Content-Type: application/json
 {"request_id":"..."}
 ```
 
-The response contains only the handoff status and expiration. The service then waits for the NFC adapter, calls Django, and displays the returned one-time code locally on the cabinet. The code is entered manually on the web recovery page.
+This separate prototype does not own the production NFC reader and its production scanner/display are stubs. Do not use it to handle live card scans or reset credentials.
 
 In mock mode, the Cabinet React prototype uses these loopback-only endpoints:
 
@@ -91,6 +91,36 @@ IC Reader IC Reader USB keyboard-wedge
 The NFC service sends the Django request server-side using `DEVICE_API_KEY` (or `TAPTRACK_DEVICE_API_KEY`) from its process environment. It stores no key in SQLite and exposes no key to the browser. A completed registered response becomes a `registered` event; Django's 404 enrollment response becomes `unregistered`; network, HTTP, and malformed-result failures become `error`. One parsed Enter-terminated UID invokes one verifier call and one SQLite insert. Bridge polling is read-only and never creates another Django request.
 
 The SQLite database defaults to `pi_service/nfc_events.sqlite3`; override it with `TAPTRACK_NFC_DB_PATH`. The bridge binds only to `127.0.0.1:5001`, permits CORS only from `http://127.0.0.1:4000` and `http://localhost:4000`, returns events in ascending `event_id` order, and never deletes events on GET.
+
+### Production password recovery
+
+Password recovery is integrated into the already-running `nfc_service.py` reader loop; it does not use the prototype service or port 8765. The Cabinet submits the opaque request ID to the loopback bridge:
+
+```http
+POST http://127.0.0.1:5001/password-reset/handoff
+Content-Type: application/json
+Origin: <allowed Cabinet origin>
+
+{"request_id":"..."}
+```
+
+The bridge validates the browser origin and body, then claims the request server-side with the device key:
+
+```text
+POST /api/auth/password-reset/cabinet-handoff/
+{"request_id":"..."}
+```
+
+Only the next UID read while that handoff is pending is routed to:
+
+```text
+POST /api/auth/password-reset/verify-nfc/
+{"request_id":"...","nfc_uid":"..."}
+```
+
+Both Pi requests use `X-API-Key`; verification intentionally sends no student/account identifier because Django derives the account from the reset request. A recovery UID is not added to the normal scan-event log and does not invoke access verification, photo capture, or motor/workflow code. At most one handoff is active. The bridge uses Django's `expires_at` when supplied, capped at five minutes; otherwise it expires locally after two minutes. Cancel, expiry, a consumed card, and verification errors release recovery mode.
+
+The browser polls Django with `POST /api/auth/password-reset/status/` and `{"request_id":"..."}` using same-origin session credentials. Django returns lowercase `pending` until the reader verifies the registered card, then `verified` with a short-lived `reset_authorization`. The Web UI advances only for `verified` when that authorization is present; the Cabinet UI receives neither the authorization nor a reset token. `GET /password-reset/bridge-status?request_id=...` supplies only local reader feedback. The bridge accepts only configured loopback UI origins and request bodies containing exactly one printable ASCII `request_id` of at most 128 characters.
 
 ### Cabinet motor integration (safety-disabled by default)
 

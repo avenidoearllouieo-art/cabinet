@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, KeyRound, LockKeyhole, Mail, ShieldCheck, UserRound } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
@@ -6,20 +6,7 @@ import TapTrackLogo from '../../components/TapTrackLogo.jsx'
 import { FormField, InlineFeedback, PasswordField } from '../../components/forms/FormPrimitives.jsx'
 
 const steps = ['Account details', 'Cabinet verification', 'New password']
-const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
-
-async function handoffRequestToCabinet(requestId) {
-  try {
-    const response = await fetch(`${PI_SERVICE_URL}/password-reset/handoff`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_id: requestId }),
-    })
-    if (!response.ok) throw new Error('Cabinet service rejected the request.')
-  } catch (error) {
-    throw new Error('The cabinet service is unavailable. Start the cabinet recovery service and try again.', { cause: error })
-  }
-}
+const STATUS_POLL_INTERVAL_MS = 2500
 
 function getApiError(error, fallback) {
   const status = error.response?.status
@@ -79,13 +66,89 @@ export default function ForgotPassword() {
   const [studentId, setStudentId] = useState('')
   const [email, setEmail] = useState('')
   const [requestId, setRequestId] = useState('')
-  const [resetToken, setResetToken] = useState('')
+  const [requestExpiresAt, setRequestExpiresAt] = useState('')
   const [resetAuthorization, setResetAuthorization] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false)
+  const [verificationEnded, setVerificationEnded] = useState(false)
+  const pollingRef = useRef(false)
+
+  const checkVerificationStatus = useCallback(async (isActive = () => true) => {
+    if (!requestId || pollingRef.current || verificationEnded) return
+
+    pollingRef.current = true
+    setIsCheckingStatus(true)
+    try {
+      const response = await api.post('/auth/password-reset/status/', { request_id: requestId })
+      const { status: responseStatus, reset_authorization: authorization } = response.data || {}
+      const status = typeof responseStatus === 'string' ? responseStatus.trim().toLowerCase() : ''
+      if (!isActive()) return
+
+      if (status === 'pending' || status === 'pending_cabinet_verification') {
+        setError('')
+        setSuccess('Waiting for the cabinet to verify your registered NFC card...')
+        return
+      }
+
+      if (status === 'verified') {
+        if (typeof authorization !== 'string' || !authorization) {
+          setError('Cabinet verification was reported without reset authorization. Start again or contact support.')
+          setSuccess('')
+          setVerificationEnded(true)
+          return
+        }
+        setError('')
+        setSuccess('Cabinet verification completed. You can now create a new password.')
+        setResetAuthorization(authorization)
+        setStep(2)
+        return
+      }
+
+      const terminalErrors = {
+        expired: 'This reset request has expired. Start again to create a new request.',
+        cancelled: 'This reset request was cancelled. Start again to create a new request.',
+        used: 'This reset request has already been used. Start again to create a new request.',
+        rejected: 'Cabinet verification was rejected. Start again or contact support.',
+      }
+      const statusError = Object.hasOwn(terminalErrors, status)
+        ? terminalErrors[status]
+        : 'The reset request returned an unexpected status. Start again or contact support.'
+      setError(statusError)
+      setSuccess('')
+      setVerificationEnded(true)
+    } catch {
+      if (isActive()) {
+        setError('We could not check cabinet verification status. We will keep trying; you can also check again.')
+        setSuccess('')
+      }
+    } finally {
+      pollingRef.current = false
+      if (isActive()) setIsCheckingStatus(false)
+    }
+  }, [requestId, verificationEnded])
+
+  useEffect(() => {
+    if (step !== 1 || !requestId || verificationEnded) return undefined
+
+    let active = true
+    const isActive = () => active
+    const initialCheckId = window.setTimeout(() => {
+      void checkVerificationStatus(isActive)
+    }, 0)
+    const intervalId = window.setInterval(() => {
+      void checkVerificationStatus(isActive)
+    }, STATUS_POLL_INTERVAL_MS)
+
+    return () => {
+      active = false
+      window.clearTimeout(initialCheckId)
+      window.clearInterval(intervalId)
+    }
+  }, [checkVerificationStatus, requestId, step, verificationEnded])
 
   const handleRequest = async (event) => {
     event.preventDefault()
@@ -108,45 +171,13 @@ export default function ForgotPassword() {
       })
       const nextRequestId = response.data.request_id || ''
       if (!nextRequestId) throw new Error('The reset request did not include a request ID.')
-      await handoffRequestToCabinet(nextRequestId)
       setRequestId(nextRequestId)
-      setSuccess('Your reset request is ready. Continue to the cabinet for NFC verification.')
+      setRequestExpiresAt(response.data.expires_at || '')
+      setVerificationEnded(false)
+      setSuccess('Your recovery reference is ready. Enter it on the Cabinet UI, then tap your registered NFC card.')
       setStep(1)
     } catch (requestError) {
       setError(getApiError(requestError, 'We could not start the password reset. Please try again.'))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleTokenValidation = async (event) => {
-    event.preventDefault()
-    if (isSubmitting) return
-
-    const trimmedToken = resetToken.trim()
-    if (!trimmedToken) {
-      setError('Enter the one-time code displayed by the cabinet.')
-      return
-    }
-
-    setError('')
-    setSuccess('')
-    setIsSubmitting(true)
-    try {
-      const response = await api.post('/auth/password-reset/validate-token/', {
-        request_id: requestId,
-        reset_token: trimmedToken,
-      })
-      if (!response.data.valid || !response.data.reset_authorization) {
-        setError('The cabinet code could not be validated. Start again if the problem continues.')
-        return
-      }
-      setResetAuthorization(response.data.reset_authorization)
-      setResetToken('')
-      setSuccess('Cabinet verification completed. You can now create a new password.')
-      setStep(2)
-    } catch (validationError) {
-      setError(getApiError(validationError, 'The cabinet code could not be validated. Check it and try again.'))
     } finally {
       setIsSubmitting(false)
     }
@@ -195,8 +226,9 @@ export default function ForgotPassword() {
   const startOver = () => {
     setStep(0)
     setRequestId('')
-    setResetToken('')
+    setRequestExpiresAt('')
     setResetAuthorization('')
+    setVerificationEnded(false)
     setError('')
     setSuccess('')
   }
@@ -247,15 +279,17 @@ export default function ForgotPassword() {
   if (step === 1) {
     return (
       <ResetShell currentStep={1} title="Verify at the cabinet" description="The cabinet confirms that the registered NFC card belongs to this reset request.">
-        <form className="space-y-5" onSubmit={handleTokenValidation} noValidate>
-          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-[#31577f]"><div className="mb-2 flex items-center gap-2 font-bold text-[#002B5B]"><KeyRound size={18} aria-hidden="true" /> Cabinet verification</div>Tap your registered NFC card at the cabinet. After successful verification, enter the one-time reset code displayed on the cabinet. React does not perform the NFC verification.</div>
-          <FormField label="One-time reset code" required helper="This code expires and can only be used for this reset request.">
-            {({ id, describedBy }) => <input id={id} type="text" value={resetToken} onChange={(event) => setResetToken(event.target.value)} className="min-h-12 w-full rounded-xl border border-[#dbe3ed] bg-white px-4 text-sm text-[#14243a] outline-none transition focus:border-[#F3CA4D] focus:shadow-[0_0_0_3px_rgba(255,193,7,0.12)]" placeholder="Enter the code shown by the cabinet" autoComplete="one-time-code" aria-describedby={describedBy} required />}
-          </FormField>
+        <div className="space-y-5">
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-[#31577f]"><div className="mb-2 flex items-center gap-2 font-bold text-[#002B5B]"><KeyRound size={18} aria-hidden="true" /> Cabinet verification</div>Enter the recovery reference below on the Cabinet UI, then tap your registered NFC card. This page will automatically check for the cabinet’s verification.</div>
+          <div className="rounded-xl border border-[#dbe3ed] bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#718096]">Recovery reference</p>
+            <code className="mt-2 block break-all rounded-lg bg-[#F4F7FB] px-3 py-3 text-sm font-bold text-[#002B5B]" data-testid="recovery-reference">{requestId}</code>
+            {requestExpiresAt && <p className="mt-2 text-xs text-[#718096]">Request expires: {requestExpiresAt}</p>}
+          </div>
           <InlineFeedback type={success ? 'success' : 'error'}>{success || error}</InlineFeedback>
-          <button type="submit" disabled={isSubmitting} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20 disabled:cursor-not-allowed disabled:opacity-70">{isSubmitting ? 'Checking code...' : 'Verify code'} <ShieldCheck size={16} /></button>
+          <button type="button" onClick={() => void checkVerificationStatus()} disabled={isCheckingStatus || verificationEnded} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20 disabled:cursor-not-allowed disabled:opacity-70">{isCheckingStatus ? 'Checking status...' : 'Check verification status'} <ShieldCheck size={16} /></button>
           <button type="button" onClick={startOver} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dbe3ed] bg-white px-5 py-2.5 text-sm font-semibold text-[#002B5B] transition hover:bg-[#EEF4FA]"><ArrowLeft size={16} /> Start over</button>
-        </form>
+        </div>
       </ResetShell>
     )
   }

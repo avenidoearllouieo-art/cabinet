@@ -3,7 +3,17 @@ import { QRCodeSVG } from 'qrcode.react'
 import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
-import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchNfcServiceStatus, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
+import {
+  cancelPasswordRecovery,
+  captureAccessLogPhoto,
+  fetchCabinetWorkflow,
+  fetchNfcServiceStatus,
+  fetchPasswordRecoveryBridgeStatus,
+  fetchPasswordRecoveryStatus,
+  fetchScanEvents,
+  sendCabinetWorkflow,
+  startPasswordRecovery,
+} from './services/nfc/scanResultBridge'
 import './App.css'
 
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
@@ -133,6 +143,11 @@ export default function App() {
   const [workflowLoaded, setWorkflowLoaded] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [serviceStatus, setServiceStatus] = useState(null)
+  const [recoveryRequestInput, setRecoveryRequestInput] = useState('')
+  const [recoveryRequestId, setRecoveryRequestId] = useState('')
+  const [recoveryPhase, setRecoveryPhase] = useState('idle')
+  const [recoveryMessage, setRecoveryMessage] = useState('')
+  const [recoveryError, setRecoveryError] = useState('')
   const [accessState, setAccessState] = useState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
   const nfcScanCursorRef = useRef(loadNfcScanCursor())
   const participantsByUidRef = useRef(new Map())
@@ -141,6 +156,99 @@ export default function App() {
   const bridgeAbortControllerRef = useRef(null)
   const bridgeErrorRef = useRef('')
   const photoEventIdRef = useRef(null)
+  const recoveryAbortControllerRef = useRef(null)
+
+  const beginPasswordRecovery = async (event) => {
+    event.preventDefault()
+    setRecoveryRequestId('')
+    setRecoveryError('')
+    setRecoveryMessage('Contacting the NFC bridge and validating the request…')
+    setRecoveryPhase('starting')
+    try {
+      const handoff = await startPasswordRecovery(recoveryRequestInput.trim())
+      setRecoveryRequestId(handoff.request_id)
+      setRecoveryMessage(handoff.message)
+      setRecoveryPhase('waiting')
+    } catch (error) {
+      setRecoveryPhase('failed')
+      setRecoveryMessage('')
+      setRecoveryError(error.message || 'Password recovery could not be started.')
+    }
+  }
+
+  const cancelRecovery = async () => {
+    recoveryAbortControllerRef.current?.abort()
+    if (recoveryRequestId) {
+      try {
+        await cancelPasswordRecovery(recoveryRequestId)
+      } catch (error) {
+        setRecoveryError(error.message || 'The NFC bridge could not confirm cancellation.')
+      }
+    }
+    setRecoveryRequestId('')
+    setRecoveryPhase('idle')
+    setRecoveryMessage('')
+  }
+
+  useEffect(() => {
+    if (view !== 'password-recovery' || recoveryPhase !== 'waiting' || !recoveryRequestId) return undefined
+    let cancelled = false
+    let timeoutId
+    let pollController
+
+    const poll = async () => {
+      pollController = new AbortController()
+      recoveryAbortControllerRef.current = pollController
+      try {
+        const [backendStatus, bridgeStatus] = await Promise.all([
+          fetchPasswordRecoveryStatus(recoveryRequestId, { signal: pollController.signal }),
+          fetchPasswordRecoveryBridgeStatus(recoveryRequestId, { signal: pollController.signal }),
+        ])
+        if (cancelled) return
+        const status = backendStatus.status
+        if (status === 'verified') {
+          setRecoveryPhase('confirmed')
+          setRecoveryMessage(`Django confirmed password-recovery status: ${status}.`)
+          setRecoveryError('')
+          return
+        }
+        if (status === 'expired' || status === 'used' || status === 'cancelled') {
+          void cancelPasswordRecovery(recoveryRequestId).catch(() => {})
+          setRecoveryPhase(status === 'expired' ? 'expired' : 'failed')
+          setRecoveryMessage(`Django reported password-recovery status: ${status}.`)
+          return
+        }
+        if (status !== 'pending') {
+          setRecoveryPhase('failed')
+          setRecoveryMessage('Django returned an unexpected password-recovery status.')
+          return
+        }
+        if (bridgeStatus.state === 'failed' || bridgeStatus.state === 'expired' || bridgeStatus.state === 'cancelled') {
+          setRecoveryPhase(bridgeStatus.state)
+          setRecoveryMessage(bridgeStatus.message)
+          return
+        }
+        setRecoveryMessage(`Django reports password-recovery status: ${status}. Tap the registered card when ready.`)
+        setRecoveryError('')
+      } catch (error) {
+        if (!cancelled && !pollController.signal.aborted) {
+          setRecoveryError(error.message || 'Unable to check password-recovery status.')
+        }
+      } finally {
+        if (!cancelled && !pollController.signal.aborted) {
+          timeoutId = window.setTimeout(poll, 1500)
+        }
+      }
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+      pollController?.abort()
+      if (recoveryAbortControllerRef.current === pollController) recoveryAbortControllerRef.current = null
+    }
+  }, [view, recoveryPhase, recoveryRequestId])
 
   const loadScanPhoto = useCallback((event) => {
     const eventId = getDjangoAccessLogEventId(event)
@@ -728,9 +836,73 @@ export default function App() {
             <div className="home-actions">
               <button className="btn primary home-action" onClick={startOpenSession}>OPEN CABINET</button>
               <button className="btn secondary home-action" onClick={startCloseSession}>CLOSE CABINET</button>
+              <button className="btn ghost home-action" onClick={() => {
+                setRecoveryError('')
+                setRecoveryMessage('')
+                setRecoveryPhase('idle')
+                setView('password-recovery')
+              }}>PASSWORD RECOVERY</button>
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
             </div>
             {errorMessage && <div className="error-banner" role="alert">{errorMessage}</div>}
+          </div>
+        </Screen>
+      )}
+
+      {view === 'password-recovery' && (
+        <Screen>
+          <div className="panel recovery-panel">
+            <h2>Password Recovery</h2>
+            <p className="muted">
+              Enter the opaque request ID supplied by the password-reset page. The next card tapped will be used only for this recovery request.
+            </p>
+            {recoveryPhase === 'idle' || recoveryPhase === 'failed' ? (
+              <>
+                {recoveryPhase === 'failed' && recoveryMessage && <p className="recovery-status" role="status">{recoveryMessage}</p>}
+                <form className="recovery-form" onSubmit={beginPasswordRecovery}>
+                  <label htmlFor="password-recovery-request-id">Password-reset request ID</label>
+                  <input
+                    id="password-recovery-request-id"
+                    type="text"
+                    autoComplete="off"
+                    maxLength={128}
+                    value={recoveryRequestInput}
+                    onChange={(event) => setRecoveryRequestInput(event.target.value)}
+                    disabled={recoveryPhase === 'starting'}
+                    required
+                  />
+                  <button className="btn primary" type="submit" disabled={recoveryPhase === 'starting'}>
+                    {recoveryPhase === 'starting' ? 'CHECKING REQUEST…' : 'START NFC RECOVERY'}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div className="recovery-status" role="status">
+                <strong>
+                  {recoveryPhase === 'starting' ? 'Checking request'
+                    : recoveryPhase === 'waiting' ? 'Waiting for registered card'
+                      : recoveryPhase === 'confirmed' ? 'Recovery confirmed by Django'
+                        : recoveryPhase === 'expired' ? 'Recovery request expired'
+                          : 'Recovery not completed'}
+                </strong>
+                {recoveryMessage && <p>{recoveryMessage}</p>}
+                {recoveryRequestId && <p className="recovery-request-id">Request: {recoveryRequestId}</p>}
+              </div>
+            )}
+            {recoveryError && <div className="error-banner" role="alert">{recoveryError}</div>}
+            <div className="button-row">
+              {recoveryPhase === 'waiting' || recoveryPhase === 'starting'
+                ? <button className="btn secondary" type="button" onClick={cancelRecovery} disabled={recoveryPhase === 'starting'}>CANCEL RECOVERY</button>
+                : <button className="btn ghost" type="button" onClick={async () => {
+                  if (recoveryRequestId) await cancelRecovery()
+                  else {
+                    setRecoveryPhase('idle')
+                    setRecoveryMessage('')
+                    setRecoveryError('')
+                  }
+                  setView('home')
+                }}>BACK TO HOME</button>}
+            </div>
           </div>
         </Screen>
       )}

@@ -134,3 +134,10 @@ class PasswordResetRateThrottle(AnonRateThrottle):
 
     def get_rate(self):
         return self.rate
+
+
+class PasswordResetStatusRateThrottle(AnonRateThrottle):
+    rate = '300/hour'
+
+    def get_rate(self):
+        return self.rate

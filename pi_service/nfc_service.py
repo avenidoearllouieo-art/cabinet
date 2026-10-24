@@ -59,6 +59,9 @@ ALLOWED_ORIGINS = frozenset({
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 REQUEST_TIMEOUT_SECONDS = 5
+PASSWORD_RECOVERY_MAX_REQUEST_ID_LENGTH = 128
+PASSWORD_RECOVERY_DEFAULT_TTL_SECONDS = 120
+PASSWORD_RECOVERY_MAX_TTL_SECONDS = 300
 PHOTO_CAPTURE_URL = 'http://192.168.1.61/capture'
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 MOTOR_WORKFLOW_TRANSITIONS = {
@@ -374,6 +377,47 @@ class DjangoVerifier:
 
     def _sanitize_error(self, value: object) -> str:
         return sanitize_error(value, self.api_key)
+
+    def _password_reset_url(self, endpoint: str) -> str:
+        parsed_url = urlsplit(self.url)
+        api_path = parsed_url.path.rstrip('/').rsplit('/', 1)[0].rstrip('/')
+        return urlunsplit((parsed_url.scheme, parsed_url.netloc, f'{api_path}/auth/password-reset/{endpoint}/', '', ''))
+
+    def password_reset_request(self, endpoint: str, payload: dict) -> tuple[int, dict]:
+        if not self.api_key:
+            raise DjangoRequestError('Django device API key is not configured.')
+        if endpoint not in {'cabinet-handoff', 'verify-nfc'}:
+            raise ValueError('Unsupported password-reset endpoint.')
+        request = urllib.request.Request(
+            self._password_reset_url(endpoint),
+            data=json.dumps(payload).encode('utf-8'),
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-API-Key': self.api_key,
+            },
+            method='POST',
+        )
+        try:
+            opener = self.opener or urllib.request.urlopen
+            response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                status_code = response.status
+                body = response.read()
+        except urllib.error.HTTPError as error:
+            status_code = error.code
+            body = error.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise DjangoRequestError('Unable to reach the Django password-reset service.') from error
+        try:
+            response_payload = json.loads(body.decode('utf-8')) if body else None
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise DjangoRequestError('Django password-reset service returned malformed JSON.', status_code) from error
+        if not isinstance(response_payload, dict):
+            raise DjangoRequestError('Django password-reset service returned an invalid response.', status_code)
+        if 'error' in response_payload:
+            response_payload['error'] = self._sanitize_error(response_payload['error'])
+        return status_code, response_payload
 
     def verify(self, uid: str) -> tuple[int, dict]:
         if not self.api_key:
@@ -802,6 +846,194 @@ class NFCService:
             self.recovered_motor_actions = 0
         self.state = NFCServiceState(getattr(reader, 'reader_connected', False))
         self._stop_event = threading.Event()
+        self._recovery_lock = threading.RLock()
+        self._active_recovery: dict | None = None
+        self._recovery_expiry_timer: threading.Timer | None = None
+        self._recovery_snapshot: dict | None = None
+
+    @staticmethod
+    def _validate_recovery_request_id(request_id: object) -> str:
+        if (
+            not isinstance(request_id, str)
+            or not request_id
+            or len(request_id) > PASSWORD_RECOVERY_MAX_REQUEST_ID_LENGTH
+            or request_id != request_id.strip()
+            or not request_id.isascii()
+            or any(not character.isprintable() or character.isspace() for character in request_id)
+        ):
+            raise ValueError('A valid password-reset request ID is required.')
+        return request_id
+
+    @staticmethod
+    def _handoff_ttl(payload: dict) -> int:
+        expires_at = payload.get('expires_at')
+        if expires_at is None:
+            return PASSWORD_RECOVERY_DEFAULT_TTL_SECONDS
+        if not isinstance(expires_at, str):
+            raise ValueError('Django returned an invalid password-reset expiry.')
+        try:
+            expiry = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+        except ValueError as error:
+            raise ValueError('Django returned an invalid password-reset expiry.') from error
+        remaining = (expiry - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            raise DjangoRequestError('This password-reset request has expired.', HTTPStatus.GONE)
+        return max(1, min(int(remaining), PASSWORD_RECOVERY_MAX_TTL_SECONDS))
+
+    def start_password_recovery(self, request_id: str) -> dict:
+        request_id = self._validate_recovery_request_id(request_id)
+        with self._recovery_lock:
+            if self._active_recovery is not None:
+                if self._active_recovery.get('scan_claimed'):
+                    raise RuntimeError('Password-recovery verification is already in progress.')
+                if self._active_recovery['expires_at_monotonic'] <= time.monotonic():
+                    self._expire_password_recovery(request_id=self._active_recovery['request_id'])
+                else:
+                    raise RuntimeError('A password-recovery handoff is already active.')
+            if not callable(getattr(self.verifier, 'password_reset_request', None)):
+                raise DjangoRequestError('The Django password-reset bridge is unavailable.')
+            status_code, payload = self.verifier.password_reset_request(
+                'cabinet-handoff',
+                {'request_id': request_id},
+            )
+            if status_code < 200 or status_code >= 300:
+                raise DjangoRequestError(
+                    sanitize_error(payload.get('error') or 'Django rejected the password-reset handoff.'),
+                    status_code,
+                )
+            if payload.get('request_id') != request_id:
+                raise DjangoRequestError('Django returned a mismatched password-reset request.', HTTPStatus.BAD_GATEWAY)
+            try:
+                ttl = self._handoff_ttl(payload)
+            except ValueError as error:
+                raise DjangoRequestError(str(error), HTTPStatus.BAD_GATEWAY) from error
+            expires_at = payload.get('expires_at')
+            if expires_at is None:
+                expires_at = datetime.fromtimestamp(time.time() + ttl, timezone.utc).isoformat()
+            self._active_recovery = {
+                'request_id': request_id,
+                'expires_at': expires_at,
+                'expires_at_monotonic': time.monotonic() + ttl,
+            }
+            self._recovery_snapshot = {
+                'request_id': request_id,
+                'state': 'waiting',
+                'message': 'Request accepted. Tap the NFC card linked to this account.',
+            }
+            timer = threading.Timer(ttl, self._expire_password_recovery, kwargs={'request_id': request_id})
+            timer.daemon = True
+            self._recovery_expiry_timer = timer
+            timer.start()
+            return dict(self._recovery_snapshot, expires_at=expires_at)
+
+    def _expire_password_recovery(self, request_id: str) -> None:
+        with self._recovery_lock:
+            if self._active_recovery is None or self._active_recovery['request_id'] != request_id:
+                return
+            self._active_recovery = None
+            self._recovery_expiry_timer = None
+            self._recovery_snapshot = {
+                'request_id': request_id,
+                'state': 'expired',
+                'message': 'Password-recovery handoff expired. Start a new request.',
+            }
+
+    def cancel_password_recovery(self, request_id: str | None = None) -> dict:
+        with self._recovery_lock:
+            active = self._active_recovery
+            if active is None:
+                return {'cancelled': False}
+            if request_id is not None and request_id != active['request_id']:
+                raise ValueError('The active password-reset request does not match.')
+            if active.get('scan_claimed'):
+                raise RuntimeError('NFC recovery verification is already in progress.')
+            self._active_recovery = None
+            if self._recovery_expiry_timer is not None:
+                self._recovery_expiry_timer.cancel()
+                self._recovery_expiry_timer = None
+            self._recovery_snapshot = {
+                'request_id': active['request_id'],
+                'state': 'cancelled',
+                'message': 'Password-recovery handoff cancelled.',
+            }
+            return {'cancelled': True}
+
+    def password_recovery_snapshot(self, request_id: str | None = None) -> dict:
+        with self._recovery_lock:
+            if self._active_recovery is not None and self._active_recovery['expires_at_monotonic'] <= time.monotonic():
+                self._expire_password_recovery(self._active_recovery['request_id'])
+            snapshot = self._recovery_snapshot
+            if snapshot is None or (request_id is not None and snapshot.get('request_id') != request_id):
+                return {'state': 'idle'}
+            return dict(snapshot, active=self._active_recovery is not None)
+
+    def _take_recovery_for_scan(self) -> str | None:
+        with self._recovery_lock:
+            if self._active_recovery is None:
+                return None
+            if self._active_recovery['expires_at_monotonic'] <= time.monotonic():
+                self._expire_password_recovery(self._active_recovery['request_id'])
+                return None
+            request_id = self._active_recovery['request_id']
+            if self._recovery_expiry_timer is not None:
+                self._recovery_expiry_timer.cancel()
+                self._recovery_expiry_timer = None
+            self._active_recovery['scan_claimed'] = True
+            return request_id
+
+    def _verify_recovery_uid(self, request_id: str, uid: str) -> dict:
+        message = 'NFC recovery verification failed. Start a new recovery request.'
+        result = {'request_id': request_id, 'state': 'failed', 'message': message}
+        try:
+            normalized_uid = normalize_uid(uid)
+            if not normalized_uid:
+                raise ValueError('NFC UID is required.')
+            status_code, payload = self.verifier.password_reset_request(
+                'verify-nfc',
+                {'request_id': request_id, 'nfc_uid': normalized_uid},
+            )
+            if not isinstance(payload, dict):
+                result['message'] = 'Django returned an invalid NFC verification response.'
+            elif status_code == HTTPStatus.OK:
+                if payload.get('request_id') != request_id or payload.get('status') != 'verified':
+                    result['message'] = 'Django returned an invalid NFC verification response.'
+                else:
+                    result = {
+                        'request_id': request_id,
+                        'state': 'verified',
+                        'message': 'The backend confirmed NFC recovery verification.',
+                    }
+            elif status_code == HTTPStatus.GONE:
+                result['message'] = 'Password-reset request expired. Start a new recovery request.'
+            elif status_code in (
+                HTTPStatus.BAD_REQUEST,
+                HTTPStatus.FORBIDDEN,
+                HTTPStatus.NOT_FOUND,
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+            ):
+                result['message'] = 'This card does not match the password-reset request.'
+            elif status_code == HTTPStatus.UNAUTHORIZED:
+                result['message'] = 'Django rejected device authentication. Contact support.'
+            elif status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
+                result['message'] = 'Password-reset service unavailable. Start a new recovery request.'
+            elif status_code == HTTPStatus.OK:
+                result['message'] = 'Django returned an invalid NFC verification response.'
+        except (DjangoRequestError, ValueError) as error:
+            result['message'] = sanitize_error(error)
+        except Exception:
+            logger.exception('Password-recovery NFC verification failed unexpectedly.')
+            result['message'] = 'Password-reset verification failed. Start a new recovery request.'
+        finally:
+            with self._recovery_lock:
+                if self._active_recovery is not None and self._active_recovery['request_id'] == request_id:
+                    self._active_recovery = None
+                if self._recovery_expiry_timer is not None:
+                    self._recovery_expiry_timer.cancel()
+                    self._recovery_expiry_timer = None
+                self._recovery_snapshot = result
+        return dict(result)
 
     def capture_access_log_photo(self, event_id: int) -> bool:
         if self.photo_capture is None:
@@ -1176,6 +1408,15 @@ class NFCService:
 
     def process_uid(self, uid: str) -> dict:
         """Verify one completed UID and persist exactly one resulting event."""
+        recovery_request_id = self._take_recovery_for_scan()
+        if recovery_request_id is not None:
+            result = self._verify_recovery_uid(recovery_request_id, uid)
+            logger.info(
+                'password_recovery_scan state=%s',
+                result['state'],
+            )
+            return result
+
         event = make_scan_event(uid, self.verifier)
         event['event_id'] = self.store.append(event)
         self.state.card_detected(event['uid'], event['event_id'])
@@ -1218,6 +1459,11 @@ class NFCService:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._recovery_lock:
+            if self._recovery_expiry_timer is not None:
+                self._recovery_expiry_timer.cancel()
+                self._recovery_expiry_timer = None
+            self._active_recovery = None
         close_errors = []
         for name, resource in (
             ('NFC reader', self.reader),
@@ -1266,6 +1512,27 @@ class NFCHandler(BaseHTTPRequestHandler):
             self.send_header('Vary', 'Origin')
         self.end_headers()
 
+    def _read_json_body(self) -> dict:
+        if self.headers.get('Content-Type', '').split(';', 1)[0].strip().lower() != 'application/json':
+            raise ValueError('Content-Type must be application/json.')
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+        except ValueError as error:
+            raise ValueError('Invalid Content-Length.') from error
+        if length < 1 or length > 4096:
+            raise ValueError('Request body must be between 1 and 4096 bytes.')
+        try:
+            payload = json.loads(self.rfile.read(length).decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError('Request body must be valid JSON.') from error
+        if not isinstance(payload, dict):
+            raise ValueError('Request body must be a JSON object.')
+        return payload
+
+    def _recovery_origin_is_allowed(self) -> bool:
+        origin = self.headers.get('Origin')
+        return origin in ALLOWED_ORIGINS
+
     def do_OPTIONS(self) -> None:
         self._send_preflight()
 
@@ -1273,6 +1540,22 @@ class NFCHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == '/nfc/status':
             self._send_json(HTTPStatus.OK, self.server.service.status_snapshot())
+            return
+        if path == '/password-reset/bridge-status':
+            if not self._recovery_origin_is_allowed():
+                self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Password-recovery bridge origin is not allowed.'})
+                return
+            parameters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            request_ids = parameters.get('request_id', [])
+            if len(request_ids) != 1:
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'A single request_id is required.'})
+                return
+            try:
+                request_id = NFCService._validate_recovery_request_id(request_ids[0])
+            except ValueError as error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': str(error)})
+                return
+            self._send_json(HTTPStatus.OK, self.server.service.password_recovery_snapshot(request_id))
             return
         if path == '/cabinet/workflow':
             try:
@@ -1311,6 +1594,34 @@ class NFCHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         service = self.server.service
+        if path in ('/password-reset/handoff', '/password-reset/cancel'):
+            if not self._recovery_origin_is_allowed():
+                self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Password-recovery bridge origin is not allowed.'})
+                return
+            try:
+                payload = self._read_json_body()
+                if set(payload) != {'request_id'}:
+                    raise ValueError('Body must contain only request_id.')
+                request_id = NFCService._validate_recovery_request_id(payload['request_id'])
+                if path == '/password-reset/handoff':
+                    result = service.start_password_recovery(request_id)
+                    self._send_json(HTTPStatus.OK, result)
+                else:
+                    result = service.cancel_password_recovery(request_id)
+                    self._send_json(HTTPStatus.OK, result)
+            except DjangoRequestError as error:
+                status = error.http_status
+                if status is None or status < 400 or status >= 600:
+                    status = HTTPStatus.BAD_GATEWAY
+                self._send_json(
+                    HTTPStatus(status),
+                    {'error': sanitize_error(error, getattr(service.verifier, 'api_key', ''))},
+                )
+            except ValueError as error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': str(error)})
+            except RuntimeError as error:
+                self._send_json(HTTPStatus.CONFLICT, {'error': sanitize_error(error)})
+            return
         if path == '/photo/capture':
             try:
                 length = int(self.headers.get('Content-Length', '0'))

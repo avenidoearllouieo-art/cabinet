@@ -36,12 +36,21 @@ class FakeVerifier:
         self.result = result
         self.error = error
         self.calls = []
+        self.password_reset_calls = []
 
     def verify(self, uid):
         self.calls.append(uid)
         if self.error:
             raise self.error
         return self.result
+
+    def password_reset_request(self, endpoint, payload):
+        self.password_reset_calls.append((endpoint, payload))
+        if endpoint == 'cabinet-handoff':
+            return 200, {'request_id': payload['request_id']}
+        if endpoint == 'verify-nfc':
+            return 403, {'error': 'NFC card does not match this password-reset request.'}
+        raise AssertionError(f'Unexpected password-reset endpoint: {endpoint}')
 
 
 class FakeMotorController(MockMotorController):
@@ -373,6 +382,33 @@ class NFCServiceTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data), {'command': 'open', 'station': 'Station 2'})
         self.assertEqual(request.get_header('X-api-key'), 'workflow-device-key')
         self.assertEqual(timeout, 5)
+
+    def test_password_recovery_proxy_uses_device_key_and_exact_endpoint_contracts(self):
+        requests = []
+
+        def opener(request, timeout):
+            requests.append((request, timeout))
+            return FakeResponse(200, {'request_id': 'opaque-id', 'status': 'verified'})
+
+        verifier = DjangoVerifier(api_key='recovery-device-key', opener=opener)
+        handoff_status, handoff = verifier.password_reset_request(
+            'cabinet-handoff',
+            {'request_id': 'opaque-id'},
+        )
+        verify_status, verified = verifier.password_reset_request(
+            'verify-nfc',
+            {'request_id': 'opaque-id', 'nfc_uid': 'AA00FF'},
+        )
+
+        self.assertEqual((handoff_status, verify_status), (200, 200))
+        self.assertEqual(handoff['request_id'], 'opaque-id')
+        self.assertEqual(verified['status'], 'verified')
+        self.assertEqual(requests[0][0].full_url, 'http://127.0.0.1:8000/api/auth/password-reset/cabinet-handoff/')
+        self.assertEqual(json.loads(requests[0][0].data), {'request_id': 'opaque-id'})
+        self.assertEqual(requests[1][0].full_url, 'http://127.0.0.1:8000/api/auth/password-reset/verify-nfc/')
+        self.assertEqual(json.loads(requests[1][0].data), {'request_id': 'opaque-id', 'nfc_uid': 'AA00FF'})
+        self.assertTrue(all(request.get_header('X-api-key') == 'recovery-device-key' for request, _ in requests))
+        self.assertTrue(all(timeout == 5 for _, timeout in requests))
 
     def test_registered_django_response_becomes_one_registered_event(self):
         verifier = FakeVerifier((200, {
@@ -1024,11 +1060,14 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(self.url + path, headers=headers)) as response:
             return response.status, response.headers, json.loads(response.read().decode('utf-8'))
 
-    def post_json(self, path, payload):
+    def post_json(self, path, payload, origin='http://127.0.0.1:4000'):
+        headers = {'Content-Type': 'application/json'}
+        if origin:
+            headers['Origin'] = origin
         request = urllib.request.Request(
             self.url + path,
             data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
+            headers=headers,
             method='POST',
         )
         with urllib.request.urlopen(request) as response:
@@ -1061,6 +1100,143 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         status, _, body = self.get_json('/api/scans?after=19&limit=50')
         self.assertEqual(status, 200)
         self.assertEqual(body, {'events': [], 'next_cursor': 19, 'has_more': False})
+
+    def test_password_recovery_handoff_routes_only_the_next_card_to_django(self):
+        status, handoff = self.post_json('/password-reset/handoff', {'request_id': 'opaque-reset-id-123'})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(handoff['state'], 'waiting')
+        self.assertEqual(handoff['request_id'], 'opaque-reset-id-123')
+        status, _, bridge_status = self.get_json(
+            '/password-reset/bridge-status?request_id=opaque-reset-id-123',
+            origin='http://127.0.0.1:4000',
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(bridge_status['state'], 'waiting')
+        self.assertEqual(self.service.verifier.password_reset_calls, [
+            ('cabinet-handoff', {'request_id': 'opaque-reset-id-123'}),
+        ])
+
+        result = self.service.process_uid('12-34-56')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('does not match', result['message'])
+        self.assertEqual(self.service.verifier.password_reset_calls[-1], (
+            'verify-nfc',
+            {'request_id': 'opaque-reset-id-123', 'nfc_uid': '12-34-56'},
+        ))
+        self.assertEqual(self.service.verifier.calls, [])
+        self.assertEqual(self.store.list_after(0, 50), ([], False))
+        self.assertEqual(self.service.motor_controller.calls, [])
+        self.assertEqual(self.service.password_recovery_snapshot('opaque-reset-id-123')['state'], 'failed')
+
+        self.service.verifier.result = (200, {'success': True})
+        normal_scan = self.service.process_uid('A1-B2-C3')
+        self.assertEqual(normal_scan['status'], 'registered')
+        self.assertEqual(self.service.verifier.calls, ['A1-B2-C3'])
+        self.assertEqual(len(self.store.list_after(0, 50)[0]), 1)
+        self.assertEqual(self.service.motor_controller.calls, [])
+
+    def test_password_recovery_rejects_concurrent_handoff_and_origin_or_body_errors(self):
+        self.post_json('/password-reset/handoff', {'request_id': 'first-id'})
+        with self.assertRaises(urllib.error.HTTPError) as conflict:
+            self.post_json('/password-reset/handoff', {'request_id': 'second-id'})
+        self.assertEqual(conflict.exception.code, 409)
+        self.assertEqual(len(self.service.verifier.password_reset_calls), 1)
+
+        request = urllib.request.Request(
+            self.url + '/password-reset/handoff',
+            data=json.dumps({'request_id': 'third-id'}).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'Origin': 'https://not-allowed.example'},
+            method='POST',
+        )
+        with self.assertRaises(urllib.error.HTTPError) as forbidden:
+            urllib.request.urlopen(request)
+        self.assertEqual(forbidden.exception.code, 403)
+        self.assertEqual(len(self.service.verifier.password_reset_calls), 1)
+
+        with self.assertRaises(urllib.error.HTTPError) as invalid:
+            self.post_json('/password-reset/cancel', {'request_id': 'first-id', 'extra': True})
+        self.assertEqual(invalid.exception.code, 400)
+        self.assertTrue(self.service.cancel_password_recovery('first-id')['cancelled'])
+
+    def test_verified_recovery_never_enters_normal_access_or_motor_dispatch(self):
+        class SuccessfulRecoveryVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 200, {
+                    'request_id': payload['request_id'],
+                    'status': 'verified',
+                    'message': 'Identity verified by cabinet NFC.',
+                }
+
+        self.service.verifier = SuccessfulRecoveryVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'success-id'})
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'verified')
+        self.assertNotIn('reset_token', result)
+        self.assertEqual(self.service.verifier.calls, [])
+        self.assertEqual(self.service.verifier.password_reset_calls[-1], (
+            'verify-nfc',
+            {'request_id': 'success-id', 'nfc_uid': 'AA-BB-CC'},
+        ))
+        self.assertEqual(self.store.list_after(0, 50), ([], False))
+        self.assertEqual(self.service.motor_controller.calls, [])
+
+    def test_recovery_rejects_success_shaped_response_without_verified_status(self):
+        class SuccessOnlyRecoveryVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 200, {'request_id': payload['request_id'], 'success': True}
+
+        self.service.verifier = SuccessOnlyRecoveryVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'not-verified-id'})
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('invalid NFC verification response', result['message'])
+
+    def test_decoy_recovery_request_does_not_reveal_account_mismatch(self):
+        class DecoyRecoveryVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 404, {'error': 'Reset request is unavailable.'}
+
+        self.service.verifier = DecoyRecoveryVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'decoy-request-id'})
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('does not match', result['message'])
+
+    def test_password_recovery_handoff_failure_and_expiry_release_reader_mode(self):
+        class FailingHandoffVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                return 410, {'error': 'This password-reset request has expired.'}
+
+        self.service.verifier = FailingHandoffVerifier((200, {}))
+        with self.assertRaises(urllib.error.HTTPError) as expired:
+            self.post_json('/password-reset/handoff', {'request_id': 'expired-id'})
+        self.assertEqual(expired.exception.code, 410)
+        self.assertEqual(self.service.password_recovery_snapshot()['state'], 'idle')
+
+        self.service.verifier = FakeVerifier((200, {}))
+        self.service.verifier.result = (200, {'success': True})
+        self.post_json('/password-reset/handoff', {'request_id': 'expires-soon'})
+        self.service._expire_password_recovery('expires-soon')
+        self.assertEqual(self.service.password_recovery_snapshot('expires-soon')['state'], 'expired')
+        scan = self.service.process_uid('NORMAL-CARD')
+        self.assertEqual(scan['status'], 'registered')
+        self.assertEqual(self.service.verifier.calls, ['NORMAL-CARD'])
+        self.assertEqual(self.service.motor_controller.calls, [])
 
     def test_cabinet_workflow_get_and_post_proxy_to_django(self):
         class WorkflowVerifier:

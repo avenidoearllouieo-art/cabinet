@@ -430,11 +430,14 @@ class PasswordResetRequestSerializer(serializers.ModelSerializer):
 
 class PasswordResetNFCVerificationSerializer(serializers.Serializer):
     request_id = serializers.CharField(required=True, allow_blank=False)
-    student_id = serializers.CharField(required=True, allow_blank=False)
     nfc_uid = serializers.CharField(required=True, allow_blank=False)
 
 
 class PasswordResetCabinetHandoffSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+
+
+class PasswordResetStatusSerializer(serializers.Serializer):
     request_id = serializers.CharField(required=True, allow_blank=False)
 
 
