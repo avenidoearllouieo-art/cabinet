@@ -57,6 +57,32 @@ describe('ForgotPassword', () => {
     expect(api.post).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    [{ response: { status: 500 } }, /service returned HTTP 500/i],
+    [new Error('Network unavailable'), /could not reach the password-reset service/i],
+  ])('reports initiation service failures without advancing', async (failure, expectedMessage) => {
+    const user = userEvent.setup()
+    api.post.mockRejectedValueOnce(failure)
+    renderForgotPassword()
+
+    await submitRequest(user)
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(expectedMessage)
+    expect(screen.queryByTestId('recovery-reference')).toBeNull()
+    expect(api.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not advance when initiation returns success without a valid request reference', async () => {
+    const user = userEvent.setup()
+    api.post.mockResolvedValueOnce({ data: { message: 'Request started.' } })
+    renderForgotPassword()
+
+    await submitRequest(user)
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/returned an invalid response/i)
+    expect(screen.queryByTestId('recovery-reference')).toBeNull()
+  })
+
   it('shows the recovery reference, reports pending verification, and never calls the Pi directly', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const user = userEvent.setup()

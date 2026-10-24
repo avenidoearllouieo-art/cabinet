@@ -13,9 +13,14 @@ function getApiError(error, fallback) {
   if (status === 410) return 'This reset request or token has expired. Start again to create a new request.'
   if (status === 409) return 'This reset request or authorization has already been used. Start again to create a new request.'
   if (status === 429) return 'Too many reset attempts. Please wait before trying again.'
-  if (status === 400 || status === 404) {
-    return error.response?.data?.error || 'The reset details could not be verified. Check them and try again.'
+  if (status === 400) {
+    return error.response?.data?.error || 'The reset request was invalid. Check the details and try again.'
   }
+  if (status === 404) return 'The password-reset endpoint was not found. Check the Web API configuration.'
+  if (typeof status === 'number' && status >= 500) {
+    return `The password-reset service returned HTTP ${status}. Please try again later.`
+  }
+  if (!error.response) return 'Could not reach the password-reset service. Check your connection and try again.'
   return fallback
 }
 
@@ -169,10 +174,14 @@ export default function ForgotPassword() {
         student_id: trimmedStudentId,
         email: trimmedEmail,
       })
-      const nextRequestId = response.data.request_id || ''
-      if (!nextRequestId) throw new Error('The reset request did not include a request ID.')
+      const payload = response.data
+      const nextRequestId = typeof payload?.request_id === 'string' ? payload.request_id.trim() : ''
+      if (!nextRequestId) {
+        setError('The password-reset service returned an invalid response. Please try again later.')
+        return
+      }
       setRequestId(nextRequestId)
-      setRequestExpiresAt(response.data.expires_at || '')
+      setRequestExpiresAt(typeof payload.expires_at === 'string' ? payload.expires_at : '')
       setVerificationEnded(false)
       setSuccess('Your recovery reference is ready. Enter it on the Cabinet UI, then tap your registered NFC card.')
       setStep(1)
