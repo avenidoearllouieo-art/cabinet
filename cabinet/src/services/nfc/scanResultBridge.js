@@ -1,7 +1,48 @@
 const DEFAULT_SCAN_BRIDGE_URL = 'http://127.0.0.1:5001/api/scans'
 
 const scanBridgeUrl = (import.meta.env.VITE_NFC_BRIDGE_URL || DEFAULT_SCAN_BRIDGE_URL).replace(/\/$/, '')
-const workflowUrl = `${new URL(scanBridgeUrl).origin}/cabinet/workflow`
+const bridgeOrigin = new URL(scanBridgeUrl).origin
+const workflowUrl = `${bridgeOrigin}/cabinet/workflow`
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validateWorkflowResponse(payload, command, station, expectedMode) {
+  if (!isRecord(payload) || payload.mode !== expectedMode) {
+    throw new Error('Cabinet workflow returned an invalid response.')
+  }
+  if (!command) {
+    if (!Array.isArray(payload.stations)) throw new Error('Cabinet workflow returned an invalid response.')
+    return payload
+  }
+
+  const session = payload.session
+  if (
+    payload.station !== station
+    || !isRecord(session)
+    || session.id === undefined
+    || session.id === null
+    || session.station !== station
+    || !['open', 'closed'].includes(session.status)
+    || !['idle', 'opening', 'closing'].includes(session.workflow_state)
+  ) {
+    throw new Error('Cabinet workflow returned an invalid session response.')
+  }
+  if (command === 'finish_open' && (session.status !== 'open' || session.workflow_state !== 'idle')) {
+    throw new Error('Django did not confirm the open workflow transition.')
+  }
+  if (command === 'finish_close' && (session.status !== 'closed' || session.workflow_state !== 'idle')) {
+    throw new Error('Django did not confirm the close workflow transition.')
+  }
+  if (command === 'open' && (session.status !== 'open' || session.workflow_state !== 'opening')) {
+    throw new Error('Django did not confirm the opening workflow.')
+  }
+  if (command === 'start_close' && (session.status !== 'open' || session.workflow_state !== 'closing')) {
+    throw new Error('Django did not confirm the closing workflow.')
+  }
+  return payload
+}
 
 async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardware', station } = {}) {
   const mockMode = mode === 'mock'
@@ -24,12 +65,12 @@ async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardw
     if (error.name === 'AbortError') throw error
     const message = mockMode
       ? 'Cabinet API unavailable. Check Django and the development proxy.'
-      : 'NFC reader unavailable. Check the configured NFC bridge.'
+      : 'NFC bridge unavailable. Check the NFC service connection.'
     throw new Error(message, { cause: error })
   }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || `Cabinet workflow returned HTTP ${response.status}.`)
-  return payload
+  return validateWorkflowResponse(payload, command, station, mockMode ? 'mock' : 'hardware')
 }
 
 export function fetchCabinetWorkflow(options) {
@@ -38,6 +79,27 @@ export function fetchCabinetWorkflow(options) {
 
 export function sendCabinetWorkflow(command, options) {
   return requestWorkflow(command, options)
+}
+
+export async function fetchNfcServiceStatus({ signal, fetcher = fetch } = {}) {
+  let response
+  try {
+    response = await fetcher(`${bridgeOrigin}/nfc/status`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    throw new Error('NFC bridge unavailable. Check the NFC service connection.', { cause: error })
+  }
+  if (!response.ok) throw new Error(`NFC bridge returned HTTP ${response.status}.`)
+  const status = await response.json().catch(() => ({}))
+  if (!isRecord(status) || status.service !== 'ready' || typeof status.reader_connected !== 'boolean') {
+    throw new Error('NFC bridge returned an invalid status response.')
+  }
+  return status
 }
 
 export async function captureAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
@@ -74,7 +136,7 @@ export async function fetchScanEvents(after, { signal, fetcher = fetch } = {}) {
     })
   } catch (error) {
     if (error.name === 'AbortError') throw error
-    throw new Error('NFC reader unavailable. Retrying connection.', { cause: error })
+    throw new Error('NFC bridge unavailable. Check the NFC service connection.', { cause: error })
   }
 
   if (!response.ok) {

@@ -1,10 +1,19 @@
 import { resolveNfcMode } from './nfc/nfcMode.js'
 
 const configuredApiBase = import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api'
-const API_BASE_URL = /^https?:\/\//i.test(configuredApiBase)
-  ? new URL(configuredApiBase).pathname.replace(/\/$/, '')
-  : configuredApiBase.replace(/\/$/, '')
-const NFC_MODE = resolveNfcMode(import.meta.env?.VITE_NFC_MODE)
+export function resolveDjangoApiBase(configuredBase, isDevelopment = false) {
+  const base = String(configuredBase || '/api').replace(/\/$/, '')
+  if (isDevelopment && /^https?:\/\//i.test(base)) {
+    return new URL(base).pathname.replace(/\/$/, '')
+  }
+  return base
+}
+
+const API_BASE_URL = resolveDjangoApiBase(configuredApiBase, import.meta.env?.DEV === true)
+const API_URL_BASE = /^https?:\/\//i.test(API_BASE_URL)
+  ? `${API_BASE_URL}/`
+  : 'http://cabinet.invalid/'
+const NFC_MODE = resolveNfcMode(import.meta.env?.VITE_NFC_MODE, import.meta.env?.DEV === true)
 const photoReadHeaders = {
   Accept: 'application/json',
   ...(NFC_MODE === 'mock' ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
@@ -44,7 +53,14 @@ export async function fetchAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
   const mappedStatus = mapPhotoStatus(metadata.capture_status, metadata.image_available)
   let imageBlob = null
   const expectedImageEndpoint = `${eventPath}image/`
-  if (mappedStatus.state === 'captured' && metadata.image_endpoint !== expectedImageEndpoint) {
+  const expectedImageUrl = new URL(expectedImageEndpoint, API_URL_BASE)
+  let metadataImageUrl
+  try {
+    metadataImageUrl = new URL(metadata.image_endpoint, API_URL_BASE)
+  } catch {
+    metadataImageUrl = null
+  }
+  if (mappedStatus.state === 'captured' && metadataImageUrl?.href !== expectedImageUrl.href) {
     return {
       eventId: normalizedEventId,
       ...mapPhotoStatus('failed', false),

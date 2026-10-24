@@ -29,13 +29,21 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false 
     }
     if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
       const request = JSON.parse(options.body)
+      const workflowState = {
+        open: ['open', 'opening'],
+        finish_open: ['open', 'idle'],
+        start_close: ['open', 'closing'],
+        finish_close: ['closed', 'idle'],
+        cancel: ['closed', 'opening'],
+      }[request.command] || ['open', 'idle']
       return jsonResponse({
+        mode: 'mock',
         station: request.station,
         session: {
           id: `session-${request.station}`,
           station: request.station,
-          status: 'open',
-          workflow_state: 'opening',
+          status: workflowState[0],
+          workflow_state: workflowState[1],
           opened_by: [],
         },
       })
@@ -112,6 +120,7 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
     }
     if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
       return jsonResponse({
+        mode: 'mock',
         station: 'Station 2',
         session: {
           id: 'session-Station 2',
@@ -241,7 +250,16 @@ describe('Cabinet photo scan integration', () => {
       }
       if (url === '/api/cabinet/workflow/' && options.method === 'POST') {
         const request = JSON.parse(options.body)
-        return jsonResponse({ station: request.station, session: null })
+        return jsonResponse({
+          mode: 'mock',
+          station: request.station,
+          session: {
+            id: `session-${request.station}`,
+            station: request.station,
+            status: 'open',
+            workflow_state: 'opening',
+          },
+        })
       }
       if (url === '/api/verify-nfc/') {
         return jsonResponse({ registration_required: true, registration_url: registrationUrl }, 404)
@@ -318,7 +336,7 @@ describe('Cabinet photo scan integration', () => {
         const session = command === 'finish_close'
           ? { ...openedSession, status: 'closed', workflow_state: 'idle', closed_at: '2026-10-15T10:30:00Z', closed_by: [member] }
           : { ...openedSession, workflow_state: 'closing' }
-        return jsonResponse({ station: 'Station 2', session })
+        return jsonResponse({ mode: 'mock', station: 'Station 2', session })
       }
       if (url === '/api/verify-nfc/') {
         return jsonResponse({

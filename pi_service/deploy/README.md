@@ -71,6 +71,8 @@ VITE_NFC_MODE=hardware
 VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
 ```
 
+If Django is not running on the Raspberry Pi, also set `VITE_DJANGO_API_BASE_URL` to the actual reachable Django `/api` URL in `/etc/taptrack/cabinet.env`. This is used for access-photo metadata; do not guess the host, and do not put API credentials in the URL. The NFC scan/workflow bridge itself remains loopback port `5001`.
+
 Important:
 
 - VITE values are compiled into the browser bundle. Never put `DEVICE_API_KEY` or a Django API key in VITE variables.

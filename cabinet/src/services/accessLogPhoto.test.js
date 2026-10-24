@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { fetchAccessLogPhoto, getDjangoAccessLogEventId, mapPhotoStatus } from './accessLogPhoto.js'
+import { fetchAccessLogPhoto, getDjangoAccessLogEventId, mapPhotoStatus, resolveDjangoApiBase } from './accessLogPhoto.js'
 
 const metadataFor = (eventId, overrides = {}) => ({
   event_id: eventId,
@@ -121,10 +121,43 @@ test('image endpoint must match the same event and cannot redirect preview off-o
   assert.deepEqual(requested, ['/api/access-logs/44/photo/'])
 })
 
+test('relative Django image endpoints resolve under the configured remote API origin', async () => {
+  const expectedPath = '/api/access-logs/45/photo/image/'
+  const eventId = 45
+  const requested = []
+  const result = await fetchAccessLogPhoto(eventId, {
+    fetcher: async (url) => {
+      requested.push(String(url))
+      if (String(url).endsWith('/image/')) {
+        return new Response(new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        })
+      }
+      return new Response(JSON.stringify(metadataFor(eventId, { image_endpoint: expectedPath })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    },
+  })
+
+  assert.equal(result.label, 'Captured')
+  assert.deepEqual(requested, [
+    '/api/access-logs/45/photo/',
+    '/api/access-logs/45/photo/image/',
+  ])
+})
+
 test('non-image response from protected image endpoint is rejected', async () => {
   await assert.rejects(fetchAccessLogPhoto(54, {
     fetcher: async (url) => url.endsWith('/image/')
       ? new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
       : new Response(JSON.stringify(metadataFor(54)), { status: 200 }),
   }), /not an image/)
+})
+
+test('photo API base uses the Vite proxy in development and preserves the Django host in production', () => {
+  assert.equal(resolveDjangoApiBase('http://127.0.0.1:8000/api', true), '/api')
+  assert.equal(resolveDjangoApiBase('http://127.0.0.1:8000/api', false), 'http://127.0.0.1:8000/api')
+  assert.equal(resolveDjangoApiBase('/api', false), '/api')
 })

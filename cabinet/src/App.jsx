@@ -4,11 +4,13 @@ import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { resolveNfcMode } from './services/nfc/nfcMode'
-import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
+import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchNfcServiceStatus, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
-const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
-const NFC_MODE = resolveNfcMode(import.meta.env.VITE_NFC_MODE)
+const NFC_MODE = resolveNfcMode(import.meta.env.VITE_NFC_MODE, import.meta.env.DEV)
+const PI_SERVICE_URL = NFC_MODE === 'mock'
+  ? (import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765')
+  : null
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const PHOTO_STATUS_ATTEMPTS = 12
@@ -154,6 +156,7 @@ export default function App() {
   const [cabinetState, setCabinetState] = useState({ sessions: [] })
   const { sessions } = cabinetState
   const [readerContext, setReaderContext] = useState(null)
+  const [bridgeConnectionStatus, setBridgeConnectionStatus] = useState('connecting')
   const [workflowLoaded, setWorkflowLoaded] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [form, setForm] = useState({ fullName: '', studentId: '', email: '', section: '' })
@@ -215,6 +218,7 @@ export default function App() {
     fetchCabinetWorkflow({ mode: NFC_MODE })
       .then((data) => {
         if (cancelled) return
+        setBridgeConnectionStatus('connected')
         const stations = (data.stations || []).map((item) => item.name)
         setReaderContext({
           mode: data.mode || NFC_MODE,
@@ -227,7 +231,8 @@ export default function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setErrorMessage(error.message || 'Unable to load the cabinet session from Django.')
+          setBridgeConnectionStatus('unavailable')
+          setErrorMessage(error.message || 'NFC bridge unavailable. Check the NFC service connection.')
           setWorkflowLoaded(true)
         }
       })
@@ -370,6 +375,7 @@ export default function App() {
           const previousCursor = nfcScanCursorRef.current
           const batch = await fetchScanEvents(previousCursor, { signal: controller.signal })
           if (cancelled) return
+          setBridgeConnectionStatus('connected')
           if (batch.has_more && batch.events.length === 0) {
             throw new Error('NFC bridge reported more events but returned none.')
           }
@@ -397,7 +403,9 @@ export default function App() {
         }
       } catch (error) {
         if (!cancelled && !controller.signal.aborted) {
-          const message = error.message || 'NFC reader unavailable. Retrying connection.'
+          const message = error.message || 'NFC bridge unavailable. Check the NFC service connection.'
+          setBridgeConnectionStatus('unavailable')
+          setErrorMessage(message)
           if (bridgeErrorRef.current !== message) {
             bridgeErrorRef.current = message
             setAccessState({ status: 'error', name: '', studentId: '', role: '', message, registrationUrl: '' })
@@ -425,14 +433,22 @@ export default function App() {
   useEffect(() => {
     if (view !== 'status-screen') return undefined
     let cancelled = false
-    fetch(`${PI_SERVICE_URL}/status`)
-      .then(async (response) => {
+    const statusRequest = NFC_MODE === 'mock'
+      ? fetch(`${PI_SERVICE_URL}/status`).then(async (response) => {
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Service unavailable.')
+        return data
+      })
+      : fetchNfcServiceStatus()
+    statusRequest
+      .then((data) => {
         if (!cancelled) setServiceStatus(data)
       })
-      .catch(() => {
-        if (!cancelled) setServiceStatus({ mode: 'unavailable', physical_hardware: 'not connected', cabinet_actions: 'mock only' })
+      .catch((error) => {
+        if (!cancelled) {
+          setBridgeConnectionStatus('unavailable')
+          setServiceStatus({ mode: 'unavailable', error: error.message || 'NFC bridge unavailable. Check the NFC service connection.' })
+        }
       })
     return () => { cancelled = true }
   }, [view])
@@ -988,6 +1004,15 @@ export default function App() {
               <img className="brand-wordmark" src="/logo1.png" alt="TapTrack" />
               <div className="title-block">
                 <h1 className="title">Cabinet Management</h1>
+                <p className="muted" role="status">
+                  {NFC_MODE === 'mock'
+                    ? 'Mock NFC test mode (development).'
+                    : bridgeConnectionStatus === 'connected'
+                      ? 'Connected to the real NFC bridge.'
+                      : bridgeConnectionStatus === 'unavailable'
+                        ? 'NFC bridge unavailable. Check the NFC service connection.'
+                        : 'Connecting to the NFC bridge…'}
+                </p>
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
                 {readerStations.map((station) => {
@@ -1566,11 +1591,20 @@ export default function App() {
           <div className="panel">
             <h2>Cabinet Status</h2>
             <p className="muted">{NFC_MODE === 'mock' ? 'Local cabinet session history.' : 'Current cabinet state and session history.'}</p>
-            {NFC_MODE === 'mock' && serviceStatus && (
+              {NFC_MODE === 'mock' && serviceStatus && (
               <div className="status-card">
                 <strong>Mock Pi service: {serviceStatus.mode}</strong>
                 <p>Django API: {serviceStatus.django_api || 'unavailable'}</p>
                 <small>Physical hardware: {serviceStatus.physical_hardware || 'not connected'} · Cabinet actions: {serviceStatus.cabinet_actions || 'mock only'}</small>
+              </div>
+            )}
+            {NFC_MODE === 'hardware' && serviceStatus && (
+              <div className="status-card" role="status">
+                <strong>NFC bridge: {serviceStatus.service === 'ready' ? 'Connected' : 'Unavailable'}</strong>
+                {serviceStatus.reader_connected !== undefined && (
+                  <p>Physical NFC reader: {serviceStatus.reader_connected ? 'Connected' : 'Waiting for reader'}</p>
+                )}
+                {serviceStatus.error && <p role="alert">{serviceStatus.error}</p>}
               </div>
             )}
             <div className="status-list">

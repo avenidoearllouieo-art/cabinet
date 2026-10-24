@@ -1,4 +1,4 @@
-export function resolveNfcMode(configuredMode) {
+export function resolveNfcMode(configuredMode, isDevelopment = false) {
   const mode = String(configuredMode || 'hardware').trim().toLowerCase()
-  return mode === 'mock' ? 'mock' : 'hardware'
+  return isDevelopment && mode === 'mock' ? 'mock' : 'hardware'
 }
