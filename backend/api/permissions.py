@@ -53,7 +53,11 @@ class HasDeviceAPIKey(BasePermission):
             or request.META.get('HTTP_X_API_KEY', '')
         ).strip()
 
-        if settings.DEBUG and request.headers.get('X-TapTrack-Mock-Mode') == 'true':
+        mock_mode = request.headers.get('X-TapTrack-Mock-Mode') == 'true'
+        if mock_mode and not settings.DEBUG:
+            return False
+
+        if mock_mode:
             if not expected or not hmac.compare_digest(provided, expected):
                 return False
             request.nfc_device_context = {

@@ -45,7 +45,7 @@ def env_list(name, default):
 
 
 # Development uses a clearly non-production key. Production must provide one.
-DEBUG = env_bool('DJANGO_DEBUG', True)
+DEBUG = env_bool('DJANGO_DEBUG', False)
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 if not SECRET_KEY:
     if not DEBUG:

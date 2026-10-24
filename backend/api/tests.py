@@ -2758,6 +2758,62 @@ class CabinetDeviceIntegrationTests(TestCase):
             ['AVAILABLE', 'AVAILABLE'],
         )
 
+    @override_settings(DEBUG=True, TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'])
+    def test_mock_workflow_requires_a_matching_device_api_key(self):
+        missing_key = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        )
+        incorrect_key = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY='incorrect-device-key',
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        )
+
+        self.assertEqual(missing_key.status_code, 403)
+        self.assertEqual(incorrect_key.status_code, 403)
+        self.assertFalse(CabinetSession.objects.exists())
+
+    @override_settings(
+        DEBUG=True,
+        TAPTRACK_CABINET_NAME='Cabinet 1',
+        TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'],
+    )
+    def test_valid_mock_workflow_get_is_read_only(self):
+        response = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['mode'], 'mock')
+        self.assertEqual(CabinetSession.objects.count(), 0)
+        self.assertEqual(AccessLog.objects.count(), 0)
+
+    @override_settings(DEBUG=False)
+    def test_mock_workflow_is_denied_when_debug_is_disabled(self):
+        response = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(CabinetSession.objects.exists())
+
+    @override_settings(DEBUG=False, TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'])
+    def test_hardware_workflow_get_authenticates_configured_reader(self):
+        response = self.client.get(
+            '/api/cabinet/workflow/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['mode'], 'hardware')
+        self.assertEqual(response.json()['cabinet_name'], 'Cabinet 1')
+        self.assertFalse(response.json()['stations'][0]['session'])
+
     @override_settings(
         DEBUG=True,
         TAPTRACK_NFC_DEVICE_MAP=[{
