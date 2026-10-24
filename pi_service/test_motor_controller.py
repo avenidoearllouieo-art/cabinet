@@ -183,6 +183,33 @@ class SerialMotorControllerTests(unittest.TestCase):
         self.assertTrue(all(write.startswith(b'HELLO,') for write in serial_port.writes))
         self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 0)
 
+    def test_missing_device_and_permission_errors_report_no_command_transmitted(self):
+        for error in (FileNotFoundError('device not found'), PermissionError('access denied')):
+            class FailingSerial:
+                port = None
+                dtr = None
+                rts = None
+
+                def open(self):
+                    raise error
+
+                def close(self):
+                    pass
+
+            with self.subTest(error=type(error).__name__):
+                controller = SerialMotorController(
+                    device='/dev/serial/by-id/test-controller',
+                    serial_factory=lambda **kwargs: FailingSerial(),
+                )
+                controller._unknown = False
+                controller._session_id = SESSION
+                result = controller.command('Station 1', 'OPEN')
+
+                self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+                self.assertFalse(result.command_transmitted)
+                self.assertIsNone(result.transaction_id)
+                self.assertIn(str(error), result.error)
+
     def test_environment_configuration_and_inactive_dtr_rts_before_open(self):
         serial_port = FakeSerial()
         factory = SerialFactory([serial_port])
