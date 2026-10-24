@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -43,8 +44,9 @@ class FakeVerifier:
         return self.result
 
 
-class FakeMotorController:
+class FakeMotorController(MockMotorController):
     def __init__(self, outcome=MotorOutcome.COMPLETED, block=False, error=None, events=None):
+        super().__init__()
         self.outcome = outcome
         self.block = block
         self.error = error
@@ -499,13 +501,19 @@ class NFCServiceTests(unittest.TestCase):
 
 class MotorDispatchTests(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.database_path = Path(self.temp_dir.name) / 'motor-actions.sqlite3'
+        self.store = SQLiteScanEventStore(self.database_path)
         self.controller = FakeMotorController()
         self.service = NFCService(
             MockNFCReader(),
-            None,
+            self.store,
             FakeVerifier((200, {})),
             motor_controller=self.controller,
         )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
 
     @staticmethod
     def response(session_id, station, status):
@@ -531,6 +539,8 @@ class MotorDispatchTests(unittest.TestCase):
         with patch.dict(os.environ, {'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true'}):
             with self.assertRaisesRegex(RuntimeError, 'disabled in this mock-only integration phase'):
                 create_motor_controller()
+        with self.assertRaisesRegex(RuntimeError, 'Only MockMotorController is allowed'):
+            NFCService(MockNFCReader(), self.store, FakeVerifier((200, {})), motor_controller=object())
 
     def test_only_validated_successful_final_transitions_dispatch(self):
         self.dispatch()
@@ -571,12 +581,20 @@ class MotorDispatchTests(unittest.TestCase):
 
         self.assertEqual(self.controller.calls, [])
 
-    def test_duplicate_transition_returns_cached_result_without_redispatch(self):
+    def test_duplicate_transition_reuses_durable_action_without_redispatch(self):
         first = self.dispatch()
         duplicate = self.dispatch()
 
-        self.assertIs(duplicate, first)
+        self.assertEqual(duplicate.outcome, first.outcome)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        actions = self.store.list_motor_actions()
+        self.assertEqual(len(actions), 1)
+        self.assertTrue(actions[0]['action_id'])
+        self.assertEqual(actions[0]['workflow_session'], 'session-1')
+        self.assertEqual(actions[0]['station'], 'Station 1')
+        self.assertEqual(actions[0]['operation'], 'OPEN')
+        self.assertTrue(actions[0]['created_at'])
+        self.assertEqual(actions[0]['status'], 'COMPLETED')
 
     def test_uncertain_result_is_cached_and_never_retried(self):
         self.controller.outcome = MotorOutcome.UNCERTAIN
@@ -585,8 +603,17 @@ class MotorDispatchTests(unittest.TestCase):
         duplicate = self.dispatch()
 
         self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
-        self.assertIs(duplicate, first)
+        self.assertEqual(duplicate.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'UNCERTAIN')
+
+    def test_rejected_result_persists_failed_terminal_status(self):
+        self.controller.outcome = MotorOutcome.REJECTED
+
+        result = self.dispatch()
+
+        self.assertEqual(result.outcome, MotorOutcome.REJECTED)
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'FAILED')
 
     def test_controller_exception_is_cached_as_uncertain_without_retry(self):
         self.controller.error = OSError('simulated serial failure')
@@ -595,8 +622,9 @@ class MotorDispatchTests(unittest.TestCase):
         duplicate = self.dispatch()
 
         self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
-        self.assertIs(duplicate, first)
+        self.assertEqual(duplicate.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'UNCERTAIN')
 
     def test_concurrent_transitions_never_call_controller_concurrently(self):
         self.controller.block = True
@@ -632,29 +660,87 @@ class MotorDispatchTests(unittest.TestCase):
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(first_result[0].outcome, MotorOutcome.COMPLETED)
-        self.assertEqual(duplicate.outcome, MotorOutcome.BUSY)
+        self.assertEqual(duplicate.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(self.controller.max_in_flight, 1)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
-        self.assertIs(self.dispatch(), first_result[0])
+        self.assertEqual(self.dispatch().outcome, MotorOutcome.COMPLETED)
 
-    def test_deduplication_cache_is_process_local_and_resets_with_service_instance(self):
-        first_result = self.dispatch()
+    def test_concurrent_services_share_the_durable_idempotency_claim(self):
+        second_store = SQLiteScanEventStore(self.database_path)
+        second_controller = FakeMotorController()
+        second_service = NFCService(
+            MockNFCReader(), second_store, FakeVerifier((200, {})),
+            motor_controller=second_controller,
+        )
+        barrier = threading.Barrier(2)
+        results = []
+
+        def dispatch(service):
+            barrier.wait(timeout=1)
+            results.append(service.dispatch_motor_transition(
+                'finish_open', 'Station 1', 200,
+                self.response('shared-session', 'Station 1', 'open'),
+            ))
+
+        workers = [
+            threading.Thread(target=dispatch, args=(service,))
+            for service in (self.service, second_service)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=2)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(len(self.controller.calls) + len(second_controller.calls), 1)
+        self.assertEqual(len(self.store.list_motor_actions()), 1)
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'COMPLETED')
+
+    def test_service_startup_recovers_pending_and_dispatched_actions_as_uncertain(self):
+        pending = self.store.create_motor_action('pending-session', 'Station 1', 'OPEN')
+        dispatched = self.store.create_motor_action('dispatched-session', 'Station 2', 'CLOSE')
+        self.assertTrue(self.store.claim_motor_action(dispatched['action_id']))
+        restarted_store = SQLiteScanEventStore(self.database_path)
+        restarted_controller = FakeMotorController()
         restarted_service = NFCService(
             MockNFCReader(),
-            None,
+            restarted_store,
             FakeVerifier((200, {})),
-            motor_controller=self.controller,
-        )
-        restarted_result = restarted_service.dispatch_motor_transition(
-            'finish_open',
-            'Station 1',
-            200,
-            self.response('session-1', 'Station 1', 'open'),
+            motor_controller=restarted_controller,
         )
 
-        self.assertEqual(first_result.outcome, MotorOutcome.COMPLETED)
-        self.assertEqual(restarted_result.outcome, MotorOutcome.COMPLETED)
-        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN'), ('Station 1', 'OPEN')])
+        self.assertEqual(restarted_service.recovered_motor_actions, 2)
+        self.assertEqual(restarted_store.get_motor_action(pending['action_id'])['status'], 'UNCERTAIN')
+        self.assertEqual(restarted_store.get_motor_action(dispatched['action_id'])['status'], 'UNCERTAIN')
+        retry = restarted_service.dispatch_motor_transition(
+            'finish_close', 'Station 2', 200,
+            self.response('dispatched-session', 'Station 2', 'closed'),
+        )
+        self.assertEqual(retry.outcome, MotorOutcome.UNCERTAIN)
+        self.assertEqual(restarted_controller.calls, [])
+
+    def test_persistence_errors_before_dispatch_never_call_controller(self):
+        with patch.object(self.store, 'create_motor_action', side_effect=sqlite3.OperationalError('storage unavailable')):
+            result = self.dispatch()
+        self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertEqual(self.controller.calls, [])
+
+        self.store.create_motor_action('claim-failure', 'Station 1', 'OPEN')
+        with patch.object(self.store, 'claim_motor_action', side_effect=sqlite3.OperationalError('storage unavailable')):
+            result = self.dispatch(payload=self.response('claim-failure', 'Station 1', 'open'))
+        self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertEqual(self.controller.calls, [])
+
+    def test_outcome_persistence_error_leaves_dispatched_action_unretryable(self):
+        with patch.object(self.store, 'finish_motor_action', side_effect=sqlite3.OperationalError('storage unavailable')):
+            result = self.dispatch()
+
+        self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'DISPATCHED')
+        retry = self.dispatch()
+        self.assertEqual(retry.outcome, MotorOutcome.UNCERTAIN)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
 
 
 class NFCBridgeHTTPTests(unittest.TestCase):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import queue
@@ -19,6 +20,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, urlunsplit
+from uuid import uuid4
 
 from motor_controller import MotorCommandResult, MotorOutcome
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
@@ -56,6 +58,10 @@ MOTOR_WORKFLOW_TRANSITIONS = {
     'finish_close': 'CLOSE',
 }
 MOTOR_STATIONS = frozenset({'Station 1', 'Station 2'})
+MOTOR_ACTION_STATUSES = frozenset({'PENDING', 'DISPATCHED', 'COMPLETED', 'FAILED', 'UNCERTAIN'})
+MOTOR_ACTION_IN_PROGRESS = ('PENDING', 'DISPATCHED')
+
+logger = logging.getLogger(__name__)
 
 
 class MockNFCReader:
@@ -107,6 +113,25 @@ class MockMotorController:
             session_id='MOCK-ONLY',
             transaction_id=transaction_id,
         )
+
+
+def motor_result_from_action(action: dict) -> MotorCommandResult:
+    outcomes = {
+        'PENDING': MotorOutcome.BUSY,
+        'DISPATCHED': MotorOutcome.UNCERTAIN,
+        'COMPLETED': MotorOutcome.COMPLETED,
+        'FAILED': MotorOutcome.REJECTED,
+        'UNCERTAIN': MotorOutcome.UNCERTAIN,
+    }
+    operation = action['operation']
+    return MotorCommandResult(
+        station=action['station'],
+        action=operation,
+        command='MOCK',
+        outcome=outcomes[action['status']],
+        transaction_id=None,
+        error='Action requires manual review.' if action['status'] == 'UNCERTAIN' else None,
+    )
 
 
 def create_motor_controller():
@@ -400,6 +425,82 @@ class SQLiteScanEventStore:
                     response_json TEXT NOT NULL
                 )
             ''')
+            connection.execute('''
+                CREATE TABLE IF NOT EXISTS motor_actions (
+                    action_id TEXT PRIMARY KEY,
+                    workflow_session TEXT NOT NULL,
+                    station TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK (operation IN ('OPEN', 'CLOSE')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('PENDING', 'DISPATCHED', 'COMPLETED', 'FAILED', 'UNCERTAIN')),
+                    UNIQUE (workflow_session, station, operation)
+                )
+            ''')
+
+    def create_motor_action(self, workflow_session: str, station: str, operation: str) -> dict:
+        if station not in MOTOR_STATIONS or operation not in {'OPEN', 'CLOSE'}:
+            raise ValueError('Invalid station or operation for motor action.')
+        action_id = str(uuid4())
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection() as connection:
+            connection.execute('''
+                INSERT INTO motor_actions (
+                    action_id, workflow_session, station, operation,
+                    created_at, updated_at, status
+                ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+                ON CONFLICT(workflow_session, station, operation) DO NOTHING
+            ''', (action_id, str(workflow_session), station, operation, created_at, created_at))
+            row = connection.execute('''
+                SELECT * FROM motor_actions
+                WHERE workflow_session = ? AND station = ? AND operation = ?
+            ''', (str(workflow_session), station, operation)).fetchone()
+            if row is None:
+                raise sqlite3.IntegrityError('Unable to retrieve the persisted motor action.')
+            return dict(row)
+
+    def claim_motor_action(self, action_id: str) -> bool:
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection() as connection:
+            cursor = connection.execute('''
+                UPDATE motor_actions SET status = 'DISPATCHED', updated_at = ?
+                WHERE action_id = ? AND status = 'PENDING'
+            ''', (updated_at, action_id))
+            return cursor.rowcount == 1
+
+    def finish_motor_action(self, action_id: str, status: str) -> bool:
+        if status not in MOTOR_ACTION_STATUSES - set(MOTOR_ACTION_IN_PROGRESS):
+            raise ValueError('Motor action status must be terminal.')
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection() as connection:
+            cursor = connection.execute('''
+                UPDATE motor_actions SET status = ?, updated_at = ?
+                WHERE action_id = ? AND status = 'DISPATCHED'
+            ''', (status, updated_at, action_id))
+            return cursor.rowcount == 1
+
+    def get_motor_action(self, action_id: str) -> dict | None:
+        with self._lock, self._connection() as connection:
+            row = connection.execute(
+                'SELECT * FROM motor_actions WHERE action_id = ?', (action_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def list_motor_actions(self) -> list[dict]:
+        with self._lock, self._connection() as connection:
+            rows = connection.execute(
+                'SELECT * FROM motor_actions ORDER BY created_at, action_id',
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def recover_in_progress_motor_actions(self) -> int:
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection() as connection:
+            cursor = connection.execute('''
+                UPDATE motor_actions SET status = 'UNCERTAIN', updated_at = ?
+                WHERE status IN ('PENDING', 'DISPATCHED')
+            ''', (updated_at,))
+            return cursor.rowcount
 
     def append(self, event: dict) -> int:
         with self._lock, self._connection() as connection:
@@ -582,11 +683,15 @@ class NFCService:
         self.store = store
         self.verifier = verifier
         self.photo_capture = photo_capture if photo_capture is not None else getattr(verifier, 'photo_capture', None)
-        self.motor_controller = motor_controller if motor_controller is not None else create_motor_controller()
-        self._motor_dispatch_state_lock = threading.Lock()
+        selected_motor_controller = motor_controller if motor_controller is not None else create_motor_controller()
+        if not isinstance(selected_motor_controller, MockMotorController):
+            raise RuntimeError('Only MockMotorController is allowed in this integration phase.')
+        self.motor_controller = selected_motor_controller
         self._motor_command_lock = threading.Lock()
-        self._motor_dispatch_inflight = set()
-        self._motor_dispatch_results = {}
+        if self.store is not None:
+            self.recovered_motor_actions = self.store.recover_in_progress_motor_actions()
+        else:
+            self.recovered_motor_actions = 0
         self.state = NFCServiceState(getattr(reader, 'reader_connected', False))
         self._stop_event = threading.Event()
 
@@ -613,42 +718,112 @@ class NFCService:
         ):
             return None
 
-        transition_key = (str(session['id']), command)
-        busy_result = MotorCommandResult(
-            station=station,
-            action=action,
-            command='MOCK',
-            outcome=MotorOutcome.BUSY,
-            error='A motor transition is already in progress.',
-        )
-        with self._motor_dispatch_state_lock:
-            if transition_key in self._motor_dispatch_results:
-                return self._motor_dispatch_results[transition_key]
-            if transition_key in self._motor_dispatch_inflight:
-                return busy_result
-            if not self._motor_command_lock.acquire(blocking=False):
-                self._motor_dispatch_results[transition_key] = busy_result
-                return busy_result
-            self._motor_dispatch_inflight.add(transition_key)
-
-        try:
-            result = self.motor_controller.command(station, action)
-            if not isinstance(result, MotorCommandResult):
-                raise TypeError('Motor controller returned an invalid result.')
-        except Exception:
-            result = MotorCommandResult(
+        if self.store is None:
+            logger.error('Motor action persistence is unavailable; dispatch skipped.')
+            return MotorCommandResult(
                 station=station,
                 action=action,
                 command='MOCK',
                 outcome=MotorOutcome.UNCERTAIN,
-                error='Motor dispatch outcome is uncertain; automatic retry is disabled.',
+                error='Action persistence is unavailable; dispatch skipped.',
             )
+
+        try:
+            action_record = self.store.create_motor_action(str(session['id']), station, action)
+        except Exception as error:
+            logger.error('Unable to persist motor action (%s); dispatch skipped.', type(error).__name__)
+            return MotorCommandResult(
+                station=station,
+                action=action,
+                command='MOCK',
+                outcome=MotorOutcome.UNCERTAIN,
+                error='Action persistence failed; dispatch skipped.',
+            )
+
+        if action_record['status'] != 'PENDING':
+            return motor_result_from_action(action_record)
+        if not self._motor_command_lock.acquire(blocking=False):
+            return MotorCommandResult(
+                station=station,
+                action=action,
+                command='MOCK',
+                outcome=MotorOutcome.BUSY,
+                error='Another motor action is in progress.',
+            )
+
+        try:
+            try:
+                claimed = self.store.claim_motor_action(action_record['action_id'])
+            except Exception as error:
+                logger.error('Unable to claim motor action (%s); dispatch skipped.', type(error).__name__)
+                return MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    error='Action claim failed; dispatch skipped.',
+                )
+            if not claimed:
+                try:
+                    latest = self.store.get_motor_action(action_record['action_id'])
+                except Exception as error:
+                    logger.error('Unable to read motor action state (%s); manual review is required.', type(error).__name__)
+                    return MotorCommandResult(
+                        station=station,
+                        action=action,
+                        command='MOCK',
+                        outcome=MotorOutcome.UNCERTAIN,
+                        error='Action state is unavailable; manual review is required.',
+                    )
+                return motor_result_from_action(latest) if latest else MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    error='Action state is unavailable; dispatch skipped.',
+                )
+
+            try:
+                result = self.motor_controller.command(station, action)
+                if not isinstance(result, MotorCommandResult):
+                    raise TypeError('Motor controller returned an invalid result.')
+            except Exception:
+                result = MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    error='Motor dispatch outcome is uncertain; automatic retry is disabled.',
+                )
+            action_status = {
+                MotorOutcome.COMPLETED: 'COMPLETED',
+                MotorOutcome.REJECTED: 'FAILED',
+                MotorOutcome.BUSY: 'UNCERTAIN',
+                MotorOutcome.UNCERTAIN: 'UNCERTAIN',
+            }.get(result.outcome, 'UNCERTAIN')
+            try:
+                updated = self.store.finish_motor_action(action_record['action_id'], action_status)
+            except Exception as error:
+                logger.error('Unable to persist motor action outcome (%s); action requires recovery.', type(error).__name__)
+                return MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    error='Action outcome could not be persisted; manual review is required.',
+                )
+            if not updated:
+                logger.error('Motor action state changed unexpectedly; action requires recovery.')
+                return MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    error='Action state changed unexpectedly; manual review is required.',
+                )
+            return result
         finally:
-            with self._motor_dispatch_state_lock:
-                self._motor_dispatch_inflight.discard(transition_key)
-                self._motor_dispatch_results[transition_key] = result
             self._motor_command_lock.release()
-        return result
 
     def process_uid(self, uid: str) -> dict:
         """Verify one completed UID and persist exactly one resulting event."""
