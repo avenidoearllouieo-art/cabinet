@@ -78,6 +78,28 @@ Important:
 
 Put `DEVICE_API_KEY` only in `/etc/taptrack/nfc.env`, loaded only by the NFC systemd service. Set that file to mode `0600`. Never pass it to the Cabinet preview process or place it in a `VITE_` variable.
 
+The standalone Stage 2 motor prototype can use these settings in `/etc/taptrack/nfc.env`:
+
+```env
+TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/ttyUSB0
+TAPTRACK_MOTOR_BAUD_RATE=115200
+TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
+```
+
+`pyserial` is included in `pi_service/requirements.txt`. The NFC systemd unit runs as `pi`; grant that user access to the USB serial device, commonly through `dialout`, and restart the service (or reboot so the new group membership applies):
+
+```bash
+sudo usermod -aG dialout pi
+sudo systemctl restart taptrack-nfc.service
+ls -l /dev/ttyUSB0
+```
+
+Confirm the actual device path on the Pi before use, because USB device numbering can change. The Stage 2 controller uses V2 LF-delimited messages: `HELLO/READY` establishes a per-boot random session, `CMD` carries a session-scoped transaction ID and existing digit mapping, and matching `RSP` frames must arrive as `ACCEPTED`, `BUSY`, `DONE`. It sends no movement retry. Frames are unauthenticated and firmware transaction state is volatile.
+
+Each Python process starts disarmed. After timeout, disconnect, reset, or malformed response, it stays uncertain. The only prototype recovery operation is a non-actuating handshake that requires operator confirmation that motor-driver power is isolated, the unloaded mechanism is stationary, and the ESP32 was power-cycled. It is not persistent or production-safe and cannot detect storage cloning/rollback. Recovery never proves position.
+
+The V2 prototype is not connected to the Cabinet UI, scan bridge, NFC routes, or Django workflow. Pyserial mocked tests do not test actual serial hardware or firmware. Use only for bounded unloaded bench testing after verifying reset-time electrical safeguards. Shutters are not installed; limit switches and an emergency stop are absent. Do not test full travel or connect UI motor actuation.
+
 The Pi, shared physical NFC reader, and Cabinet screen use one unique `DEVICE_API_KEY`. Map that device to the Cabinet on the Django server with `TAPTRACK_NFC_DEVICE_MAP`; do not bind it to a logical station:
 
 ```env

@@ -86,11 +86,41 @@ IC Reader IC Reader USB keyboard-wedge
 	-> Cabinet browser
 ```
 
-`reader_adapters.py` detects an evdev device whose name contains `IC Reader`, maps digit/letter key-down events, terminates each UID on Enter, resets partial input after a 0.5-second key gap, and applies the original whitespace-removing uppercase UID normalization. Hardware mode is the default. `python-evdev` is the only additional Pi-service dependency.
+`reader_adapters.py` detects an evdev device whose name contains `IC Reader`, maps digit/letter key-down events, terminates each UID on Enter, resets partial input after a 0.5-second key gap, and applies the original whitespace-removing uppercase UID normalization. Hardware mode is the default. Pi service dependencies are listed in `requirements.txt` (`python-evdev` and `pyserial`).
 
 The NFC service sends the Django request server-side using `DEVICE_API_KEY` (or `TAPTRACK_DEVICE_API_KEY`) from its process environment. It stores no key in SQLite and exposes no key to the browser. A completed registered response becomes a `registered` event; Django's 404 enrollment response becomes `unregistered`; network, HTTP, and malformed-result failures become `error`. One parsed Enter-terminated UID invokes one verifier call and one SQLite insert. Bridge polling is read-only and never creates another Django request.
 
 The SQLite database defaults to `pi_service/nfc_events.sqlite3`; override it with `TAPTRACK_NFC_DB_PATH`. The bridge binds only to `127.0.0.1:5001`, permits CORS only from `http://127.0.0.1:4000` and `http://localhost:4000`, returns events in ascending `event_id` order, and never deletes events on GET.
+
+### Standalone motor serial controller (Stage 2 prototype)
+
+`motor_controller.py` and `motor/motor.ino` use an unauthenticated V2 line protocol. This standalone prototype is deliberately not connected to the Cabinet UI, NFC bridge/routes, or Django workflows. Frames are ASCII and LF-terminated, at most 96 bytes, with no CR or empty fields:
+
+```text
+HELLO,2,<nonce>\n
+READY,2,<session_id>,<nonce>,<last_transaction_id>,<state>\n
+CMD,2,<session_id>,<transaction_id>,<command>\n
+RSP,2,<session_id>,<transaction_id>,<status>,<command>[,<reason>]\n
+ERR,2,<session_id>,<reason>\n
+```
+
+`session_id` and `nonce` are 16 lowercase hex characters. The firmware refuses CMD frames until a valid HELLO has been exchanged in that boot. Transaction IDs are positive canonical decimal uint32 values and reset to the firmware-reported high-water mark plus one for a new Python process. Commands preserve the mapping: `1` Station 1 OPEN, `2` Station 1 CLOSE, `3` Station 2 OPEN, `4` Station 2 CLOSE. A successful command requires exactly matching `ACCEPTED`, `BUSY`, `DONE` responses in order. `REJECTED` is terminal. The firmware consumes a valid new sequence even when rejecting a command as busy.
+
+Configure the Pi process as before:
+
+```env
+TAPTRACK_MOTOR_SERIAL_DEVICE=/dev/ttyUSB0
+TAPTRACK_MOTOR_BAUD_RATE=115200
+TAPTRACK_MOTOR_RESPONSE_TIMEOUT_SECONDS=10
+```
+
+The controller serializes calls within one Python instance; this is not a cross-process lock. It never retries a movement. Each new controller instance starts disarmed and requires an explicit `recover()` call with operator confirmations before any movement. Timeout, disconnect, reset frame, malformed/stale response, or response-order error latches the instance uncertain. Recovery sends only a non-actuating HELLO and requires confirmation that motor-driver power is isolated, the unloaded mechanism is stationary, and the ESP32 was power-cycled. It requires an idle state and a new session when the prior session is known. It cannot verify the operator's physical assertions.
+
+There is no persistent Pi transaction journal or firmware durable transaction journal. Python transaction state and firmware sequence/session state are volatile. A process restart therefore starts disarmed and requires manual recovery, but this software-only prototype is not resistant to storage rollback/cloning and cannot guarantee exactly-once physical movement. It has no HMAC, protected key storage, anti-rollback counter, or physical position feedback. `DONE` means only that the programmed step routine ended.
+
+The firmware uses a bounded parser and nonblocking movement state machine. It drains/rejects commands received while moving and waits for an input-quiet interval before returning to IDLE. A reset does not resume movement; it creates a new random session. Random session IDs are correlation tokens, not cryptographic identities. GPIO STEP/DIR outputs are initialized inactive in setup, but MCU pins may float during reset; external pull-downs/driver-enable safeguards must be verified.
+
+Automated tests use mocked serial only. They establish Python framing, correlation, state latching, no software retry, and same-instance serialization; they do not validate firmware execution, USB reset/DTR behavior, electrical output levels, buffering, or physical motion. This prototype is only for bounded unloaded bench testing after electrical safety review. Shutters are not installed, and there are no limit switches or emergency stop. No full-travel or UI-connected motor testing is permitted.
 
 ### Hardware setup
 
