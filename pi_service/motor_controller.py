@@ -6,6 +6,7 @@ protection, physical position feedback, or production safety.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -22,6 +23,7 @@ DEFAULT_RESPONSE_TIMEOUT_SECONDS = 10.0
 DEFAULT_HANDSHAKE_ATTEMPTS = 3
 MAX_FRAME_BYTES = 96
 MAX_TRANSACTION_ID = 0xFFFFFFFF
+logger = logging.getLogger(__name__)
 
 COMMANDS = {
     ('Station 1', 'OPEN'): '1',
@@ -172,12 +174,18 @@ class SerialMotorController:
             or operator_confirmed_stationary is not True
             or operator_confirmed_esp32_power_cycled is not True
         ):
+            logger.warning('motor_serial_recovery_refused reason=operator_confirmations_incomplete')
             return False
         if not self._lock.acquire(blocking=False):
+            logger.warning('motor_serial_recovery_refused reason=controller_busy')
             return False
 
         try:
             if not self._unknown or self._closed:
+                logger.warning(
+                    'motor_serial_recovery_refused reason=controller_not_recoverable closed=%s',
+                    self._closed,
+                )
                 return False
             previous_session_id = self._session_id
             try:
@@ -192,9 +200,14 @@ class SerialMotorController:
                     raise _ProtocolError('Recovery requires a new ESP32 session ID.')
                 if last_transaction_id >= MAX_TRANSACTION_ID:
                     raise _ProtocolError('ESP32 transaction ID space is exhausted for this session.')
-            except Exception:
+            except Exception as error:
                 self._unknown = True
                 self._session_id = previous_session_id
+                logger.exception(
+                    'motor_serial_recovery_failed error_type=%s reason=%s',
+                    type(error).__name__,
+                    error,
+                )
                 return False
 
             self._session_id = new_session_id
@@ -209,6 +222,16 @@ class SerialMotorController:
             self._closed = True
             if self._serial is not None:
                 self._serial.close()
+                logger.info(
+                    'motor_serial_connection status=closed device=%s',
+                    os.path.basename(self.device),
+                )
+
+    @property
+    def connection_status(self) -> str:
+        if self._closed:
+            return 'closed'
+        return 'connected' if self._serial is not None else 'disconnected'
 
     def _get_serial(self):
         if self._serial is not None:
@@ -225,14 +248,27 @@ class SerialMotorController:
             port.dtr = False
             port.rts = False
             port.port = self.device
+            logger.info(
+                'motor_serial_connection status=connecting device=%s baud_rate=%s',
+                os.path.basename(self.device),
+                self.baud_rate,
+            )
             port.open()
         except Exception:
             try:
                 port.close()
             except Exception:
                 pass
+            logger.exception(
+                'motor_serial_connection status=failed device=%s',
+                os.path.basename(self.device),
+            )
             raise
         self._serial = port
+        logger.info(
+            'motor_serial_connection status=connected device=%s',
+            os.path.basename(self.device),
+        )
         return port
 
     def _handshake(self, serial_port) -> tuple[str, int, str]:

@@ -48,6 +48,28 @@ cd /home/taptrack/tap-track
 git status --short
 ```
 
+Before updating, confirm the service unit's `WorkingDirectory` and `ExecStart` match this checkout and the Git branch/remotes are the expected deployment source. Do not overwrite `/etc/taptrack/nfc.env` or SQLite files. After the reviewed change is available on the Pi:
+
+```bash
+cd /home/taptrack/tap-track
+git status --short
+git branch --show-current
+git remote -v
+git pull --ff-only
+```
+
+Only restart the NFC service for Pi-service changes. If deploying the updated unit file, first inspect the diff and then install it and reload systemd:
+
+```bash
+sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/taptrack-nfc.service
+sudo systemctl daemon-reload
+sudo systemctl restart taptrack-nfc.service
+sudo systemctl status taptrack-nfc.service
+curl -fsS http://127.0.0.1:5001/nfc/status
+```
+
+This is a deployment procedure only; these commands were not run as part of this task. Do not run any motor recovery or change the safe environment defaults until the physical safety checklist is complete.
+
 ## Install Python dependencies
 
 ```bash
@@ -96,7 +118,7 @@ TAPTRACK_MOTOR_ACTUATION_ENABLED=false
 
 The NFC service checks the stable path syntax and numeric settings at startup, but does not connect to the port until a motor command is allowed. Keep actuation disabled: setting it true also requires explicit true configuration for installed limit switches, an installed emergency stop, and an approved recovery procedure. These flags are assertions, not a substitute for physical inspection or commissioning.
 
-**Physical safety is not confirmed.** The firmware performs fixed-step motion without confirmed endpoint feedback; a `DONE` frame only confirms the firmware's routine completed and does not prove the shutter reached a safe endpoint. Do not enable actuation or connect TB6600 driver power until independent limit switches, an emergency stop, and a documented safe recovery procedure are installed and tested. The controller starts disarmed and has no service-level operator recovery mechanism. Do not upload firmware or issue motion commands during this deployment.
+**Physical safety is not confirmed.** The firmware performs fixed-step motion without confirmed endpoint feedback; a `DONE` frame only confirms the firmware's routine completed and does not prove the shutter reached a safe endpoint. Do not enable actuation or connect TB6600 driver power until independent limit switches, an emergency stop, and a documented safe recovery procedure are installed and tested. The controller starts disarmed and will not send a command until an operator performs the non-moving recovery handshake described below. Do not upload firmware or issue motion commands during this deployment.
 
 ### Safe commissioning checklist
 
@@ -110,7 +132,20 @@ Commissioning is currently blocked. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false
 - [ ] The exact `/dev/serial/by-id/` device path and `taptrack` serial permissions have been verified without issuing a movement command.
 - [ ] A separate safety reviewer has approved the physical installation and recovery procedure before any future actuation authorization.
 
-If an item is unchecked, do not energize the driver or enable actuation. The current service intentionally provides no remote recovery/arming endpoint, and this change does not authorize commissioning.
+If an item is unchecked, do not energize the driver or enable actuation. This change does not authorize commissioning.
+
+### Explicit operator recovery after safety approval
+
+After all commissioning items above have been verified, configure `TAPTRACK_MOTOR_MODE=serial`, set `TAPTRACK_MOTOR_ACTUATION_ENABLED=true`, and set each safety confirmation variable to `true`. The service then exposes an owner-only Unix socket at `/run/taptrack/motor-control.sock`; it is not an HTTP/Cabinet endpoint. With the motor-driver power physically isolated, the mechanism stationary, and the ESP32 power-cycled, run the interactive command as the `taptrack` service account:
+
+```bash
+sudo -u taptrack /home/taptrack/tap-track/pi_service/.venv/bin/python \
+  /home/taptrack/tap-track/pi_service/motor_recovery.py
+```
+
+The script requires an explicit `YES` for each physical confirmation. A successful recovery performs only the V2 serial handshake; it sends no movement command and does not prove shutter position. The service remains armed only for the lifetime of that process; after a restart or uncertain result, recovery must be repeated. Follow the separately approved physical procedure before reconnecting driver power. This workflow is intentionally unavailable in mock mode or when actuation is disabled.
+
+Only after the approved safeguards and procedure are in place will a successful Cabinet `finish_open` or `finish_close` response from Django dispatch one serial command. Django workflow completion and ESP32 protocol completion are logged separately; neither proves the shutter reached its endpoint.
 
 The V2 protocol was checked against `motor/motor.ino`: the controller sends a nonce-correlated `HELLO,2` and expects `READY,2`, then sends the existing numeric station/action mapping and accepts only the matching `ACCEPTED`, `BUSY`, `DONE` response sequence. The controller does not retry a movement command. A timeout, malformed response, disconnect, or interrupted process leaves the durable action un-retryable and requiring manual review. Startup converts leftover `PENDING`/`DISPATCHED` actions to `UNCERTAIN`; run exactly one NFC service process to avoid one process recovering another live process's action. Persistent action records suppress duplicates but do not prove exactly-once physical execution or position.
 

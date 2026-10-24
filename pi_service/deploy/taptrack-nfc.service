@@ -11,6 +11,8 @@ EnvironmentFile=-/etc/taptrack/nfc.env
 ExecStart=/home/taptrack/tap-track/pi_service/.venv/bin/python /home/taptrack/tap-track/pi_service/nfc_service.py
 Restart=always
 RestartSec=3
+RuntimeDirectory=taptrack
+RuntimeDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

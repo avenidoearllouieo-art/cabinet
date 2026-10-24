@@ -83,6 +83,47 @@ class FakeMotorController(MockMotorController):
                 self.in_flight -= 1
 
 
+class FakeProtocolSerial:
+    def __init__(self):
+        self.responses = []
+        self.writes = []
+        self.last_transaction_id = 0
+        self.command_response_mode = 'success'
+        self.timeout = None
+
+    @property
+    def in_waiting(self):
+        return sum(len(frame) for frame in self.responses)
+
+    def write(self, frame):
+        self.writes.append(frame)
+        fields = frame.decode('ascii').rstrip('\n').split(',')
+        if fields[0] == 'HELLO':
+            self.responses.append(
+                f'READY,2,0123456789abcdef,{fields[2]},{self.last_transaction_id},IDLE\n'.encode('ascii')
+            )
+        elif fields[0] == 'CMD':
+            self.last_transaction_id = int(fields[3])
+            if self.command_response_mode == 'success':
+                statuses = ('ACCEPTED', 'BUSY', 'DONE')
+                for response_status in statuses:
+                    self.responses.append(
+                        f'RSP,2,{fields[2]},{fields[3]},{response_status},{fields[4]}\n'.encode('ascii')
+                    )
+            elif self.command_response_mode == 'malformed':
+                self.responses.append(b'NOT_A_V2_RESPONSE\n')
+        return len(frame)
+
+    def flush(self):
+        pass
+
+    def read_until(self, expected=b'\n', size=None):
+        return self.responses.pop(0) if self.responses else b''
+
+    def close(self):
+        pass
+
+
 class FakeResponse:
     def __init__(self, status, payload, headers=None):
         self.status = status
@@ -941,6 +982,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.service.stop()
         self.temp_dir.cleanup()
 
     def get_json(self, path, origin=None):
@@ -1020,6 +1062,97 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(payload['session']['status'], 'open')
         self.assertEqual(events, ['django', 'motor'])
         self.assertEqual(controller.calls, [('Station 1', 'OPEN')])
+
+    def test_django_workflow_http_path_dispatches_v2_serial_actions_once(self):
+        serial_port = FakeProtocolSerial()
+        controller = SerialMotorController(serial_instance=serial_port, response_timeout=0.01)
+        self.service.motor_controller = controller
+        self.service.motor_actuation_enabled = True
+
+        class SuccessfulWorkflowVerifier:
+            def workflow(self, command=None, station=None):
+                status = 'closed' if command == 'finish_close' else 'open'
+                session_id = 'open-session' if command == 'finish_open' else 'close-session'
+                return 200, {
+                    'station': station,
+                    'session': {
+                        'id': session_id,
+                        'station': station,
+                        'status': status,
+                        'workflow_state': 'idle',
+                    },
+                }
+
+        self.service.verifier = SuccessfulWorkflowVerifier()
+        self.assertTrue(self.service.recover_motor_controller(
+            operator_confirmed_driver_power_isolated=True,
+            operator_confirmed_stationary=True,
+            operator_confirmed_esp32_power_cycled=True,
+        ))
+
+        with self.assertLogs('nfc_service', level='INFO') as captured:
+            open_status, _ = self.post_json('/cabinet/workflow', {
+                'command': 'finish_open',
+                'station': 'Station 1',
+            })
+            serial_port.command_response_mode = 'malformed'
+            close_status, _ = self.post_json('/cabinet/workflow', {
+                'command': 'finish_close',
+                'station': 'Station 2',
+            })
+            duplicate_status, _ = self.post_json('/cabinet/workflow', {
+                'command': 'finish_close',
+                'station': 'Station 2',
+            })
+
+        commands = [
+            frame.decode('ascii').rstrip('\n').split(',')
+            for frame in serial_port.writes
+            if frame.startswith(b'CMD,')
+        ]
+        self.assertEqual((open_status, close_status, duplicate_status), (200, 200, 200))
+        self.assertEqual(commands, [
+            ['CMD', '2', '0123456789abcdef', '1', '1'],
+            ['CMD', '2', '0123456789abcdef', '2', '4'],
+        ])
+        action_states = {
+            record['workflow_session']: record['status']
+            for record in self.store.list_motor_actions()
+        }
+        self.assertEqual(action_states, {'open-session': 'COMPLETED', 'close-session': 'UNCERTAIN'})
+        self.assertTrue(any(
+            'motor_action_result workflow_action=finish_open station=Station 1' in message
+            and 'result=completed' in message
+            for message in captured.output
+        ))
+        self.assertTrue(any(
+            'motor_action_result workflow_action=finish_close station=Station 2' in message
+            and 'reason=Unexpected frame while waiting for command response.' in message
+            for message in captured.output
+        ))
+        self.assertTrue(any(
+            'motor_action_reused workflow_action=finish_close station=Station 2' in message
+            and 'state=UNCERTAIN' in message
+            for message in captured.output
+        ))
+
+    def test_operator_recovery_is_refused_when_actuation_disabled_or_confirmation_missing(self):
+        serial_port = FakeProtocolSerial()
+        controller = SerialMotorController(serial_instance=serial_port, response_timeout=0.01)
+        self.service.motor_controller = controller
+
+        self.assertFalse(self.service.recover_motor_controller(
+            operator_confirmed_driver_power_isolated=True,
+            operator_confirmed_stationary=True,
+            operator_confirmed_esp32_power_cycled=True,
+        ))
+        self.service.motor_actuation_enabled = True
+        self.assertFalse(self.service.recover_motor_controller(
+            operator_confirmed_driver_power_isolated=True,
+            operator_confirmed_stationary=True,
+            operator_confirmed_esp32_power_cycled=False,
+        ))
+        self.assertEqual(serial_port.writes, [])
 
     def test_failed_django_final_transition_does_not_dispatch(self):
         class FailedWorkflowVerifier:

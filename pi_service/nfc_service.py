@@ -30,6 +30,7 @@ from motor_controller import (
     MotorOutcome,
     SerialMotorController,
 )
+from motor_recovery import MotorRecoveryServer
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
 
 
@@ -772,13 +773,90 @@ class NFCService:
             return False
         return self.photo_capture.capture(event_id)
 
+    def recover_motor_controller(
+        self,
+        *,
+        operator_confirmed_driver_power_isolated: bool,
+        operator_confirmed_stationary: bool,
+        operator_confirmed_esp32_power_cycled: bool,
+    ) -> bool:
+        confirmations = (
+            operator_confirmed_driver_power_isolated,
+            operator_confirmed_stationary,
+            operator_confirmed_esp32_power_cycled,
+        )
+        if any(value is not True for value in confirmations):
+            logger.warning('motor_recovery_refused reason=operator_confirmations_incomplete')
+            return False
+        if self._stop_event.is_set() or not self.motor_actuation_enabled:
+            logger.warning(
+                'motor_recovery_refused reason=service_stopping_or_actuation_disabled '
+                'actuation_enabled=%s',
+                self.motor_actuation_enabled,
+            )
+            return False
+        if not isinstance(self.motor_controller, SerialMotorController):
+            logger.warning(
+                'motor_recovery_refused reason=serial_controller_not_selected controller=%s',
+                type(self.motor_controller).__name__,
+            )
+            return False
+        if not self._motor_command_lock.acquire(blocking=False):
+            logger.warning('motor_recovery_refused reason=motor_action_in_progress')
+            return False
+
+        try:
+            logger.info(
+                'motor_recovery_started serial_connection=%s',
+                self.motor_controller.connection_status,
+            )
+            recovered = self.motor_controller.recover(
+                operator_confirmed_driver_power_isolated=True,
+                operator_confirmed_stationary=True,
+                operator_confirmed_esp32_power_cycled=True,
+            )
+            if recovered:
+                logger.info(
+                    'motor_recovery_result result=ready serial_connection=%s',
+                    self.motor_controller.connection_status,
+                )
+            else:
+                logger.error(
+                    'motor_recovery_result result=failed reason=handshake_or_esp32_state_rejected '
+                    'serial_connection=%s',
+                    self.motor_controller.connection_status,
+                )
+            return recovered
+        finally:
+            self._motor_command_lock.release()
+
     def dispatch_motor_transition(self, command: str, station: str, status_code: int, response: dict):
         if self._stop_event.is_set():
             return None
         action = MOTOR_WORKFLOW_TRANSITIONS.get(command)
-        if action is None or status_code != HTTPStatus.OK or station not in MOTOR_STATIONS:
+        if action is None:
+            return None
+        if status_code != HTTPStatus.OK:
+            logger.warning(
+                'motor_action_skipped workflow_action=%s station=%s reason=django_http_status status=%s',
+                command,
+                station,
+                status_code,
+            )
+            return None
+        if station not in MOTOR_STATIONS:
+            logger.warning(
+                'motor_action_skipped workflow_action=%s station=%s reason=invalid_station',
+                command,
+                station,
+            )
             return None
         if not isinstance(response, dict) or response.get('station') != station:
+            logger.warning(
+                'motor_action_skipped workflow_action=%s station=%s reason=response_station_mismatch',
+                command,
+                station,
+            )
             return None
 
         session = response.get('session')
@@ -792,10 +870,19 @@ class NFCService:
             or session.get('status') != expected_status
             or session.get('workflow_state') != 'idle'
         ):
+            logger.warning(
+                'motor_action_skipped workflow_action=%s station=%s reason=invalid_workflow_response',
+                command,
+                station,
+            )
             return None
 
         if self.store is None:
-            logger.error('Motor action persistence is unavailable; dispatch skipped.')
+            logger.error(
+                'motor_action_skipped workflow_action=%s station=%s reason=action_store_unavailable',
+                command,
+                station,
+            )
             return MotorCommandResult(
                 station=station,
                 action=action,
@@ -807,7 +894,12 @@ class NFCService:
         try:
             action_record = self.store.create_motor_action(str(session['id']), station, action)
         except Exception as error:
-            logger.error('Unable to persist motor action (%s); dispatch skipped.', type(error).__name__)
+            logger.exception(
+                'motor_action_skipped workflow_action=%s station=%s reason=action_store_write_failed error_type=%s',
+                command,
+                station,
+                type(error).__name__,
+            )
             return MotorCommandResult(
                 station=station,
                 action=action,
@@ -817,8 +909,21 @@ class NFCService:
             )
 
         if action_record['status'] != 'PENDING':
+            logger.info(
+                'motor_action_reused workflow_action=%s station=%s action_id=%s state=%s',
+                command,
+                station,
+                action_record['action_id'],
+                action_record['status'],
+            )
             return motor_result_from_action(action_record)
         if not self._motor_command_lock.acquire(blocking=False):
+            logger.warning(
+                'motor_action_skipped workflow_action=%s station=%s action_id=%s reason=another_action_in_progress',
+                command,
+                station,
+                action_record['action_id'],
+            )
             return MotorCommandResult(
                 station=station,
                 action=action,
@@ -831,7 +936,14 @@ class NFCService:
             try:
                 claimed = self.store.claim_motor_action(action_record['action_id'])
             except Exception as error:
-                logger.error('Unable to claim motor action (%s); dispatch skipped.', type(error).__name__)
+                logger.exception(
+                    'motor_action_skipped workflow_action=%s station=%s action_id=%s '
+                    'reason=action_claim_failed error_type=%s',
+                    command,
+                    station,
+                    action_record['action_id'],
+                    type(error).__name__,
+                )
                 return MotorCommandResult(
                     station=station,
                     action=action,
@@ -843,7 +955,14 @@ class NFCService:
                 try:
                     latest = self.store.get_motor_action(action_record['action_id'])
                 except Exception as error:
-                    logger.error('Unable to read motor action state (%s); manual review is required.', type(error).__name__)
+                    logger.exception(
+                        'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                        'reason=action_state_unavailable error_type=%s',
+                        command,
+                        station,
+                        action_record['action_id'],
+                        type(error).__name__,
+                    )
                     return MotorCommandResult(
                         station=station,
                         action=action,
@@ -861,10 +980,12 @@ class NFCService:
 
             if not self.motor_actuation_enabled:
                 logger.warning(
-                    'Motor action %s for %s was recorded without actuation; '
-                    'TAPTRACK_MOTOR_ACTUATION_ENABLED is false.',
-                    action,
+                    'motor_action_skipped workflow_action=%s station=%s action_id=%s '
+                    'reason=actuation_disabled serial_connection=%s',
+                    command,
                     station,
+                    action_record['action_id'],
+                    getattr(self.motor_controller, 'connection_status', 'not_applicable'),
                 )
                 result = MotorCommandResult(
                     station=station,
@@ -876,8 +997,12 @@ class NFCService:
                 try:
                     updated = self.store.finish_motor_action(action_record['action_id'], 'FAILED')
                 except Exception as error:
-                    logger.error(
-                        'Unable to persist disabled motor action (%s); manual review is required.',
+                    logger.exception(
+                        'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                        'reason=disabled_action_persistence_failed error_type=%s',
+                        command,
+                        station,
+                        action_record['action_id'],
                         type(error).__name__,
                     )
                     return MotorCommandResult(
@@ -888,7 +1013,13 @@ class NFCService:
                         error='Disabled action could not be persisted; manual review is required.',
                     )
                 if not updated:
-                    logger.error('Disabled motor action state changed unexpectedly.')
+                    logger.error(
+                        'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                        'reason=disabled_action_state_changed',
+                        command,
+                        station,
+                        action_record['action_id'],
+                    )
                     return MotorCommandResult(
                         station=station,
                         action=action,
@@ -898,18 +1029,53 @@ class NFCService:
                     )
                 return result
 
+            logger.info(
+                'motor_action_dispatch workflow_action=%s station=%s action_id=%s '
+                'motor_command=%s serial_connection=%s controller=%s',
+                command,
+                station,
+                action_record['action_id'],
+                action,
+                getattr(self.motor_controller, 'connection_status', 'not_applicable'),
+                type(self.motor_controller).__name__,
+            )
             try:
                 result = self.motor_controller.command(station, action)
-                if not isinstance(result, MotorCommandResult):
+                if (
+                    not isinstance(result, MotorCommandResult)
+                    or not isinstance(result.outcome, MotorOutcome)
+                ):
                     raise TypeError('Motor controller returned an invalid result.')
-            except Exception:
+            except Exception as error:
+                logger.exception(
+                    'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                    'reason=controller_exception error_type=%s',
+                    command,
+                    station,
+                    action_record['action_id'],
+                    type(error).__name__,
+                )
                 result = MotorCommandResult(
                     station=station,
                     action=action,
-                    command='MOCK',
+                    command='',
                     outcome=MotorOutcome.UNCERTAIN,
-                    error='Motor dispatch outcome is uncertain; automatic retry is disabled.',
+                    error=f'{type(error).__name__}: {error}',
                 )
+            logger.log(
+                logging.INFO if result.outcome == MotorOutcome.COMPLETED else logging.WARNING,
+                'motor_action_result workflow_action=%s station=%s action_id=%s '
+                'motor_command=%s result=%s '
+                'serial_connection=%s transaction_id=%s reason=%s',
+                command,
+                station,
+                action_record['action_id'],
+                result.command or 'none',
+                result.outcome.value,
+                getattr(self.motor_controller, 'connection_status', 'not_applicable'),
+                result.transaction_id,
+                result.error or 'none',
+            )
             action_status = {
                 MotorOutcome.COMPLETED: 'COMPLETED',
                 MotorOutcome.REJECTED: 'FAILED',
@@ -919,7 +1085,14 @@ class NFCService:
             try:
                 updated = self.store.finish_motor_action(action_record['action_id'], action_status)
             except Exception as error:
-                logger.error('Unable to persist motor action outcome (%s); action requires recovery.', type(error).__name__)
+                logger.exception(
+                    'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                    'reason=outcome_persistence_failed error_type=%s',
+                    command,
+                    station,
+                    action_record['action_id'],
+                    type(error).__name__,
+                )
                 return MotorCommandResult(
                     station=station,
                     action=action,
@@ -928,7 +1101,13 @@ class NFCService:
                     error='Action outcome could not be persisted; manual review is required.',
                 )
             if not updated:
-                logger.error('Motor action state changed unexpectedly; action requires recovery.')
+                logger.error(
+                    'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                    'reason=outcome_state_changed',
+                    command,
+                    station,
+                    action_record['action_id'],
+                )
                 return MotorCommandResult(
                     station=station,
                     action=action,
@@ -1155,6 +1334,26 @@ def main() -> None:
     verifier = DjangoVerifier()
     service = NFCService(reader, store, verifier)
     server = create_http_server(store, service)
+    motor_recovery_server = None
+    if service.motor_actuation_enabled and isinstance(service.motor_controller, SerialMotorController):
+        motor_recovery_server = MotorRecoveryServer(service)
+        threading.Thread(
+            target=motor_recovery_server.serve_forever,
+            name='motor-operator-recovery',
+            daemon=True,
+        ).start()
+        logger.info(
+            'motor_configuration mode=serial actuation_enabled=true '
+            'operator_recovery_socket=%s serial_connection=%s',
+            motor_recovery_server.socket_path,
+            service.motor_controller.connection_status,
+        )
+    else:
+        logger.info(
+            'motor_configuration controller=%s actuation_enabled=%s',
+            type(service.motor_controller).__name__,
+            service.motor_actuation_enabled,
+        )
     threading.Thread(target=server.serve_forever, name='nfc-scan-bridge', daemon=True).start()
     print(f'TapTrack NFC scan bridge listening on http://{BRIDGE_HOST}:{BRIDGE_PORT}/api/scans')
     try:
@@ -1165,6 +1364,9 @@ def main() -> None:
         try:
             service.stop()
         finally:
+            if motor_recovery_server is not None:
+                motor_recovery_server.shutdown()
+                motor_recovery_server.server_close()
             server.shutdown()
             server.server_close()
 
