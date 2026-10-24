@@ -7,17 +7,26 @@ async function requestWorkflow(command, { signal, fetcher = fetch, mode = 'hardw
   const mockMode = mode === 'mock'
   const url = mockMode ? '/api/cabinet/workflow/' : workflowUrl
   const body = command ? { command, station } : null
-  const response = await fetcher(url, {
-    method: command ? 'POST' : 'GET',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(mockMode ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    cache: 'no-store',
-    signal,
-  })
+  let response
+  try {
+    response = await fetcher(url, {
+      method: command ? 'POST' : 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(mockMode ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    const message = mockMode
+      ? 'Cabinet API unavailable. Check Django and the development proxy.'
+      : 'NFC reader unavailable. Check the configured NFC bridge.'
+    throw new Error(message, { cause: error })
+  }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || `Cabinet workflow returned HTTP ${response.status}.`)
   return payload

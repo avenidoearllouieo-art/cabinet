@@ -116,6 +116,7 @@ npm run build
 ```
 
 The Vite output directory is the default Vite build folder from `cabinet/package.json` and `cabinet/vite.config.js`.
+The `taptrack-cabinet.service` unit rebuilds the UI after loading `/etc/taptrack/cabinet.env`, so its `VITE_NFC_MODE=hardware` and bridge URL are compiled into the served bundle on service restart.
 
 ## Start the NFC service
 

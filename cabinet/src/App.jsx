@@ -3,11 +3,12 @@ import { QRCodeSVG } from 'qrcode.react'
 import AccessPhotoDetails from './components/AccessPhotoDetails'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
+import { resolveNfcMode } from './services/nfc/nfcMode'
 import { captureAccessLogPhoto, fetchCabinetWorkflow, fetchScanEvents, sendCabinetWorkflow } from './services/nfc/scanResultBridge'
 import './App.css'
 
 const PI_SERVICE_URL = import.meta.env.VITE_PI_SERVICE_URL || 'http://127.0.0.1:8765'
-const NFC_MODE = (import.meta.env.VITE_NFC_MODE || (import.meta.env.DEV ? 'mock' : 'hardware')).toLowerCase()
+const NFC_MODE = resolveNfcMode(import.meta.env.VITE_NFC_MODE)
 const REQUEST_TIMEOUT_MS = 15000
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const PHOTO_STATUS_ATTEMPTS = 12

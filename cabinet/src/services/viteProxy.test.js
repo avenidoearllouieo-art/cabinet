@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import process from 'node:process'
 import test from 'node:test'
 import viteConfig from '../../vite.config.js'
 

@@ -1,8 +1,10 @@
+import { resolveNfcMode } from './nfc/nfcMode.js'
+
 const configuredApiBase = import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api'
 const API_BASE_URL = /^https?:\/\//i.test(configuredApiBase)
   ? new URL(configuredApiBase).pathname.replace(/\/$/, '')
   : configuredApiBase.replace(/\/$/, '')
-const NFC_MODE = (import.meta.env?.VITE_NFC_MODE || (import.meta.env?.DEV ? 'mock' : 'hardware')).toLowerCase()
+const NFC_MODE = resolveNfcMode(import.meta.env?.VITE_NFC_MODE)
 const photoReadHeaders = {
   Accept: 'application/json',
   ...(NFC_MODE === 'mock' ? { 'X-TapTrack-Mock-Mode': 'true' } : {}),
