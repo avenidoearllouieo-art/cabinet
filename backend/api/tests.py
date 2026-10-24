@@ -1,7 +1,8 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
 from django.contrib import admin as django_admin
-from django.test import Client, RequestFactory, TestCase, override_settings
+from django.conf import settings
+from django.test import Client, RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.test import TransactionTestCase
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
@@ -12,6 +13,9 @@ from rest_framework.test import APIClient
 from io import BytesIO
 from PIL import Image
 import os
+import json
+import subprocess
+import sys
 import tempfile
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
@@ -20,6 +24,48 @@ from openpyxl import Workbook, load_workbook
 
 from .admin import AccessLogAdmin
 from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession
+
+
+class BackendEnvironmentLoadingTests(SimpleTestCase):
+    def test_dotenv_loads_from_settings_path_outside_backend_working_directory(self):
+        env_file = settings.BASE_DIR / '.env'
+        if not env_file.is_file():
+            self.skipTest('Local backend/.env is not available.')
+
+        environment = os.environ.copy()
+        for name in ('DJANGO_DEBUG', 'DJANGO_SECRET_KEY', 'DEVICE_API_KEY'):
+            environment.pop(name, None)
+
+        script = '''
+import json
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+from config import settings
+raw_debug = os.environ.get('DJANGO_DEBUG', '').strip().lower()
+expected_debug = raw_debug in {'1', 'true', 'yes', 'on'}
+secret_key = os.environ.get('DJANGO_SECRET_KEY', '')
+print(json.dumps({
+    'debug_loaded': settings.DEBUG == expected_debug,
+    'secret_key_loaded': not secret_key or settings.SECRET_KEY == secret_key,
+    'device_key_loaded': bool(os.environ.get('DEVICE_API_KEY')),
+}))
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', script, str(settings.BASE_DIR)],
+            cwd=settings.BASE_DIR.parent,
+            env=environment,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        loaded = json.loads(result.stdout)
+        self.assertEqual(loaded, {
+            'debug_loaded': True,
+            'secret_key_loaded': True,
+            'device_key_loaded': True,
+        })
 
 
 class InstructorSectionOverviewScopeTests(TestCase):
