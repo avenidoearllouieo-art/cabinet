@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
   const proxy = {
     '/nfc-bridge': {
       target: 'http://127.0.0.1:5001',
+      changeOrigin: false,
       rewrite: (path) => path.replace(/^\/nfc-bridge/, ''),
     },
     '/api': {

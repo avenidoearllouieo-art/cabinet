@@ -1853,12 +1853,19 @@ class NFCHandler(BaseHTTPRequestHandler):
                         'serial_command': motor_result.command or None if motor_result else None,
                         'transaction_id': motor_result.transaction_id if motor_result else None,
                         'serial_responses': list(motor_result.responses) if motor_result else [],
+                        'serial_accepted': bool(motor_result and motor_result.accepted),
+                        'serial_command_completed': bool(
+                            motor_result
+                            and motor_result.outcome == MotorOutcome.COMPLETED
+                            and motor_result.command_transmitted is True
+                        ),
                         'serial_command_sent': (
                             motor_result.command_transmitted
                             if isinstance(service.motor_controller, SerialMotorController)
                             and motor_result is not None
                             else False
                         ),
+                        'controller_armed': getattr(service.motor_controller, 'armed', False),
                         'serial_connection': getattr(
                             service.motor_controller,
                             'connection_status',

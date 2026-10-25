@@ -15,6 +15,7 @@ from nfc_service import (
     ALLOWED_ORIGINS,
     BRIDGE_HOST,
     BRIDGE_PORT,
+    DEFAULT_ALLOWED_ORIGINS,
     DjangoRequestError,
     DjangoVerifier,
     DjangoPhotoCapture,
@@ -24,6 +25,7 @@ from nfc_service import (
     SQLiteScanEventStore,
     create_motor_controller,
     create_http_server,
+    load_allowed_origins,
     make_scan_event,
     normalize_uid,
 )
@@ -1481,6 +1483,10 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(payload['motor_dispatch']['workflow_action'], 'finish_open')
         self.assertEqual(payload['motor_dispatch']['outcome'], 'rejected')
         self.assertFalse(payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(payload['motor_dispatch']['controller_armed'])
+        self.assertFalse(payload['motor_dispatch']['serial_accepted'])
+        self.assertFalse(payload['motor_dispatch']['serial_command_completed'])
+        self.assertEqual(payload['motor_dispatch']['serial_connection'], 'not_applicable')
         self.assertFalse(payload['motor_dispatch']['physical_movement_verified'])
         self.assertIn('no serial command was sent', payload['motor_dispatch']['error'])
         self.assertEqual(self.service.motor_controller.calls, [])
@@ -1523,6 +1529,9 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(payload['motor_dispatch']['outcome'], 'uncertain')
         self.assertFalse(payload['motor_dispatch']['serial_command_sent'])
         self.assertEqual(payload['motor_dispatch']['serial_connection'], 'disconnected')
+        self.assertFalse(payload['motor_dispatch']['controller_armed'])
+        self.assertFalse(payload['motor_dispatch']['serial_accepted'])
+        self.assertFalse(payload['motor_dispatch']['serial_command_completed'])
         self.assertIn('recovery is required', payload['motor_dispatch']['error'])
         self.assertIsNone(controller._serial)
 
@@ -1576,6 +1585,9 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual((open_status, close_status, duplicate_status), (200, 200, 200))
         self.assertEqual(open_payload['motor_dispatch']['outcome'], 'completed')
         self.assertTrue(open_payload['motor_dispatch']['serial_command_sent'])
+        self.assertTrue(open_payload['motor_dispatch']['controller_armed'])
+        self.assertTrue(open_payload['motor_dispatch']['serial_accepted'])
+        self.assertTrue(open_payload['motor_dispatch']['serial_command_completed'])
         self.assertEqual(open_payload['motor_dispatch']['serial_command'], '1')
         self.assertEqual(open_payload['motor_dispatch']['transaction_id'], 1)
         self.assertEqual(
@@ -1585,6 +1597,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertFalse(open_payload['motor_dispatch']['physical_movement_verified'])
         self.assertEqual(close_payload['motor_dispatch']['outcome'], 'uncertain')
         self.assertTrue(close_payload['motor_dispatch']['serial_command_sent'])
+        self.assertFalse(close_payload['motor_dispatch']['serial_command_completed'])
         self.assertFalse(close_payload['motor_dispatch']['physical_movement_verified'])
         self.assertEqual(commands, [
             ['CMD', '2', '0123456789abcdef', '1', '1'],
@@ -1717,6 +1730,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                 raised.exception.close()
 
     def test_allowed_cors_origins_are_exact(self):
+        self.assertEqual(load_allowed_origins(), DEFAULT_ALLOWED_ORIGINS)
         for origin in ALLOWED_ORIGINS:
             with self.subTest(origin=origin):
                 _, headers, _ = self.get_json('/api/scans?after=0&limit=50', origin=origin)
@@ -1724,6 +1738,68 @@ class NFCBridgeHTTPTests(unittest.TestCase):
 
         _, headers, _ = self.get_json('/api/scans?after=0&limit=50', origin='http://evil.example')
         self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
+
+    def test_recovery_origin_policy_accepts_development_and_production_origins_exactly(self):
+        configured_origins = load_allowed_origins(
+            'http://localhost:5173,http://localhost:4000,https://cabinet.example.edu',
+        )
+        self.assertEqual(configured_origins, frozenset({
+            'http://localhost:5173',
+            'http://localhost:4000',
+            'https://cabinet.example.edu',
+        }))
+        for invalid_configuration in (
+            '*',
+            'null',
+            'https://cabinet.example.edu/path',
+            'https://user@cabinet.example.edu',
+            'http://localhost:4000/',
+            'http://localhost:4000,,https://cabinet.example.edu',
+        ):
+            with self.subTest(invalid_configuration=invalid_configuration):
+                with self.assertRaises(RuntimeError):
+                    load_allowed_origins(invalid_configuration)
+
+    def test_recovery_handoff_accepts_configured_origins_and_rejects_unlisted_or_missing_origin(self):
+        configured_origins = frozenset({
+            'http://localhost:5173',
+            'http://localhost:4000',
+            'https://cabinet.example.edu',
+        })
+        verifier_call_count = len(self.service.verifier.password_reset_calls)
+        with patch('nfc_service.ALLOWED_ORIGINS', configured_origins):
+            for index, origin in enumerate(configured_origins):
+                request_id = f'origin-policy-{index}'
+                status, response = self.post_json(
+                    '/password-reset/handoff',
+                    {'request_id': request_id},
+                    origin=origin,
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(response['state'], 'waiting')
+                self.service.cancel_password_recovery(request_id)
+
+            for origin in ('https://unlisted.example.edu', None):
+                with self.subTest(origin=origin):
+                    request_headers = {'Content-Type': 'application/json'}
+                    if origin:
+                        request_headers['Origin'] = origin
+                    request = urllib.request.Request(
+                        self.url + '/password-reset/handoff',
+                        data=json.dumps({'request_id': 'origin-rejected'}).encode('utf-8'),
+                        headers=request_headers,
+                        method='POST',
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as rejected:
+                        urllib.request.urlopen(request)
+                    self.assertEqual(rejected.exception.code, 403)
+                    self.assertEqual(
+                        json.loads(rejected.exception.read().decode('utf-8'))['error'],
+                        'Password-recovery bridge origin is not allowed.',
+                    )
+                    rejected.exception.close()
+
+        self.assertEqual(len(self.service.verifier.password_reset_calls) - verifier_call_count, 3)
 
     def test_bridge_rejects_non_loopback_bind(self):
         with self.assertRaises(ValueError):

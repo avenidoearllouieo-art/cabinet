@@ -13,6 +13,7 @@ test('development and preview proxy bridge traffic to the NFC service loopback',
   for (const proxyConfig of [config.server.proxy, (await viteConfig({ mode: 'production', command: 'serve' })).preview.proxy]) {
     const bridgeProxy = proxyConfig['/nfc-bridge']
     assert.equal(bridgeProxy.target, 'http://127.0.0.1:5001')
+    assert.equal(bridgeProxy.changeOrigin, false)
     assert.equal(bridgeProxy.rewrite('/nfc-bridge/password-reset/handoff'), '/password-reset/handoff')
     assert.equal(bridgeProxy.rewrite('/nfc-bridge/api/scans'), '/api/scans')
   }
