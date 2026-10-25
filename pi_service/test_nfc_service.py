@@ -46,6 +46,19 @@ class FakeVerifier:
             raise self.error
         return self.result
 
+    def password_reset_queue(self):
+        self.password_reset_queue_calls = getattr(self, 'password_reset_queue_calls', 0) + 1
+        return 200, {
+            'count': 1,
+            'results': [{
+                'request_id': 'opaque-request-id',
+                'display_name': 'Student A',
+                'account_reference': '•••-001',
+                'status': 'pending',
+                'requested_at': '2026-10-25T12:00:00Z',
+            }],
+        }
+
     def password_reset_request(self, endpoint, payload):
         self.password_reset_calls.append((endpoint, payload))
         if endpoint == 'cabinet-handoff':
@@ -1161,6 +1174,24 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(BRIDGE_HOST, '127.0.0.1')
         self.assertEqual(BRIDGE_PORT, 5001)
         self.assertEqual(self.server.server_address[0], '127.0.0.1')
+
+    def test_password_reset_queue_route_returns_safe_queue_and_enforces_origin_policy(self):
+        status, _, payload = self.get_json('/password-reset/queue')
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['count'], 1)
+        self.assertEqual(payload['results'][0]['account_reference'], '•••-001')
+        self.assertNotIn('nfc_uid', json.dumps(payload))
+        self.assertNotIn('reset_authorization', json.dumps(payload))
+        self.assertEqual(self.service.verifier.password_reset_queue_calls, 1)
+
+        with self.assertRaises(urllib.error.HTTPError) as rejected:
+            urllib.request.urlopen(urllib.request.Request(
+                self.url + '/password-reset/queue',
+                headers={'Origin': 'https://unlisted.example'},
+            ))
+        self.assertEqual(rejected.exception.code, 403)
+        rejected.exception.close()
+        self.assertEqual(self.service.verifier.password_reset_queue_calls, 1)
 
     def test_nfc_status_reports_motor_mode_without_claiming_physical_readiness(self):
         serial_controller = SerialMotorController(

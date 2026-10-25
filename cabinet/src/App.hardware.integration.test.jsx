@@ -448,7 +448,10 @@ describe('Cabinet real NFC bridge mode', () => {
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
-        return new Response(JSON.stringify({ count: 0, results: [] }), { status: 200 })
+        return new Response(JSON.stringify({
+          count: 1,
+          results: [{ request_id: recoveryRequestId, display_name: 'Student A', account_reference: '•••-001', status: 'pending' }],
+        }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
@@ -483,7 +486,8 @@ describe('Cabinet real NFC bridge mode', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: /password recovery/i }))
-    await user.type(screen.getByLabelText('Password-reset request ID'), recoveryRequestId)
+    await user.click(await screen.findByRole('button', { name: /Student A.*•••-001.*pending/i }))
+    expect(screen.queryByLabelText(/Password-reset request ID/i)).toBeNull()
     await user.click(screen.getByRole('button', { name: 'START NFC RECOVERY' }))
 
     expect(await screen.findByText('Django confirmed password-recovery status: verified.')).toBeTruthy()
@@ -510,7 +514,10 @@ describe('Cabinet real NFC bridge mode', () => {
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
-        return new Response(JSON.stringify({ count: 0, results: [] }), { status: 200 })
+        return new Response(JSON.stringify({
+          count: 1,
+          results: [{ request_id: recoveryRequestId, display_name: 'Student B', account_reference: '•••-002', status: 'pending' }],
+        }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         return new Response(JSON.stringify({
@@ -537,13 +544,52 @@ describe('Cabinet real NFC bridge mode', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: /password recovery/i }))
-    await user.type(screen.getByLabelText('Password-reset request ID'), recoveryRequestId)
+    await user.click(await screen.findByRole('button', { name: /Student B.*•••-002.*pending/i }))
+    expect(screen.queryByLabelText(/Password-reset request ID/i)).toBeNull()
     await user.click(screen.getByRole('button', { name: 'START NFC RECOVERY' }))
 
     expect(await screen.findByText('This card does not match the password-reset request.')).toBeTruthy()
     expect(fetcher.mock.calls.some(([url, options]) => (
       String(url).startsWith('http://localhost:3000/nfc-bridge/api/scans') && options.method === 'POST'
     ))).toBe(false)
+  })
+
+  it('shows a retryable recovery queue error and recovers on retry', async () => {
+    let queueAttempts = 0
+    const fetcher = vi.fn(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          cabinet_name: 'Cabinet 1',
+          stations: [{ name: 'Station 1', status: 'available', session: null }],
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
+        queueAttempts += 1
+        if (queueAttempts === 1) {
+          return new Response(JSON.stringify({ error: 'Queue temporarily unavailable.' }), { status: 503 })
+        }
+        return new Response(JSON.stringify({
+          count: 1,
+          results: [{ request_id: 'retry-request', display_name: 'Retry Student', account_reference: '•••-003', status: 'pending' }],
+        }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /password recovery/i }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Queue temporarily unavailable.')
+    await user.click(screen.getByRole('button', { name: 'RETRY' }))
+    await user.click(await screen.findByRole('button', { name: /Retry Student.*•••-003.*pending/i }))
+    expect(screen.getByRole('button', { name: 'START NFC RECOVERY' }).disabled).toBe(false)
   })
 
   it('shows uncertain serial transmission details without implying no command was sent', async () => {
