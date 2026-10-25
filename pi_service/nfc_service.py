@@ -141,6 +141,16 @@ def motor_result_from_action(action: dict) -> MotorCommandResult:
         'UNCERTAIN': MotorOutcome.UNCERTAIN,
     }
     operation = action['operation']
+    try:
+        outcome = MotorOutcome(action.get('outcome'))
+    except (TypeError, ValueError):
+        outcome = outcomes[action['status']]
+    try:
+        responses = json.loads(action.get('responses_json') or '[]')
+    except (TypeError, json.JSONDecodeError):
+        responses = []
+    if not isinstance(responses, list) or any(not isinstance(item, str) for item in responses):
+        responses = []
     command_transmitted = action.get('command_transmitted')
     if command_transmitted is not None:
         command_transmitted = bool(command_transmitted)
@@ -149,10 +159,11 @@ def motor_result_from_action(action: dict) -> MotorCommandResult:
     return MotorCommandResult(
         station=action['station'],
         action=operation,
-        command='MOCK',
-        outcome=outcomes[action['status']],
-        transaction_id=None,
+        command=action.get('command') or 'MOCK',
+        outcome=outcome,
+        transaction_id=action.get('transaction_id'),
         command_transmitted=command_transmitted,
+        responses=tuple(responses),
         error=action.get('error') or (
             'Action requires manual review.' if action['status'] == 'UNCERTAIN' else None
         ),
@@ -553,6 +564,10 @@ class SQLiteScanEventStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     status TEXT NOT NULL CHECK (status IN ('PENDING', 'DISPATCHED', 'COMPLETED', 'FAILED', 'UNCERTAIN')),
+                    outcome TEXT,
+                    command TEXT,
+                    transaction_id INTEGER,
+                    responses_json TEXT,
                     UNIQUE (workflow_session, station, operation)
                 )
             ''')
@@ -567,6 +582,14 @@ class SQLiteScanEventStore:
                 )
             if 'error' not in columns:
                 connection.execute('ALTER TABLE motor_actions ADD COLUMN error TEXT')
+            if 'outcome' not in columns:
+                connection.execute('ALTER TABLE motor_actions ADD COLUMN outcome TEXT')
+            if 'command' not in columns:
+                connection.execute('ALTER TABLE motor_actions ADD COLUMN command TEXT')
+            if 'transaction_id' not in columns:
+                connection.execute('ALTER TABLE motor_actions ADD COLUMN transaction_id INTEGER')
+            if 'responses_json' not in columns:
+                connection.execute('ALTER TABLE motor_actions ADD COLUMN responses_json TEXT')
 
     def create_motor_action(self, workflow_session: str, station: str, operation: str) -> dict:
         if station not in MOTOR_STATIONS or operation not in {'OPEN', 'CLOSE'}:
@@ -605,23 +628,50 @@ class SQLiteScanEventStore:
         *,
         command_transmitted: bool | None = None,
         error: str | None = None,
+        outcome: str | None = None,
+        expected_status: str = 'DISPATCHED',
+        command: str | None = None,
+        transaction_id: int | None = None,
+        responses: tuple[str, ...] | list[str] | None = None,
     ) -> bool:
         if status not in MOTOR_ACTION_STATUSES - set(MOTOR_ACTION_IN_PROGRESS):
             raise ValueError('Motor action status must be terminal.')
         if command_transmitted is not None and not isinstance(command_transmitted, bool):
             raise ValueError('command_transmitted must be a boolean or None.')
+        if outcome is not None and outcome not in {item.value for item in MotorOutcome}:
+            raise ValueError('Motor action outcome is invalid.')
+        if expected_status not in MOTOR_ACTION_IN_PROGRESS:
+            raise ValueError('Motor action expected status must be in progress.')
+        if transaction_id is not None and (
+            isinstance(transaction_id, bool)
+            or not isinstance(transaction_id, int)
+            or transaction_id < 1
+            or transaction_id > 0xFFFFFFFF
+        ):
+            raise ValueError('Motor transaction ID is invalid.')
+        if responses is not None and (
+            not isinstance(responses, (tuple, list))
+            or any(not isinstance(frame, str) for frame in responses)
+        ):
+            raise ValueError('Motor responses must be a list of strings.')
         updated_at = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connection() as connection:
             cursor = connection.execute('''
                 UPDATE motor_actions
-                SET status = ?, updated_at = ?, command_transmitted = ?, error = ?
-                WHERE action_id = ? AND status = 'DISPATCHED'
+                SET status = ?, updated_at = ?, command_transmitted = ?, error = ?, outcome = ?,
+                    command = ?, transaction_id = ?, responses_json = ?
+                WHERE action_id = ? AND status = ?
             ''', (
                 status,
                 updated_at,
                 None if command_transmitted is None else int(command_transmitted),
                 error,
+                outcome,
+                command,
+                transaction_id,
+                json.dumps(responses or [], separators=(',', ':')),
                 action_id,
+                expected_status,
             ))
             return cursor.rowcount == 1
 
@@ -1201,12 +1251,52 @@ class NFCService:
                 station,
                 action_record['action_id'],
             )
-            return MotorCommandResult(
+            result = MotorCommandResult(
                 station=station,
                 action=action,
                 command='MOCK',
                 outcome=MotorOutcome.BUSY,
+                command_transmitted=False,
                 error='Another motor action is in progress.',
+            )
+            try:
+                updated = self.store.finish_motor_action(
+                    action_record['action_id'],
+                    'FAILED',
+                    command_transmitted=False,
+                    error=result.error,
+                    outcome=result.outcome.value,
+                    expected_status='PENDING',
+                )
+            except Exception:
+                logger.exception(
+                    'motor_action_uncertain workflow_action=%s station=%s action_id=%s '
+                    'reason=busy_outcome_persistence_failed',
+                    command,
+                    station,
+                    action_record['action_id'],
+                )
+                return MotorCommandResult(
+                    station=station,
+                    action=action,
+                    command='MOCK',
+                    outcome=MotorOutcome.UNCERTAIN,
+                    command_transmitted=False,
+                    error='Busy outcome could not be persisted; manual review is required.',
+                )
+            if updated:
+                return result
+            try:
+                latest = self.store.get_motor_action(action_record['action_id'])
+            except Exception:
+                latest = None
+            return motor_result_from_action(latest) if latest else MotorCommandResult(
+                station=station,
+                action=action,
+                command='MOCK',
+                outcome=MotorOutcome.UNCERTAIN,
+                command_transmitted=False,
+                error='Busy action state is unavailable; manual review is required.',
             )
 
         try:
@@ -1269,6 +1359,7 @@ class NFCService:
                     action=action,
                     command='MOCK' if isinstance(self.motor_controller, MockMotorController) else '',
                     outcome=MotorOutcome.REJECTED,
+                    command_transmitted=False,
                     error=MOTOR_ACTUATION_DISABLED,
                 )
                 try:
@@ -1277,6 +1368,7 @@ class NFCService:
                         'FAILED',
                         command_transmitted=False,
                         error=MOTOR_ACTUATION_DISABLED,
+                        outcome=result.outcome.value,
                     )
                 except Exception as error:
                     logger.exception(
@@ -1342,6 +1434,7 @@ class NFCService:
                     action=action,
                     command='',
                     outcome=MotorOutcome.UNCERTAIN,
+                    command_transmitted=None,
                     error=f'{type(error).__name__}: {error}',
                 )
             logger.log(
@@ -1361,7 +1454,7 @@ class NFCService:
             action_status = {
                 MotorOutcome.COMPLETED: 'COMPLETED',
                 MotorOutcome.REJECTED: 'FAILED',
-                MotorOutcome.BUSY: 'UNCERTAIN',
+                MotorOutcome.BUSY: 'FAILED',
                 MotorOutcome.UNCERTAIN: 'UNCERTAIN',
             }.get(result.outcome, 'UNCERTAIN')
             try:
@@ -1370,6 +1463,10 @@ class NFCService:
                     action_status,
                     command_transmitted=result.command_transmitted,
                     error=result.error,
+                    outcome=result.outcome.value,
+                    command=result.command,
+                    transaction_id=result.transaction_id,
+                    responses=result.responses,
                 )
             except Exception as error:
                 logger.exception(
@@ -1383,8 +1480,12 @@ class NFCService:
                 return MotorCommandResult(
                     station=station,
                     action=action,
-                    command='MOCK',
+                    command=result.command,
                     outcome=MotorOutcome.UNCERTAIN,
+                    session_id=result.session_id,
+                    transaction_id=result.transaction_id,
+                    command_transmitted=result.command_transmitted,
+                    responses=result.responses,
                     error='Action outcome could not be persisted; manual review is required.',
                 )
             if not updated:
@@ -1398,8 +1499,12 @@ class NFCService:
                 return MotorCommandResult(
                     station=station,
                     action=action,
-                    command='MOCK',
+                    command=result.command,
                     outcome=MotorOutcome.UNCERTAIN,
+                    session_id=result.session_id,
+                    transaction_id=result.transaction_id,
+                    command_transmitted=result.command_transmitted,
+                    responses=result.responses,
                     error='Action state changed unexpectedly; manual review is required.',
                 )
             return result
@@ -1654,6 +1759,9 @@ class NFCHandler(BaseHTTPRequestHandler):
                     payload['motor_dispatch'] = {
                         'workflow_action': command,
                         'outcome': motor_result.outcome.value if motor_result else 'skipped',
+                        'serial_command': motor_result.command or None if motor_result else None,
+                        'transaction_id': motor_result.transaction_id if motor_result else None,
+                        'serial_responses': list(motor_result.responses) if motor_result else [],
                         'serial_command_sent': (
                             motor_result.command_transmitted
                             if isinstance(service.motor_controller, SerialMotorController)

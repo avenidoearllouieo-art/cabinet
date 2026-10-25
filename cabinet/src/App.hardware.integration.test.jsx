@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import App from './App.jsx'
 import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 
+const djangoPasswordResetStatusUrl = `${(import.meta.env.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')}/auth/password-reset/status/`
+
 vi.mock('./services/nfc/nfcMode', () => ({
   resolveNfcMode: () => 'hardware',
 }))
@@ -22,7 +24,7 @@ describe('Cabinet motor dispatch reporting', () => {
     expect(message).not.toMatch(/motor dispatched/i)
   })
 
-  it('distinguishes disabled, failed, dispatched, and unknown outcomes', () => {
+  it('distinguishes disabled, not-sent, busy, failed, dispatched, and unknown outcomes', () => {
     expect(motorDispatchStatus({
       workflow_action: 'finish_open',
       outcome: 'rejected',
@@ -45,6 +47,28 @@ describe('Cabinet motor dispatch reporting', () => {
       outcome: 'uncertain',
       serial_command_sent: null,
     }, 'finish_close')).toMatch(/Motor outcome unknown/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'busy',
+      serial_command_sent: false,
+    }, 'finish_open')).toMatch(/busy; no serial command was sent/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_close',
+      outcome: 'busy',
+      serial_command_sent: true,
+    }, 'finish_close')).toMatch(/transmitted command was rejected before execution/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'uncertain',
+      serial_command_sent: false,
+      error: 'Controller is disarmed.',
+    }, 'finish_open')).toMatch(/command was not transmitted/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_close',
+      outcome: 'rejected',
+      serial_command_sent: true,
+      error: 'BAD_COMMAND',
+    }, 'finish_close')).toMatch(/Motor dispatch failed/i)
   })
 })
 
@@ -269,7 +293,8 @@ describe('Cabinet real NFC bridge mode', () => {
     await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
-    expect(screen.getByText(/Open workflow completed for Station 1\. Motor dispatch disabled\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
+    expect(screen.getByText('Open workflow completed for Station 1.')).toBeTruthy()
+    expect(screen.getByText(/Motor dispatch disabled\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
   })
 
   it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
@@ -296,7 +321,7 @@ describe('Cabinet real NFC bridge mode', () => {
           request_id: recoveryRequestId,
           state: 'waiting',
           message: 'Request accepted. Tap the NFC card linked to this account.',
-          expires_at: '2026-10-24T12:00:00Z',
+          expires_at: '2026-10-26T12:00:00Z',
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
@@ -307,7 +332,7 @@ describe('Cabinet real NFC bridge mode', () => {
           message: 'The backend confirmed NFC recovery verification.',
         }), { status: 200 })
       }
-      if (requestUrl === '/api/auth/password-reset/status/') {
+      if (requestUrl === djangoPasswordResetStatusUrl) {
         expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
         expect(options.credentials).toBe('same-origin')
         return new Response(JSON.stringify({
@@ -354,7 +379,7 @@ describe('Cabinet real NFC bridge mode', () => {
           request_id: recoveryRequestId,
           state: 'waiting',
           message: 'Tap the card linked to this account.',
-          expires_at: '2026-10-24T12:00:00Z',
+          expires_at: '2026-10-26T12:00:00Z',
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
@@ -364,7 +389,7 @@ describe('Cabinet real NFC bridge mode', () => {
           message: 'This card does not match the password-reset request.',
         }), { status: 200 })
       }
-      if (requestUrl === '/api/auth/password-reset/status/') {
+      if (requestUrl === djangoPasswordResetStatusUrl) {
         return new Response(JSON.stringify({ request_id: recoveryRequestId, status: 'pending' }), { status: 200 })
       }
       throw new Error(`Unexpected request: ${requestUrl}`)

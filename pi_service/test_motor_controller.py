@@ -280,25 +280,53 @@ class SerialMotorControllerTests(unittest.TestCase):
                 self.assertEqual(second.outcome, MotorOutcome.UNCERTAIN)
                 self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
 
-    def test_firmware_rejection_is_terminal_and_not_retried(self):
+    def test_firmware_busy_rejection_is_busy_and_not_retried(self):
         serial_port = FakeSerial(command_responses=(response(SESSION, 1, 'REJECTED', '1', 'BUSY'),))
         controller = SerialMotorController(serial_instance=serial_port)
         self.arm_for_bench_test(controller)
         result = controller.command('Station 1', 'OPEN')
-        self.assertEqual(result.outcome, MotorOutcome.REJECTED)
+        self.assertEqual(result.outcome, MotorOutcome.BUSY)
+        self.assertTrue(result.busy)
+        self.assertTrue(result.command_transmitted)
         self.assertFalse(result.accepted)
         self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
 
-    def test_unexpected_rejection_latches_without_retry(self):
+    def test_firmware_bad_command_rejection_is_terminal_without_retry(self):
         serial_port = FakeSerial(command_responses=(response(SESSION, 1, 'REJECTED', '1', 'BAD_COMMAND'),))
         controller = SerialMotorController(serial_instance=serial_port)
         self.arm_for_bench_test(controller)
 
         result = controller.command('Station 1', 'OPEN')
 
+        self.assertEqual(result.outcome, MotorOutcome.REJECTED)
+        self.assertTrue(result.command_transmitted)
+        self.assertTrue(controller.armed)
+        self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
+
+    def test_firmware_error_frame_latches_transmitted_command_as_uncertain(self):
+        serial_port = FakeSerial(command_responses=(f'ERR,2,{SESSION},BAD_FRAME\n'.encode('ascii'),))
+        controller = SerialMotorController(serial_instance=serial_port)
+        self.arm_for_bench_test(controller)
+
+        result = controller.command('Station 1', 'OPEN')
+
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertTrue(result.command_transmitted)
         self.assertEqual(controller.command('Station 1', 'OPEN').outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(sum(write.startswith(b'CMD,') for write in serial_port.writes), 1)
+
+    def test_crlf_ready_frame_is_rejected_by_lf_only_parser(self):
+        serial_port = FakeSerial(
+            handshake_override=f'READY,2,{SESSION},0123456789abcdef,0,IDLE\r\n'.encode('ascii'),
+        )
+        controller = SerialMotorController(serial_instance=serial_port, response_timeout=0.01)
+
+        self.assertFalse(controller.recover(
+            operator_confirmed_driver_power_isolated=True,
+            operator_confirmed_stationary=True,
+            operator_confirmed_esp32_power_cycled=True,
+        ))
+        self.assertFalse(any(write.startswith(b'CMD,') for write in serial_port.writes))
 
     def test_timeout_at_each_response_phase_latches_and_never_retries(self):
         for partial_sequence in ((), (response(SESSION, 1, 'ACCEPTED', '1'),), (

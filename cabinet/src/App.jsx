@@ -112,6 +112,7 @@ export default function App() {
   const [scanFeedback, setScanFeedback] = useState(null)
   const [scanPhoto, setScanPhoto] = useState(null)
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
+  const [motorStatusMessage, setMotorStatusMessage] = useState('Motor dispatch has not been reported for this session.')
   const [errorMessage, setErrorMessage] = useState('')
   const [clock, setClock] = useState(() => new Date())
   const [cabinetState, setCabinetState] = useState({ sessions: [] })
@@ -736,9 +737,8 @@ export default function App() {
         const data = await sendCabinetWorkflow('finish_open', { station: selectedStation })
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
-        setStatusMessage(
-          `Open workflow completed for ${stationLabel(data.station)}. ${motorDispatchStatus(data.motor_dispatch, 'finish_open')}`,
-        )
+        setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}.`)
+        setMotorStatusMessage(motorDispatchStatus(data.motor_dispatch, 'finish_open'))
         setView('cabinet-opened')
       } catch (error) {
         setErrorMessage(error.message || 'The cabinet session could not be opened.')
@@ -765,9 +765,8 @@ export default function App() {
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
-      setStatusMessage(
-        `Close workflow completed for ${stationLabel(data.station)}. ${motorDispatchStatus(data.motor_dispatch, 'finish_close')}`,
-      )
+      setStatusMessage(`Close workflow completed for ${stationLabel(data.station)}.`)
+      setMotorStatusMessage(motorDispatchStatus(data.motor_dispatch, 'finish_close'))
       setView('cabinet-closed')
     } catch (error) {
       setErrorMessage(error.message || 'The cabinet session could not be closed.')
@@ -1266,6 +1265,7 @@ export default function App() {
             <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW COMPLETE</strong></div>
             <h2>Open Workflow Complete</h2>
             <p className="muted" role="status">{statusMessage}</p>
+            <p className="muted" role="status">{motorStatusMessage}</p>
             <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
@@ -1296,6 +1296,7 @@ export default function App() {
             <div className="large-state is-closed"><span className="status-dot good" /><strong>CLOSE WORKFLOW COMPLETE</strong></div>
             <h2>Close Workflow Complete</h2>
             <p className="muted" role="status">{statusMessage}</p>
+            <p className="muted" role="status">{motorStatusMessage}</p>
             <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Opened by</span><strong>{getParticipantCount(closedSession)}</strong></div>

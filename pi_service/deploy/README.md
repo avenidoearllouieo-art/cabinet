@@ -147,6 +147,18 @@ The script requires an explicit `YES` for each physical confirmation. A successf
 
 Only after the approved safeguards and procedure are in place will a successful Cabinet `finish_open` or `finish_close` response from Django dispatch one serial command. Django workflow completion and ESP32 protocol completion are logged separately; neither proves the shutter reached its endpoint.
 
+### Authorized commissioning sequence (future approval required)
+
+This sequence is not authorized under the current project state. The current firmware is fixed-step and has no limit-switch inputs or physical position feedback. Independent hardware interlocks and a written, separately approved motion/recovery run-sheet are prerequisites; environment flags alone do not satisfy them.
+
+1. With motor-driver power isolated and actuation still `false`, verify the active service user, unit paths, exact `/dev/serial/by-id/` device, baud rate, and `dialout` access. Do not probe the device by opening it.
+2. Keep `TAPTRACK_MOTOR_ACTUATION_ENABLED=false` while installing the selected serial mode and exact device path. Start or reload the service only during an approved maintenance window, then confirm `/nfc/status` reports the expected mode, `actuation_enabled: false`, `armed: false`, and no connected serial port.
+3. After a qualified reviewer signs off the limit switches, hardwired emergency stop, reset/brownout behavior, and recovery run-sheet, an authorized operator may enable actuation and set the three safety confirmation flags. Those settings are assertions and must match independently verified hardware.
+4. With driver power still physically isolated, the trained operator follows the written isolation/stationary/ESP32 power-cycle procedure and runs the interactive recovery tool. Confirm only that the V2 handshake succeeds; this does not verify position.
+5. Reconnect and energize the driver only as the approved run-sheet directs, with the emergency stop immediately accessible. Exercise one Cabinet `finish_open` or `finish_close` action at a time while the reviewer observes the independent limit/interlock indications and actual mechanism. Do not issue another action while one is active.
+6. Stop, isolate power, and follow the approved recovery procedure after any timeout, disconnect, `BUSY`, rejection, unexpected travel, or uncertain result. Never automatically retry an uncertain command. Treat `DONE` only as protocol completion; independently verify the physical endpoint.
+7. At the end of the approved test, disable actuation, confirm `/nfc/status` reports `actuation_enabled: false`, and document the test evidence and any faults before returning the cabinet to service.
+
 The V2 protocol was checked against `motor/motor.ino`: the controller sends a nonce-correlated `HELLO,2` and expects `READY,2`, then sends the existing numeric station/action mapping and accepts only the matching `ACCEPTED`, `BUSY`, `DONE` response sequence. The controller does not retry a movement command. A timeout, malformed response, disconnect, or interrupted process leaves the durable action un-retryable and requiring manual review. Startup converts leftover `PENDING`/`DISPATCHED` actions to `UNCERTAIN`; run exactly one NFC service process to avoid one process recovering another live process's action. Persistent action records suppress duplicates but do not prove exactly-once physical execution or position.
 
 `pyserial` is included in `pi_service/requirements.txt`. The confirmed service account is `taptrack`; verify serial-group access before commissioning:

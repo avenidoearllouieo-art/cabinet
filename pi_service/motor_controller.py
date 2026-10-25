@@ -341,10 +341,13 @@ class SerialMotorController:
                 if expected_index != 0 or len(fields) != 7 or fields[6] not in VALID_REASONS:
                     raise _ProtocolError('REJECTED is malformed or arrived after acceptance.')
                 responses.append(raw.decode('ascii').rstrip('\n'))
-                if fields[6] != 'BUSY':
+                if fields[6] == 'BUSY':
+                    return MotorOutcome.BUSY
+                if fields[6] == 'BAD_COMMAND':
+                    return MotorOutcome.REJECTED
+                else:
                     self._unknown = True
                     raise _ProtocolError(f'Unexpected ESP32 rejection: {fields[6]}.')
-                return MotorOutcome.REJECTED
 
             if len(fields) != 6 or status != expected_statuses[expected_index]:
                 raise _ProtocolError('Response status is invalid or out of order.')

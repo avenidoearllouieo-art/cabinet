@@ -60,6 +60,7 @@ class FakeMotorController(MockMotorController):
         self.block = block
         self.error = error
         self.events = events
+        self.command_transmitted = False
         self.calls = []
         self.entered = threading.Event()
         self.release = threading.Event()
@@ -86,6 +87,8 @@ class FakeMotorController(MockMotorController):
                 command='MOCK',
                 outcome=self.outcome,
                 transaction_id=len(self.calls),
+                command_transmitted=self.command_transmitted,
+                responses=(f'RSP,2,MOCK,{len(self.calls)},ACCEPTED,MOCK',),
             )
         finally:
             with self._lock:
@@ -585,6 +588,10 @@ class NFCServiceTests(unittest.TestCase):
             connection.close()
         self.assertIn('command_transmitted', columns)
         self.assertIn('error', columns)
+        self.assertIn('outcome', columns)
+        self.assertIn('command', columns)
+        self.assertIn('transaction_id', columns)
+        self.assertIn('responses_json', columns)
 
     def test_concurrent_sqlite_writes_receive_unique_event_ids(self):
         def write(index):
@@ -873,6 +880,10 @@ class MotorDispatchTests(unittest.TestCase):
         duplicate = self.dispatch()
 
         self.assertEqual(duplicate.outcome, first.outcome)
+        self.assertEqual(duplicate.command, first.command)
+        self.assertEqual(duplicate.transaction_id, first.transaction_id)
+        self.assertEqual(duplicate.command_transmitted, first.command_transmitted)
+        self.assertEqual(duplicate.responses, first.responses)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         actions = self.store.list_motor_actions()
         self.assertEqual(len(actions), 1)
@@ -882,6 +893,9 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(actions[0]['operation'], 'OPEN')
         self.assertTrue(actions[0]['created_at'])
         self.assertEqual(actions[0]['status'], 'COMPLETED')
+        self.assertEqual(actions[0]['outcome'], MotorOutcome.COMPLETED.value)
+        self.assertEqual(actions[0]['command'], 'MOCK')
+        self.assertEqual(actions[0]['transaction_id'], 1)
 
     def test_uncertain_result_is_cached_and_never_retried(self):
         self.controller.outcome = MotorOutcome.UNCERTAIN
@@ -910,6 +924,8 @@ class MotorDispatchTests(unittest.TestCase):
 
         self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(duplicate.outcome, MotorOutcome.UNCERTAIN)
+        self.assertIsNone(first.command_transmitted)
+        self.assertIsNone(duplicate.command_transmitted)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         self.assertEqual(self.store.list_motor_actions()[0]['status'], 'UNCERTAIN')
 
@@ -932,6 +948,20 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(first_result[0].outcome, MotorOutcome.COMPLETED)
         self.assertEqual(second.outcome, MotorOutcome.BUSY)
         self.assertEqual(self.controller.max_in_flight, 1)
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
+        busy_action = next(
+            action for action in self.store.list_motor_actions()
+            if action['workflow_session'] == 'session-2'
+        )
+        self.assertEqual(busy_action['status'], 'FAILED')
+        self.assertEqual(busy_action['outcome'], 'busy')
+        self.assertEqual(busy_action['command_transmitted'], 0)
+        duplicate_busy = self.dispatch(
+            command='finish_close',
+            station='Station 2',
+            payload=self.response('session-2', 'Station 2', 'closed'),
+        )
+        self.assertEqual(duplicate_busy.outcome, MotorOutcome.BUSY)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
 
     def test_concurrent_duplicate_transition_dispatches_only_once(self):
@@ -1021,10 +1051,12 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [])
 
     def test_outcome_persistence_error_leaves_dispatched_action_unretryable(self):
+        self.controller.command_transmitted = True
         with patch.object(self.store, 'finish_motor_action', side_effect=sqlite3.OperationalError('storage unavailable')):
             result = self.dispatch()
 
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
+        self.assertTrue(result.command_transmitted)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         self.assertEqual(self.store.list_motor_actions()[0]['status'], 'DISPATCHED')
         retry = self.dispatch()
@@ -1417,6 +1449,12 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual((open_status, close_status, duplicate_status), (200, 200, 200))
         self.assertEqual(open_payload['motor_dispatch']['outcome'], 'completed')
         self.assertTrue(open_payload['motor_dispatch']['serial_command_sent'])
+        self.assertEqual(open_payload['motor_dispatch']['serial_command'], '1')
+        self.assertEqual(open_payload['motor_dispatch']['transaction_id'], 1)
+        self.assertEqual(
+            [line.split(',')[4] for line in open_payload['motor_dispatch']['serial_responses']],
+            ['ACCEPTED', 'BUSY', 'DONE'],
+        )
         self.assertFalse(open_payload['motor_dispatch']['physical_movement_verified'])
         self.assertEqual(close_payload['motor_dispatch']['outcome'], 'uncertain')
         self.assertTrue(close_payload['motor_dispatch']['serial_command_sent'])

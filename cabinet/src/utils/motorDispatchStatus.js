@@ -25,14 +25,26 @@ export function motorDispatchStatus(dispatch, expectedAction) {
   ) {
     return `Motor dispatch disabled.${reason}`
   }
+  if (dispatch.serial_command_sent === false) {
+    if (dispatch.outcome === 'busy') {
+      return `Motor controller busy; no serial command was sent.${reason}`
+    }
+    if (dispatch.outcome === 'uncertain') {
+      return `Motor command was not transmitted; controller readiness is unconfirmed.${reason}`
+    }
+    if (dispatch.outcome === 'rejected' || dispatch.outcome === 'failed' || dispatch.outcome === 'skipped') {
+      return `Motor dispatch failed before transmission (${outcome}).${reason}`
+    }
+    return `Motor command not transmitted (${outcome}).${reason}`
+  }
+  if (dispatch.outcome === 'busy') {
+    return `Motor controller busy; the transmitted command was rejected before execution.${reason}`
+  }
   if (dispatch.outcome === 'uncertain') {
-    return `Motor outcome unknown.${reason}`
+    return `Motor command was transmitted, but its result is unconfirmed. Manual inspection is required.${reason}`
   }
   if (dispatch.outcome === 'rejected' || dispatch.outcome === 'failed') {
     return `Motor dispatch failed (${outcome}).${reason}`
-  }
-  if (dispatch.serial_command_sent === false) {
-    return `Motor command not transmitted (${outcome}).${reason}`
   }
   return `Motor dispatch status unknown (${outcome}).${reason}`
 }

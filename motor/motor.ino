@@ -63,7 +63,8 @@ void sendError(const char *reason) {
   Serial.print("ERR,2,");
   Serial.print(sessionId);
   Serial.print(',');
-  Serial.println(reason);
+  Serial.print(reason);
+  Serial.write('\n');
 }
 
 void sendResponse(uint32_t transactionId, const char *status, char command, const char *reason = nullptr) {
@@ -159,7 +160,8 @@ void processHello(char *fields[], size_t count) {
   Serial.print(',');
   Serial.print(lastTransactionId);
   Serial.print(',');
-  Serial.println(stateName);
+  Serial.print(stateName);
+  Serial.write('\n');
   handshakeComplete = true;
 }
 

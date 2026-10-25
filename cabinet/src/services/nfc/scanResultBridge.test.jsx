@@ -10,6 +10,8 @@ import {
   startPasswordRecovery,
 } from './scanResultBridge.js'
 
+const djangoPasswordResetStatusUrl = `${(import.meta.env.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')}/auth/password-reset/status/`
+
 describe('Cabinet workflow status requests', () => {
   it('uses the real NFC bridge for workflow reads without mock headers', async () => {
     let request
@@ -140,7 +142,7 @@ describe('Cabinet workflow status requests', () => {
         }), { status: 200 })
       },
     })
-    expect(requests[0].url).toBe('/api/auth/password-reset/status/')
+    expect(requests[0].url).toBe(djangoPasswordResetStatusUrl)
     expect(requests[0].options.credentials).toBe('same-origin')
     expect(JSON.parse(requests[0].options.body)).toEqual({ request_id: 'opaque-id' })
     expect(status.status).toBe('verified')
