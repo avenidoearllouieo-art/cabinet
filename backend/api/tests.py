@@ -1809,6 +1809,13 @@ class PasswordResetFlowTests(TestCase):
         self.student_a.refresh_from_db()
         self.assertTrue(self.student_a.check_password('NewPassword123!'))
 
+        login_response = self.client.post('/api/auth/login/', {
+            'username': self.student_a.username,
+            'password': 'NewPassword123!',
+            'expected_role': 'student',
+        }, format='json')
+        self.assertEqual(login_response.status_code, 200, login_response.json())
+
     def test_valid_and_invalid_account_requests_have_generic_same_shape(self):
         valid_response = self.client.post('/api/auth/password-reset/request/', {
             'student_id': 'STU-001',
