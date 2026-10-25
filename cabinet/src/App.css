@@ -166,6 +166,32 @@
 }
 .home-action { width: 100%; min-height: clamp(104px, 17vh, 180px); font-size: clamp(1.05rem, 1.8vw, 1.4rem); }
 .recovery-panel { width: min(720px, 100%); margin: 0 auto; }
+.recovery-queue {
+  display: grid;
+  gap: 10px;
+  max-height: 270px;
+  overflow-y: auto;
+  margin: 18px auto;
+  width: min(520px, 100%);
+}
+.recovery-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 68px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--heading);
+  cursor: pointer;
+  text-align: left;
+}
+.recovery-request.is-selected { border-color: var(--accent); outline: 3px solid rgba(0, 85, 150, 0.16); }
+.recovery-request span:first-child { display: grid; min-width: 0; gap: 4px; }
+.recovery-request strong, .recovery-request small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recovery-request small { color: var(--muted); }
+.recovery-empty { margin: 18px auto; }
 .recovery-form {
   display: grid;
   gap: 12px;

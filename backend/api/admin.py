@@ -27,6 +27,8 @@ from .models import (
     CabinetSession,
     CabinetEvent,
     NFCEnrollmentSession,
+    PasswordResetRequest,
+    PasswordRecoveryAuditEvent,
 )
 from .student_import import (
     build_student,
@@ -604,6 +606,79 @@ class CabinetEventAdmin(admin.ModelAdmin):
     ordering = ('-timestamp',)
     readonly_fields = ('timestamp',)
     date_hierarchy = 'timestamp'
+
+
+@admin.register(PasswordResetRequest)
+class PasswordResetRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        'safe_request_reference', 'account_reference', 'status', 'requested_at',
+        'expires_at', 'cabinet_handoff_claimed_at', 'verified_at', 'used_at',
+    )
+    list_filter = ('status', 'nfc_uid_verified', 'requested_at', 'expires_at')
+    search_fields = ('request_id', 'user__username', 'user__student_id', 'user__first_name', 'user__last_name')
+    date_hierarchy = 'requested_at'
+    ordering = ('-requested_at',)
+    readonly_fields = (
+        'request_id', 'user', 'student_id_snapshot', 'status', 'requested_at', 'expires_at',
+        'cabinet_handoff_claimed_at', 'cabinet_handoff_expires_at', 'cabinet_handoff_used_at',
+        'verified_at', 'nfc_uid_verified', 'used_at', 'reset_authorization_expires_at',
+        'reset_authorization_used_at', 'reason',
+    )
+
+    @admin.display(description='Request')
+    def safe_request_reference(self, obj):
+        return f'PRR-{obj.pk:06d}'
+
+    @admin.display(description='Account')
+    def account_reference(self, obj):
+        if not obj.user:
+            return 'Masked request'
+        identifier = obj.user.student_id or obj.user.username
+        return f'{obj.user.get_full_name().strip() or "User"} / •••{identifier[-4:]}'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def get_model_perms(self, request):
+        return {'view': self.has_view_permission(request)}
+
+
+@admin.register(PasswordRecoveryAuditEvent)
+class PasswordRecoveryAuditEventAdmin(admin.ModelAdmin):
+    list_display = ('timestamp', 'recovery_request', 'account_reference', 'event_type', 'outcome', 'reason_code', 'actor_type')
+    list_filter = ('event_type', 'outcome', 'actor_type', 'timestamp')
+    search_fields = ('reason_code', 'correlation_id', 'recovery_request__request_id', 'user__student_id', 'user__username')
+    date_hierarchy = 'timestamp'
+    ordering = ('-timestamp',)
+    readonly_fields = (
+        'recovery_request', 'user', 'event_type', 'outcome', 'reason_code',
+        'actor_type', 'correlation_id', 'timestamp',
+    )
+
+    @admin.display(description='Account')
+    def account_reference(self, obj):
+        if not obj.user:
+            return 'Unknown'
+        identifier = obj.user.student_id or obj.user.username
+        return f'{obj.user.get_full_name().strip() or "User"} / •••{identifier[-4:]}'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_model_perms(self, request):
+        return {'view': self.has_view_permission(request)}
 
 
 @admin.register(NFCEnrollmentSession)

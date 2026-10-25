@@ -600,6 +600,74 @@ class PasswordResetRequest(models.Model):
 
     class Meta:
         ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['status', 'expires_at'], name='api_prr_status_exp_idx'),
+            models.Index(fields=['cabinet_handoff_claimed_at'], name='api_prr_handoff_idx'),
+        ]
+
+
+class PasswordRecoveryAuditEvent(models.Model):
+    class EventType(models.TextChoices):
+        REQUEST_CREATED = 'request_created', 'Request created'
+        REQUEST_CANCELLED = 'request_cancelled', 'Request cancelled'
+        REQUEST_EXPIRED = 'request_expired', 'Request expired'
+        CABINET_CLAIMED = 'cabinet_claimed', 'Cabinet claimed'
+        NFC_SCAN_RECEIVED = 'nfc_scan_received', 'NFC scan received'
+        NFC_VERIFIED = 'nfc_verified', 'NFC verified'
+        NFC_REJECTED = 'nfc_rejected', 'NFC rejected'
+        AUTHORIZATION_ISSUE = 'authorization_issued', 'Authorization issued'
+        RESET_COMPLETED = 'reset_completed', 'Password reset completed'
+        RESET_REJECTED = 'reset_rejected', 'Reset rejected'
+
+    class Outcome(models.TextChoices):
+        SUCCESS = 'success', 'Success'
+        FAILURE = 'failure', 'Failure'
+        INFO = 'info', 'Info'
+
+    class ActorType(models.TextChoices):
+        PORTAL = 'portal', 'Portal'
+        CABINET = 'cabinet', 'Cabinet'
+        PI = 'pi', 'Pi service'
+        DJANGO = 'django', 'Django'
+        ADMIN = 'admin', 'Administrator'
+
+    recovery_request = models.ForeignKey(
+        PasswordResetRequest,
+        on_delete=models.CASCADE,
+        related_name='audit_events',
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='password_recovery_audit_events',
+    )
+    event_type = models.CharField(max_length=32, choices=EventType.choices)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+    reason_code = models.CharField(max_length=64, blank=True, default='')
+    actor_type = models.CharField(max_length=16, choices=ActorType.choices)
+    correlation_id = models.CharField(max_length=64, blank=True, default='')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError('Password recovery audit events are append-only.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('Password recovery audit events are append-only.')
+
+    def __str__(self):
+        return f'{self.recovery_request_id}: {self.event_type}'
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['event_type', 'timestamp'], name='api_prae_type_ts_idx'),
+            models.Index(fields=['recovery_request', 'timestamp'], name='api_prae_req_ts_idx'),
+            models.Index(fields=['timestamp'], name='api_prae_ts_idx'),
+        ]
 
 
 class NFCEnrollmentSession(models.Model):

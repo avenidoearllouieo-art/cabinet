@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from openpyxl import Workbook, load_workbook
 
 from .admin import AccessLogAdmin
-from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, NFCEnrollmentSession, CabinetSession
+from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, CabinetSession
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
@@ -1748,6 +1748,92 @@ class PasswordResetFlowTests(TestCase):
             student_id='STU-002',
             nfc_uid='NFC-USER-002',
         )
+
+    def test_cabinet_cancellation_updates_request_and_audit_once(self):
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+
+        first = self.client.post('/api/auth/password-reset/cancel/', {
+            'request_id': reset_request.request_id,
+        }, format='json')
+        repeated = self.client.post('/api/auth/password-reset/cancel/', {
+            'request_id': reset_request.request_id,
+        }, format='json')
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()['cancelled'])
+        self.assertFalse(repeated.json()['cancelled'])
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.CANCELLED)
+        cancellations = reset_request.audit_events.filter(
+            event_type=PasswordRecoveryAuditEvent.EventType.REQUEST_CANCELLED,
+            reason_code='cancelled_by_cabinet',
+        )
+        self.assertEqual(cancellations.count(), 1)
+
+    def test_cabinet_queue_is_device_protected_and_masks_accounts(self):
+        unauthenticated = self.client.get('/api/auth/password-reset/cabinet-queue/')
+        self.assertEqual(unauthenticated.status_code, 403)
+
+        for target in (self.student_a, self.student_b):
+            response = self.client.post('/api/auth/password-reset/request/', {
+                'student_id': target.student_id,
+                'email': target.email,
+            }, format='json')
+            self.assertEqual(response.status_code, 200)
+
+        queue = self.client.get(
+            '/api/auth/password-reset/cabinet-queue/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+        self.assertEqual(queue.status_code, 200, queue.json())
+        payload = queue.json()
+        self.assertEqual(payload['count'], 2)
+        by_reference = {item['account_reference'] for item in payload['results']}
+        self.assertIn('•••-001', by_reference)
+        self.assertIn('•••-002', by_reference)
+        serialized = json.dumps(payload)
+        self.assertNotIn('STU-001', serialized)
+        self.assertNotIn('STU-002', serialized)
+        self.assertNotIn('NFC-USER-', serialized)
+        self.assertNotIn('reset_authorization', serialized)
+
+    def test_wrong_card_is_audited_without_authorizing_request(self):
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_b.student_id,
+            'email': self.student_b.email,
+        }, format='json')
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+        handoff = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(handoff.status_code, 200)
+
+        mismatch = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'nfc_uid': self.student_a.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(mismatch.status_code, 403)
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.PENDING)
+        self.assertFalse(reset_request.nfc_uid_verified)
+
+        rejection = reset_request.audit_events.filter(
+            event_type=PasswordRecoveryAuditEvent.EventType.NFC_REJECTED,
+        ).get()
+        self.assertEqual(rejection.outcome, PasswordRecoveryAuditEvent.Outcome.FAILURE)
+        self.assertEqual(rejection.reason_code, 'card_account_mismatch')
+        self.assertFalse(reset_request.audit_events.filter(
+            event_type=PasswordRecoveryAuditEvent.EventType.AUTHORIZATION_ISSUE,
+        ).exists())
+
+        recovery_admin = django_admin.site._registry[PasswordRecoveryAuditEvent]
+        self.assertFalse(recovery_admin.has_add_permission(RequestFactory().get('/')))
+        self.assertFalse(recovery_admin.has_change_permission(RequestFactory().get('/')))
+        self.assertFalse(recovery_admin.has_delete_permission(RequestFactory().get('/')))
 
     def test_password_reset_request_is_bound_to_user_and_status_issues_authorization_after_nfc(self):
         response = self.client.post('/api/auth/password-reset/request/', {

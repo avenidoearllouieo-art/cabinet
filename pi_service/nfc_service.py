@@ -449,10 +449,37 @@ class DjangoVerifier:
     def _password_reset_url(self, endpoint: str) -> str:
         return f'{self.api_base_url}/auth/password-reset/{endpoint}/'
 
+    def password_reset_queue(self) -> tuple[int, dict]:
+        if not self.api_key:
+            raise DjangoRequestError('Django device API key is not configured.')
+        request = urllib.request.Request(
+            self._password_reset_url('cabinet-queue'),
+            headers={'Accept': 'application/json', 'X-API-Key': self.api_key},
+            method='GET',
+        )
+        try:
+            opener = self.opener or urllib.request.urlopen
+            response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                status_code = response.status
+                body = response.read()
+        except urllib.error.HTTPError as error:
+            status_code = error.code
+            body = error.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise DjangoRequestError('Unable to reach the Django password-reset service.') from error
+        try:
+            payload = json.loads(body.decode('utf-8')) if body else None
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise DjangoRequestError('Django password-reset service returned malformed JSON.', status_code) from error
+        if not isinstance(payload, dict):
+            raise DjangoRequestError('Django password-reset service returned an invalid response.', status_code)
+        return status_code, payload
+
     def password_reset_request(self, endpoint: str, payload: dict) -> tuple[int, dict]:
         if not self.api_key:
             raise DjangoRequestError('Django device API key is not configured.')
-        if endpoint not in {'cabinet-handoff', 'verify-nfc'}:
+        if endpoint not in {'cabinet-handoff', 'cancel', 'verify-nfc'}:
             raise ValueError('Unsupported password-reset endpoint.')
         request = urllib.request.Request(
             self._password_reset_url(endpoint),
@@ -1076,6 +1103,18 @@ class NFCService:
             }
 
     def cancel_password_recovery(self, request_id: str | None = None) -> dict:
+        if request_id is not None:
+            try:
+                status_code, payload = self.verifier.password_reset_request(
+                    'cancel',
+                    {'request_id': request_id},
+                )
+                if status_code not in (200, 404):
+                    raise DjangoRequestError('Django could not cancel the password-reset request.', status_code)
+                if payload.get('cancelled') is not True:
+                    raise DjangoRequestError('Django did not confirm password-reset cancellation.', status_code)
+            except DjangoRequestError:
+                raise
         with self._recovery_lock:
             active = self._active_recovery
             if active is None:
@@ -1754,6 +1793,17 @@ class NFCHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {'error': str(error)})
                 return
             self._send_json(HTTPStatus.OK, self.server.service.password_recovery_snapshot(request_id))
+            return
+        if path == '/password-reset/queue':
+            if not self._recovery_origin_is_allowed(allow_missing=True):
+                self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Password-recovery bridge origin is not allowed.'})
+                return
+            try:
+                status_code, payload = self.server.service.verifier.password_reset_queue()
+            except DjangoRequestError as error:
+                status_code = error.http_status or HTTPStatus.BAD_GATEWAY
+                payload = {'error': sanitize_error(error)}
+            self._send_json(HTTPStatus(status_code), payload)
             return
         if path == '/cabinet/workflow':
             try:

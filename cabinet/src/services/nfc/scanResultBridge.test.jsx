@@ -4,6 +4,7 @@ import {
   fetchCabinetWorkflow,
   fetchNfcServiceStatus,
   fetchPasswordRecoveryBridgeStatus,
+  fetchPasswordRecoveryQueue,
   fetchPasswordRecoveryStatus,
   fetchScanEvents,
   sendCabinetWorkflow,
@@ -71,6 +72,38 @@ describe('Cabinet workflow status requests', () => {
         stations: [{ name: '', status: 'available', session: null }],
       }), { status: 200 }),
     })).rejects.toThrow('Cabinet workflow returned an invalid response.')
+  })
+
+  it('loads masked recovery queue entries without exposing secrets', async () => {
+    let request
+    const queue = await fetchPasswordRecoveryQueue({
+      fetcher: async (url, options) => {
+        request = { url: String(url), options }
+        return new Response(JSON.stringify({
+          count: 1,
+          results: [{
+            request_id: 'opaque-request-id',
+            display_name: 'Student A',
+            account_reference: '•••-001',
+            status: 'pending',
+            reset_authorization: 'never-render-this',
+            nfc_uid: 'never-render-this',
+          }],
+        }), { status: 200 })
+      },
+    })
+
+    expect(request.url).toBe('http://localhost:3000/nfc-bridge/password-reset/queue')
+    expect(request.options.method).toBe('GET')
+    expect(queue).toHaveLength(1)
+    expect(queue[0]).toEqual({
+      request_id: 'opaque-request-id',
+      display_name: 'Student A',
+      account_reference: '•••-001',
+      status: 'pending',
+    })
+    expect(queue[0]).not.toHaveProperty('reset_authorization')
+    expect(queue[0]).not.toHaveProperty('nfc_uid')
   })
 
   it('reads the NFC bridge status endpoint without using the legacy mock service', async () => {

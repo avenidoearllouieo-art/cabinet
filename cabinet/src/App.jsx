@@ -10,6 +10,7 @@ import {
   fetchCabinetWorkflow,
   fetchNfcServiceStatus,
   fetchPasswordRecoveryBridgeStatus,
+  fetchPasswordRecoveryQueue,
   fetchPasswordRecoveryStatus,
   fetchScanEvents,
   sendCabinetWorkflow,
@@ -123,6 +124,8 @@ export default function App() {
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [serviceStatus, setServiceStatus] = useState(null)
   const [recoveryRequestInput, setRecoveryRequestInput] = useState('')
+  const [recoveryQueue, setRecoveryQueue] = useState([])
+  const [recoveryQueueLoading, setRecoveryQueueLoading] = useState(false)
   const [recoveryRequestId, setRecoveryRequestId] = useState('')
   const [recoveryPhase, setRecoveryPhase] = useState('idle')
   const [recoveryMessage, setRecoveryMessage] = useState('')
@@ -136,6 +139,35 @@ export default function App() {
   const bridgeErrorRef = useRef('')
   const photoEventIdRef = useRef(null)
   const recoveryAbortControllerRef = useRef(null)
+
+  useEffect(() => {
+    if (view !== 'password-recovery' || recoveryPhase !== 'idle') return undefined
+    let cancelled = false
+    let timeoutId
+
+    const refreshQueue = async () => {
+      setRecoveryQueueLoading(true)
+      try {
+        const queue = await fetchPasswordRecoveryQueue()
+        if (cancelled) return
+        setRecoveryQueue(queue)
+        setRecoveryRequestId((currentId) => (
+          queue.some((item) => item.request_id === currentId) ? currentId : ''
+        ))
+      } catch (error) {
+        if (!cancelled) setRecoveryError(error.message || 'Password-recovery queue is unavailable.')
+      } finally {
+        if (!cancelled) setRecoveryQueueLoading(false)
+      }
+    }
+
+    void refreshQueue()
+    timeoutId = window.setInterval(refreshQueue, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timeoutId)
+    }
+  }, [view, recoveryPhase])
 
   const beginPasswordRecovery = async (event) => {
     event.preventDefault()
@@ -153,6 +185,12 @@ export default function App() {
       setRecoveryMessage('')
       setRecoveryError(error.message || 'Password recovery could not be started.')
     }
+  }
+
+  const selectQueuedRecovery = async (requestId) => {
+    setRecoveryRequestId(requestId)
+    setRecoveryRequestInput(requestId)
+    setRecoveryError('')
   }
 
   const cancelRecovery = async () => {
@@ -831,13 +869,36 @@ export default function App() {
           <div className="panel recovery-panel">
             <h2>Password Recovery</h2>
             <p className="muted">
-              Enter the opaque request ID supplied by the password-reset page. The next card tapped will be used only for this recovery request.
+              Select your account below. The next card tapped will be checked only against that recovery request.
             </p>
+            {recoveryQueue.length > 0 && (
+              <div className="recovery-queue" aria-label="Pending password recovery requests">
+                {recoveryQueue.map((item) => (
+                  <button
+                    className={`recovery-request ${recoveryRequestInput === item.request_id ? 'is-selected' : ''}`}
+                    type="button"
+                    key={item.request_id}
+                    onClick={() => selectQueuedRecovery(item.request_id)}
+                  >
+                    <span>
+                      <strong>{item.display_name}</strong>
+                      <small>{item.account_reference} · {item.status}</small>
+                    </span>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {recoveryQueueLoading && recoveryQueue.length === 0 && <p className="muted">Loading recovery requests…</p>}
+            {!recoveryQueueLoading && recoveryQueue.length === 0 && (
+              <p className="recovery-empty">No pending recovery requests. Use the request ID fallback if needed.</p>
+            )}
             {recoveryPhase === 'idle' || recoveryPhase === 'failed' ? (
               <>
                 {recoveryPhase === 'failed' && recoveryMessage && <p className="recovery-status" role="status">{recoveryMessage}</p>}
                 <form className="recovery-form" onSubmit={beginPasswordRecovery}>
                   <label htmlFor="password-recovery-request-id">Password-reset request ID</label>
+                  <small className="recovery-fallback-label">Manual fallback</small>
                   <input
                     id="password-recovery-request-id"
                     type="text"
@@ -848,7 +909,7 @@ export default function App() {
                     disabled={recoveryPhase === 'starting'}
                     required
                   />
-                  <button className="btn primary" type="submit" disabled={recoveryPhase === 'starting'}>
+                  <button className="btn primary" type="submit" disabled={recoveryPhase === 'starting' || !recoveryRequestInput.trim()}>
                     {recoveryPhase === 'starting' ? 'CHECKING REQUEST…' : 'START NFC RECOVERY'}
                   </button>
                 </form>

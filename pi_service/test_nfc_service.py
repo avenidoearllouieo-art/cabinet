@@ -50,6 +50,8 @@ class FakeVerifier:
         self.password_reset_calls.append((endpoint, payload))
         if endpoint == 'cabinet-handoff':
             return 200, {'request_id': payload['request_id']}
+        if endpoint == 'cancel':
+            return 200, {'cancelled': True, 'status': 'cancelled'}
         if endpoint == 'verify-nfc':
             return 403, {'error': 'NFC card does not match this password-reset request.'}
         raise AssertionError(f'Unexpected password-reset endpoint: {endpoint}')
@@ -1819,7 +1821,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                     )
                     rejected.exception.close()
 
-        self.assertEqual(len(self.service.verifier.password_reset_calls) - verifier_call_count, 3)
+        self.assertEqual(len(self.service.verifier.password_reset_calls) - verifier_call_count, 6)
 
     def test_bridge_rejects_non_loopback_bind(self):
         with self.assertRaises(ValueError):

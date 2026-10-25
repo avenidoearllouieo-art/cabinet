@@ -415,7 +415,7 @@ describe('Cabinet real NFC bridge mode', () => {
 
     await user.click(await screen.findByRole('button', { name: /close cabinet/i }))
     await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 1' }))
-    await screen.findByText('Hardware Test Student')
+    await screen.findAllByText('Hardware Test Student')
     await user.click(await screen.findByRole('button', { name: 'CLOSE CABINET' }))
     await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 1' }))
 
@@ -446,6 +446,9 @@ describe('Cabinet real NFC bridge mode', () => {
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
+        return new Response(JSON.stringify({ count: 0, results: [] }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
@@ -505,6 +508,9 @@ describe('Cabinet real NFC bridge mode', () => {
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
+        return new Response(JSON.stringify({ count: 0, results: [] }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         return new Response(JSON.stringify({

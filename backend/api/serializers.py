@@ -432,6 +432,10 @@ class PasswordResetCabinetHandoffSerializer(serializers.Serializer):
     request_id = serializers.CharField(required=True, allow_blank=False)
 
 
+class PasswordResetCancellationSerializer(serializers.Serializer):
+    request_id = serializers.CharField(required=True, allow_blank=False)
+
+
 class PasswordResetStatusSerializer(serializers.Serializer):
     request_id = serializers.CharField(required=True, allow_blank=False)
 
