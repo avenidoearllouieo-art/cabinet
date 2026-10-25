@@ -74,6 +74,12 @@ describe('Cabinet workflow status requests', () => {
     })).rejects.toThrow('Cabinet workflow returned an invalid response.')
   })
 
+  it('identifies a stale Pi bridge when the recovery queue route is missing', async () => {
+    await expect(fetchPasswordRecoveryQueue({
+      fetcher: async () => new Response(JSON.stringify({ error: 'Not found.' }), { status: 404 }),
+    })).rejects.toThrow(/does not provide the password-recovery queue.*current nfc_service\.py.*port 5001/i)
+  })
+
   it('loads masked recovery queue entries without exposing secrets', async () => {
     let request
     const queue = await fetchPasswordRecoveryQueue({
