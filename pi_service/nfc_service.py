@@ -36,13 +36,14 @@ from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
 
 BRIDGE_HOST = '127.0.0.1'
 BRIDGE_PORT = 5001
-DJANGO_VERIFY_URL = os.environ.get(
-    'TAPTRACK_DJANGO_VERIFY_URL',
-    'http://127.0.0.1:8000/api/verify-nfc/',
+DJANGO_API_BASE_URL = os.environ.get('TAPTRACK_DJANGO_API_BASE_URL', '').strip().rstrip('/')
+DJANGO_VERIFY_URL = os.environ.get('TAPTRACK_DJANGO_VERIFY_URL') or (
+    f'{DJANGO_API_BASE_URL}/verify-nfc/' if DJANGO_API_BASE_URL
+    else 'http://127.0.0.1:8000/api/verify-nfc/'
 )
-DJANGO_WORKFLOW_URL = os.environ.get(
-    'TAPTRACK_DJANGO_WORKFLOW_URL',
-    'http://127.0.0.1:8000/api/cabinet/workflow/',
+DJANGO_WORKFLOW_URL = os.environ.get('TAPTRACK_DJANGO_WORKFLOW_URL') or (
+    f'{DJANGO_API_BASE_URL}/cabinet/workflow/' if DJANGO_API_BASE_URL
+    else 'http://127.0.0.1:8000/api/cabinet/workflow/'
 )
 DATABASE_PATH = Path(os.environ.get(
     'TAPTRACK_NFC_DB_PATH',
@@ -378,8 +379,32 @@ class DjangoPhotoCapture:
 class DjangoVerifier:
     """Make the one server-side verification request for a completed UID."""
 
-    def __init__(self, url: str = DJANGO_VERIFY_URL, api_key: str | None = None, opener=None):
-        self.url = url
+    def __init__(
+        self,
+        url: str | None = None,
+        api_key: str | None = None,
+        opener=None,
+        *,
+        api_base_url: str | None = None,
+        workflow_url: str | None = None,
+    ):
+        environment_api_base = os.environ.get('TAPTRACK_DJANGO_API_BASE_URL', '').strip().rstrip('/')
+        configured_api_base = (api_base_url or environment_api_base or DJANGO_API_BASE_URL).strip().rstrip('/')
+        has_explicit_api_base = bool(api_base_url or environment_api_base or DJANGO_API_BASE_URL)
+        self.url = url or (f'{configured_api_base}/verify-nfc/' if has_explicit_api_base else DJANGO_VERIFY_URL)
+        parsed_url = urlsplit(self.url)
+        if configured_api_base:
+            self.api_base_url = configured_api_base
+        else:
+            api_path = parsed_url.path.rstrip('/').rsplit('/', 1)[0].rstrip('/')
+            self.api_base_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, api_path, '', '')).rstrip('/')
+        legacy_workflow_url = os.environ.get('TAPTRACK_DJANGO_WORKFLOW_URL')
+        if workflow_url:
+            self.workflow_url = workflow_url
+        elif has_explicit_api_base:
+            self.workflow_url = f'{self.api_base_url}/cabinet/workflow/'
+        else:
+            self.workflow_url = legacy_workflow_url or DJANGO_WORKFLOW_URL
         self.api_key = api_key if api_key is not None else (
             os.environ.get('DEVICE_API_KEY') or os.environ.get('TAPTRACK_DEVICE_API_KEY', '')
         ).strip()
@@ -390,9 +415,7 @@ class DjangoVerifier:
         return sanitize_error(value, self.api_key)
 
     def _password_reset_url(self, endpoint: str) -> str:
-        parsed_url = urlsplit(self.url)
-        api_path = parsed_url.path.rstrip('/').rsplit('/', 1)[0].rstrip('/')
-        return urlunsplit((parsed_url.scheme, parsed_url.netloc, f'{api_path}/auth/password-reset/{endpoint}/', '', ''))
+        return f'{self.api_base_url}/auth/password-reset/{endpoint}/'
 
     def password_reset_request(self, endpoint: str, payload: dict) -> tuple[int, dict]:
         if not self.api_key:
@@ -423,6 +446,12 @@ class DjangoVerifier:
         try:
             response_payload = json.loads(body.decode('utf-8')) if body else None
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            if status_code == HTTPStatus.NOT_FOUND:
+                raise DjangoRequestError(
+                    'The configured Django server does not expose the password-recovery endpoint. '
+                    'Check TAPTRACK_DJANGO_API_BASE_URL.',
+                    status_code,
+                ) from error
             raise DjangoRequestError('Django password-reset service returned malformed JSON.', status_code) from error
         if not isinstance(response_payload, dict):
             raise DjangoRequestError('Django password-reset service returned an invalid response.', status_code)
@@ -479,7 +508,7 @@ class DjangoVerifier:
             workflow_payload['station'] = station
         body = None if workflow_payload is None else json.dumps(workflow_payload).encode('utf-8')
         request = urllib.request.Request(
-            DJANGO_WORKFLOW_URL,
+            self.workflow_url,
             data=body,
             headers={
                 'Accept': 'application/json',
@@ -949,8 +978,32 @@ class NFCService:
                 {'request_id': request_id},
             )
             if status_code < 200 or status_code >= 300:
+                detail = payload.get('error') or payload.get('detail')
+                lowered_detail = str(detail or '').strip().lower()
+                if status_code == HTTPStatus.NOT_FOUND and lowered_detail in {
+                    'not found', 'not found.', 'page not found', 'page not found.',
+                }:
+                    message = (
+                        'The configured Django server does not expose the password-recovery endpoint. '
+                        'Check TAPTRACK_DJANGO_API_BASE_URL.'
+                    )
+                elif status_code == HTTPStatus.NOT_FOUND:
+                    message = (
+                        'This recovery request is unavailable on the configured Django server. '
+                        'Start again from the password-reset page and confirm both services use the same Django API.'
+                    )
+                elif status_code == HTTPStatus.GONE:
+                    message = 'This password-reset request has expired. Start again to create a new request.'
+                elif status_code == HTTPStatus.CONFLICT:
+                    message = 'This password-reset request is already in use or is no longer available.'
+                elif status_code == HTTPStatus.BAD_REQUEST:
+                    message = 'The password-reset request ID is invalid. Start again from the password-reset page.'
+                elif status_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    message = 'Django rejected the reader service authentication. Contact support.'
+                else:
+                    message = 'The password-reset service could not accept this request. Please try again later.'
                 raise DjangoRequestError(
-                    sanitize_error(payload.get('error') or 'Django rejected the password-reset handoff.'),
+                    message,
                     status_code,
                 )
             if payload.get('request_id') != request_id:
@@ -1057,6 +1110,12 @@ class NFCService:
                     }
             elif status_code == HTTPStatus.GONE:
                 result['message'] = 'Password-reset request expired. Start a new recovery request.'
+            elif status_code == HTTPStatus.CONFLICT:
+                result['message'] = 'This password-reset request is already used or no longer available. Start a new request.'
+            elif status_code == HTTPStatus.FORBIDDEN and 'device api key' in str(
+                payload.get('error') or payload.get('detail') or '',
+            ).lower():
+                result['message'] = 'Django rejected reader service authentication. Contact support.'
             elif status_code in (
                 HTTPStatus.BAD_REQUEST,
                 HTTPStatus.FORBIDDEN,

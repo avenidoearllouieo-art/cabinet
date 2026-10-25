@@ -413,6 +413,54 @@ class NFCServiceTests(unittest.TestCase):
         self.assertTrue(all(request.get_header('X-api-key') == 'recovery-device-key' for request, _ in requests))
         self.assertTrue(all(timeout == 5 for _, timeout in requests))
 
+    def test_non_json_django_404_is_reported_as_missing_route(self):
+        verifier = DjangoVerifier(
+            api_key='recovery-device-key',
+            opener=lambda request, timeout: FakeResponse(404, b'<html>Not found.</html>'),
+        )
+
+        with self.assertRaises(DjangoRequestError) as raised:
+            verifier.password_reset_request('cabinet-handoff', {'request_id': 'opaque-id'})
+
+        self.assertEqual(raised.exception.http_status, 404)
+        self.assertIn('does not expose the password-recovery endpoint', str(raised.exception))
+        self.assertNotIn('opaque-id', str(raised.exception))
+
+    def test_explicit_django_api_base_is_shared_by_verification_workflow_and_recovery(self):
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            return FakeResponse(200, {
+                'success': True,
+                'request_id': 'opaque-id',
+                'status': 'verified',
+                'station': 'Station 1',
+                'session': {'id': 4},
+            })
+
+        with patch.dict(os.environ, {
+            'TAPTRACK_DJANGO_API_BASE_URL': 'http://django.example:8000/taptrack/api/',
+            'TAPTRACK_DJANGO_VERIFY_URL': 'http://wrong-server.example/api/verify-nfc/',
+            'TAPTRACK_DJANGO_WORKFLOW_URL': 'http://wrong-server.example/api/cabinet/workflow/',
+        }):
+            verifier = DjangoVerifier(api_key='shared-django-key', opener=opener)
+        verifier.verify('AA00FF')
+        verifier.workflow('open', 'Station 1')
+        verifier.password_reset_request('cabinet-handoff', {'request_id': 'opaque-id'})
+        verifier.password_reset_request('verify-nfc', {
+            'request_id': 'opaque-id',
+            'nfc_uid': 'AA00FF',
+        })
+
+        self.assertEqual([request.full_url for request in requests], [
+            'http://django.example:8000/taptrack/api/verify-nfc/',
+            'http://django.example:8000/taptrack/api/cabinet/workflow/',
+            'http://django.example:8000/taptrack/api/auth/password-reset/cabinet-handoff/',
+            'http://django.example:8000/taptrack/api/auth/password-reset/verify-nfc/',
+        ])
+        self.assertTrue(all(request.get_header('X-api-key') == 'shared-django-key' for request in requests))
+
     def test_registered_django_response_becomes_one_registered_event(self):
         verifier = FakeVerifier((200, {
             'success': True,
@@ -1128,6 +1176,48 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         })
         self.assertIsNone(serial_controller._serial)
 
+    def test_password_recovery_handoff_reports_safe_django_errors(self):
+        cases = (
+            (404, {'detail': 'Not found.'}, 'configured Django server does not expose the password-recovery endpoint'),
+            (404, {'error': 'Reset request is unavailable.'}, 'unavailable on the configured Django server'),
+            (410, {'error': 'Reset request has expired.'}, 'has expired'),
+            (409, {'error': 'Reset request has already been used.'}, 'already in use or is no longer available'),
+        )
+
+        class RecoveryErrorVerifier:
+            def __init__(self):
+                self.result = None
+
+            def password_reset_request(self, endpoint, payload):
+                self.endpoint = endpoint
+                self.payload = payload
+                return self.result
+
+        verifier = RecoveryErrorVerifier()
+        self.service.verifier = verifier
+        for index, (django_status, django_payload, expected_message) in enumerate(cases):
+            with self.subTest(django_status=django_status, django_payload=django_payload):
+                verifier.result = (django_status, django_payload)
+                request_id = f'opaque-request-{index}'
+                request = urllib.request.Request(
+                    self.url + '/password-reset/handoff',
+                    data=json.dumps({'request_id': request_id}).encode('utf-8'),
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Origin': 'http://127.0.0.1:4000',
+                    },
+                    method='POST',
+                )
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(request)
+                self.assertEqual(raised.exception.code, django_status)
+                response_payload = json.loads(raised.exception.read().decode('utf-8'))
+                raised.exception.close()
+                self.assertIn(expected_message, response_payload['error'])
+                self.assertNotIn(request_id, response_payload['error'])
+                self.assertEqual(verifier.endpoint, 'cabinet-handoff')
+                self.assertEqual(verifier.payload, {'request_id': request_id})
+
     def test_api_scans_empty_result_preserves_cursor(self):
         status, _, body = self.get_json('/api/scans?after=19&limit=50')
         self.assertEqual(status, 200)
@@ -1232,6 +1322,43 @@ class NFCBridgeHTTPTests(unittest.TestCase):
 
         self.assertEqual(result['state'], 'failed')
         self.assertIn('invalid NFC verification response', result['message'])
+
+    def test_recovery_reports_already_used_request_after_handoff(self):
+        class UsedRecoveryVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 409, {'error': 'Reset request has already been used.'}
+
+        self.service.verifier = UsedRecoveryVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'used-after-handoff'})
+
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('already used or no longer available', result['message'])
+        self.assertNotIn('AA-BB-CC', result['message'])
+        self.assertEqual(self.service.verifier.calls, [])
+        self.assertEqual(self.service.motor_controller.calls, [])
+
+    def test_recovery_distinguishes_device_authentication_failure_from_wrong_card(self):
+        class AuthenticationFailureVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 403, {'error': 'Invalid or missing device API key.'}
+
+        self.service.verifier = AuthenticationFailureVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'auth-failure-request'})
+
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('reader service authentication', result['message'])
+        self.assertNotIn('does not match', result['message'])
+        self.assertEqual(self.service.verifier.calls, [])
 
     def test_decoy_recovery_request_does_not_reveal_account_mismatch(self):
         class DecoyRecoveryVerifier(FakeVerifier):

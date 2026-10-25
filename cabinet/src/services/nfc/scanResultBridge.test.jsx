@@ -130,6 +130,18 @@ describe('Cabinet workflow status requests', () => {
     await expect(startPasswordRecovery('')).rejects.toThrow('Enter a valid password-reset request ID.')
   })
 
+  it('identifies an unrecognized Pi handoff route without masking unavailable request IDs', async () => {
+    await expect(startPasswordRecovery('opaque-id', {
+      fetcher: async () => new Response(JSON.stringify({ error: 'Not found.' }), { status: 404 }),
+    })).rejects.toThrow(/Pi NFC service does not recognize the password-recovery handoff route/i)
+
+    await expect(startPasswordRecovery('opaque-id', {
+      fetcher: async () => new Response(JSON.stringify({
+        error: 'This recovery request is unavailable on the configured Django server.',
+      }), { status: 404 }),
+    })).rejects.toThrow(/recovery request is unavailable on the configured Django server/i)
+  })
+
   it('polls Django recovery status separately and rejects malformed responses', async () => {
     const requests = []
     const status = await fetchPasswordRecoveryStatus('opaque-id', {

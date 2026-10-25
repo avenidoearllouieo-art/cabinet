@@ -2093,6 +2093,46 @@ class PasswordResetFlowTests(TestCase):
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
         self.assertEqual(invalid_response.status_code, 404)
 
+    def test_cabinet_handoff_reports_unknown_expired_and_used_requests_safely(self):
+        unknown_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': 'unknown-opaque-request',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(unknown_response.status_code, 404)
+        self.assertEqual(unknown_response.json(), {'error': 'Reset request is unavailable.'})
+
+        expired_creation = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        expired_request = PasswordResetRequest.objects.get(
+            request_id=expired_creation.json()['request_id'],
+        )
+        expired_request.expires_at = timezone.now() - timedelta(minutes=1)
+        expired_request.save(update_fields=['expires_at'])
+        expired_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': expired_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(expired_response.status_code, 410)
+        self.assertEqual(expired_response.json(), {'error': 'Reset request has expired.'})
+        self.assertNotIn(self.student_a.email, expired_response.content.decode())
+
+        used_creation = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_b.student_id,
+            'email': self.student_b.email,
+        }, format='json')
+        used_request = PasswordResetRequest.objects.get(
+            request_id=used_creation.json()['request_id'],
+        )
+        used_request.status = PasswordResetRequest.StatusChoices.USED
+        used_request.used_at = timezone.now()
+        used_request.save(update_fields=['status', 'used_at'])
+        used_response = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': used_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(used_response.status_code, 409)
+        self.assertEqual(used_response.json(), {'error': 'Reset request is no longer available.'})
+        self.assertNotIn(self.student_b.email, used_response.content.decode())
+
     def test_cabinet_handoff_is_single_active_claim_and_expires(self):
         request_response = self.client.post('/api/auth/password-reset/request/', {
             'student_id': self.student_a.student_id,

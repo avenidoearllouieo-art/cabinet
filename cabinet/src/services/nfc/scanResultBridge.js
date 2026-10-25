@@ -35,7 +35,17 @@ async function postJson(url, body, { fetcher = fetch, signal, credentials } = {}
     throw new Error(`${label} returned malformed JSON.`)
   }
   if (!isRecord(payload)) throw new Error(`${label} returned an invalid response.`)
-  if (!response.ok) throw new Error(payload.error || `${label} returned HTTP ${response.status}.`)
+  if (!response.ok) {
+    const message = payload.error || payload.detail || `${label} returned HTTP ${response.status}.`
+    if (
+      label === 'Password-recovery handoff'
+      && response.status === 404
+      && /^not found\.?$/i.test(String(message).trim())
+    ) {
+      throw new Error('The Pi NFC service does not recognize the password-recovery handoff route. Check its running version and Cabinet bridge URL.')
+    }
+    throw new Error(message)
+  }
   return payload
 }
 
