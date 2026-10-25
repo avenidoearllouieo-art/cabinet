@@ -1725,8 +1725,10 @@ class NFCHandler(BaseHTTPRequestHandler):
             raise ValueError('Request body must be a JSON object.')
         return payload
 
-    def _recovery_origin_is_allowed(self) -> bool:
+    def _recovery_origin_is_allowed(self, *, allow_missing: bool = False) -> bool:
         origin = self.headers.get('Origin')
+        if origin is None:
+            return allow_missing
         return origin in ALLOWED_ORIGINS
 
     def do_OPTIONS(self) -> None:
@@ -1738,7 +1740,7 @@ class NFCHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self.server.service.status_snapshot())
             return
         if path == '/password-reset/bridge-status':
-            if not self._recovery_origin_is_allowed():
+            if not self._recovery_origin_is_allowed(allow_missing=True):
                 self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Password-recovery bridge origin is not allowed.'})
                 return
             parameters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)

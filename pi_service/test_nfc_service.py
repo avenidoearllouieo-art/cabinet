@@ -1261,6 +1261,26 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(len(self.store.list_after(0, 50)[0]), 1)
         self.assertEqual(self.service.motor_controller.calls, [])
 
+    def test_read_only_recovery_status_allows_missing_origin_but_rejects_unlisted_origin(self):
+        request_id = 'opaque-status-origin-id'
+        status, _ = self.post_json('/password-reset/handoff', {'request_id': request_id})
+        self.assertEqual(status, 200)
+
+        status, _, payload = self.get_json(
+            f'/password-reset/bridge-status?request_id={request_id}',
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['state'], 'waiting')
+
+        with self.assertRaises(urllib.error.HTTPError) as rejected:
+            urllib.request.urlopen(urllib.request.Request(
+                self.url + f'/password-reset/bridge-status?request_id={request_id}',
+                headers={'Origin': 'https://unlisted.example'},
+            ))
+        self.assertEqual(rejected.exception.code, 403)
+        rejected.exception.close()
+        self.service.cancel_password_recovery(request_id)
+
     def test_password_recovery_rejects_concurrent_handoff_and_origin_or_body_errors(self):
         self.post_json('/password-reset/handoff', {'request_id': 'first-id'})
         with self.assertRaises(urllib.error.HTTPError) as conflict:
