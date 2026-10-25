@@ -95,8 +95,15 @@ export async function fetchPasswordRecoveryQueue({ signal, fetcher = fetch } = {
     } catch {
         throw new Error('Password-recovery queue returned malformed JSON.')
     }
-    if (!isRecord(payload) || !response.ok || !Array.isArray(payload.results)) {
-        throw new Error(payload?.error || 'Password-recovery queue is unavailable.')
+    if (!response.ok) {
+        const message = isRecord(payload) ? (payload.error || payload.detail) : ''
+        if (response.status === 404 && /^not found\.?$/i.test(String(message || '').trim())) {
+            throw new Error('The Pi NFC service does not provide the password-recovery queue. Restart it from the current nfc_service.py and verify port 5001.')
+        }
+        throw new Error(message || `Password-recovery queue returned HTTP ${response.status}.`)
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.results)) {
+        throw new Error('Password-recovery queue returned an invalid response.')
     }
     return payload.results
         .filter((item) => (
