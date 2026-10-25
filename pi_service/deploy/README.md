@@ -91,10 +91,12 @@ npm install
 Set Cabinet browser build-time values in `cabinet/.env.production` before building:
 
 ```env
-VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
+VITE_NFC_BRIDGE_URL=/nfc-bridge/api/scans
+VITE_DJANGO_API_BASE_URL=/api
+VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000
 ```
 
-If Django is not running on the Raspberry Pi, also set `VITE_DJANGO_API_BASE_URL` to the actual reachable Django `/api` URL in `/etc/taptrack/cabinet.env`. This is used for access-photo metadata; do not guess the host, and do not put API credentials in the URL. The NFC scan/workflow bridge itself remains loopback port `5001`.
+The Cabinet browser calls same-origin `/nfc-bridge/*` and `/api/*` paths. Its Vite preview server proxies those paths to the Pi-local NFC bridge on `127.0.0.1:5001` and Django on `127.0.0.1:8000`. If Django is hosted elsewhere, set the Cabinet's API base and server-side proxy target to that exact reachable deployment before building. Do not use browser `127.0.0.1` URLs for a service on another machine, and never put API credentials in `VITE_` variables or URLs.
 
 Important:
 

@@ -22,7 +22,7 @@ describe('Cabinet workflow status requests', () => {
       },
     })
 
-    expect(request.url).toBe('http://127.0.0.1:5001/cabinet/workflow')
+    expect(request.url).toBe('http://localhost:3000/nfc-bridge/cabinet/workflow')
     expect(request.options.method).toBe('GET')
     expect(request.options.headers['X-TapTrack-Mock-Mode']).toBeUndefined()
     expect(request.options.body).toBeUndefined()
@@ -39,7 +39,7 @@ describe('Cabinet workflow status requests', () => {
       },
     })
 
-    expect(request.url).toBe('http://127.0.0.1:5001/cabinet/workflow')
+    expect(request.url).toBe('http://localhost:3000/nfc-bridge/cabinet/workflow')
     expect(request.options.method).toBe('GET')
     expect(request.options.headers['X-TapTrack-Mock-Mode']).toBeUndefined()
     expect(request.options.body).toBeUndefined()
@@ -82,7 +82,7 @@ describe('Cabinet workflow status requests', () => {
       },
     })
 
-    expect(request.url).toBe('http://127.0.0.1:5001/nfc/status')
+    expect(request.url).toBe('http://localhost:3000/nfc-bridge/nfc/status')
     expect(request.options.method).toBe('GET')
     expect(status.reader_connected).toBe(true)
   })
@@ -123,9 +123,9 @@ describe('Cabinet workflow status requests', () => {
     await startPasswordRecovery('opaque-id', { fetcher })
     await cancelPasswordRecovery('opaque-id', { fetcher })
 
-    expect(calls[0].url).toBe('http://127.0.0.1:5001/password-reset/handoff')
+    expect(calls[0].url).toBe('http://localhost:3000/nfc-bridge/password-reset/handoff')
     expect(JSON.parse(calls[0].options.body)).toEqual({ request_id: 'opaque-id' })
-    expect(calls[1].url).toBe('http://127.0.0.1:5001/password-reset/cancel')
+    expect(calls[1].url).toBe('http://localhost:3000/nfc-bridge/password-reset/cancel')
     expect(JSON.parse(calls[1].options.body)).toEqual({ request_id: 'opaque-id' })
     await expect(startPasswordRecovery('')).rejects.toThrow('Enter a valid password-reset request ID.')
   })

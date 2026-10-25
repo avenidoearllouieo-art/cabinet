@@ -40,8 +40,12 @@ nvm alias default 22.12.0
 Create `.env.production` in `/home/pi/tap-track/cabinet`:
 
 ```env
-VITE_NFC_BRIDGE_URL=http://127.0.0.1:5001/api/scans
+VITE_NFC_BRIDGE_URL=/nfc-bridge/api/scans
+VITE_DJANGO_API_BASE_URL=/api
+VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000
 ```
+
+The Cabinet browser calls same-origin `/nfc-bridge/*` and `/api/*` paths. The Vite development and preview servers proxy these paths to the Pi-local NFC bridge on `127.0.0.1:5001` and Django on `127.0.0.1:8000`; the NFC bridge receives the browser's allowed `localhost:4000` Origin. If either service runs on another host, configure the server-side proxy/API target for that deployment instead of putting a browser-local loopback URL in the bundle. Never place the Django device key in a `VITE_` variable.
 
 The Cabinet uses the registration URL returned by Django without rewriting its host or token. Configure `TAPTRACK_NFC_REGISTRATION_URL_BASE` in `backend/.env` as documented in the root README. Build and run:
 
@@ -83,9 +87,9 @@ The NFC service reads the card, sends the UID to Django with its server-side dev
 
 The Cabinet UI has no mock NFC mode or manual UID entry. Automated tests use isolated fake providers; normal users must scan a real card on the NFC reader.
 
-The hardware bridge contract is `GET http://127.0.0.1:5001/api/scans?after=<event_id>&limit=50` and `GET/POST http://127.0.0.1:5001/cabinet/workflow`. The browser sends only workflow commands to the local Pi bridge; it does not send audit fields or receive the device API key.
+The NFC service contract remains `GET /api/scans?after=<event_id>&limit=50` and `GET/POST /cabinet/workflow` on its loopback listener. The Cabinet browser reaches it through its same-origin `/nfc-bridge/*` proxy; the browser sends only workflow commands and never receives the device API key.
 
-Password Recovery uses the same active Pi NFC service: Cabinet sends the opaque `request_id` to `POST http://127.0.0.1:5001/password-reset/handoff`; the Pi claims it with Django's device key and routes only the next card to `/api/auth/password-reset/verify-nfc/`. The Web UI polls Django's `POST /api/auth/password-reset/status/` and advances only when the backend returns `verified` with a short-lived reset authorization. The Cabinet polls backend and local reader status but never receives that authorization. Recovery scans are separate from normal access events, photo capture, and motor workflow dispatch. The legacy `pi_service/password_reset_service.py` prototype on port 8765 is not the production scanner.
+Password Recovery uses the same active Pi NFC service: Cabinet sends the opaque `request_id` to same-origin `POST /nfc-bridge/password-reset/handoff`; the Pi claims it with Django's device key and routes only the next card to `/api/auth/password-reset/verify-nfc/`. The Web UI polls same-origin `POST /api/auth/password-reset/status/` and advances only when the backend returns `verified` with a short-lived reset authorization. The Cabinet polls backend and local reader status but never receives that authorization. Recovery scans are separate from normal access events, photo capture, and motor workflow dispatch. The legacy `pi_service/password_reset_service.py` prototype on port 8765 is not the production scanner.
 
 The QR contains the registration URL and short-lived token returned by Django. The Cabinet does not override the registration URL; the Django setting is the single source of truth. A successful open/close workflow response confirms the Django session transition only; it does not verify physical shutter movement. Keep TB6600 motor-driver power disconnected until limit switches and an emergency stop are installed.
 

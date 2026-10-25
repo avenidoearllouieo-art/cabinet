@@ -1,11 +1,15 @@
-const DEFAULT_SCAN_BRIDGE_URL = 'http://127.0.0.1:5001/api/scans'
+const DEFAULT_SCAN_BRIDGE_URL = '/nfc-bridge/api/scans'
 
-const scanBridgeUrl = (import.meta.env.VITE_NFC_BRIDGE_URL || DEFAULT_SCAN_BRIDGE_URL).replace(/\/$/, '')
-const bridgeOrigin = new URL(scanBridgeUrl).origin
-const workflowUrl = `${bridgeOrigin}/cabinet/workflow`
-const recoveryHandoffUrl = `${bridgeOrigin}/password-reset/handoff`
-const recoveryCancelUrl = `${bridgeOrigin}/password-reset/cancel`
-const recoveryStatusUrl = `${bridgeOrigin}/password-reset/bridge-status`
+const configuredScanBridgeUrl = (import.meta.env.VITE_NFC_BRIDGE_URL || DEFAULT_SCAN_BRIDGE_URL).replace(/\/$/, '')
+const scanBridge = new URL(configuredScanBridgeUrl, window.location.origin)
+const scanBridgeUrl = scanBridge.toString()
+const bridgeOrigin = scanBridge.origin
+const bridgePathPrefix = scanBridge.pathname.replace(/\/api\/scans\/?$/, '').replace(/\/$/, '')
+const bridgeEndpoint = (path) => `${bridgeOrigin}${bridgePathPrefix}${path}`
+const workflowUrl = bridgeEndpoint('/cabinet/workflow')
+const recoveryHandoffUrl = bridgeEndpoint('/password-reset/handoff')
+const recoveryCancelUrl = bridgeEndpoint('/password-reset/cancel')
+const recoveryStatusUrl = bridgeEndpoint('/password-reset/bridge-status')
 const djangoApiBase = (import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')
 const passwordResetStatusUrl = `${djangoApiBase}/auth/password-reset/status/`
 
@@ -227,7 +231,7 @@ export function sendCabinetWorkflow(command, options) {
 export async function fetchNfcServiceStatus({ signal, fetcher = fetch } = {}) {
   let response
   try {
-    response = await fetcher(`${bridgeOrigin}/nfc/status`, {
+    response = await fetcher(bridgeEndpoint('/nfc/status'), {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
@@ -251,7 +255,7 @@ export async function captureAccessLogPhoto(eventId, { fetcher = fetch } = {}) {
     throw new Error('A valid Django access event ID is required.')
   }
 
-  const response = await fetcher(`${new URL(scanBridgeUrl).origin}/photo/capture`, {
+  const response = await fetcher(bridgeEndpoint('/photo/capture'), {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ event_id: normalizedEventId }),

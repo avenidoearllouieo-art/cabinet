@@ -76,7 +76,7 @@ describe('Cabinet real NFC bridge mode', () => {
   it('shows bridge unavailability and never renders mock UID controls', async () => {
     const fetcher = vi.fn(async (url) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         return new Response(JSON.stringify({
           mode: 'hardware',
           cabinet_name: 'Cabinet 1',
@@ -86,7 +86,7 @@ describe('Cabinet real NFC bridge mode', () => {
           ],
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         throw new TypeError('Failed to fetch')
       }
       throw new Error(`Unexpected request: ${requestUrl}`)
@@ -104,21 +104,21 @@ describe('Cabinet real NFC bridge mode', () => {
     expect(screen.queryByLabelText('Mock NFC UID')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Use Pi mock reader' })).toBeNull()
     expect(fetcher).toHaveBeenCalledWith(
-      'http://127.0.0.1:5001/cabinet/workflow',
+      'http://localhost:3000/nfc-bridge/cabinet/workflow',
       expect.objectContaining({ method: 'GET' }),
     )
     const workflowRequest = fetcher.mock.calls.find(([url]) => String(url).endsWith('/cabinet/workflow'))
     expect(workflowRequest?.[1]?.headers?.['X-API-Key']).toBeUndefined()
     expect(screen.queryByText('The mock NFC service could not verify the card.')).toBeNull()
     await waitFor(() => expect(fetcher.mock.calls.some(([url, options]) => (
-      String(url).startsWith('http://127.0.0.1:5001/api/scans') && options.method === 'GET'
+      String(url).startsWith('http://localhost:3000/nfc-bridge/api/scans') && options.method === 'GET'
     ))).toBe(true))
   })
   it('does not show open workflow success when Django rejects the final transition', async () => {
     let scanPolls = 0
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         if (options.method === 'GET') {
           return new Response(JSON.stringify({
             mode: 'hardware',
@@ -139,7 +139,7 @@ describe('Cabinet real NFC bridge mode', () => {
         }
         return new Response(JSON.stringify({ error: 'Django rejected final transition.' }), { status: 409 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         scanPolls += 1
         const events = scanPolls < 2 ? [] : [{
           event_id: 1,
@@ -183,7 +183,7 @@ describe('Cabinet real NFC bridge mode', () => {
     }
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         if (options.method === 'GET') {
           return new Response(JSON.stringify({
             mode: 'hardware',
@@ -215,7 +215,7 @@ describe('Cabinet real NFC bridge mode', () => {
           },
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({
           events: [],
@@ -249,7 +249,7 @@ describe('Cabinet real NFC bridge mode', () => {
     }
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         if (options.method === 'GET') {
           return new Response(JSON.stringify({
             mode: 'hardware',
@@ -277,7 +277,7 @@ describe('Cabinet real NFC bridge mode', () => {
           },
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
@@ -301,7 +301,7 @@ describe('Cabinet real NFC bridge mode', () => {
     const recoveryRequestId = 'opaque-request-id'
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         return new Response(JSON.stringify({
           mode: 'hardware',
           cabinet_name: 'Cabinet 1',
@@ -311,11 +311,11 @@ describe('Cabinet real NFC bridge mode', () => {
           ],
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
-      if (requestUrl === 'http://127.0.0.1:5001/password-reset/handoff') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         expect(JSON.parse(options.body)).toEqual({ request_id: recoveryRequestId })
         return new Response(JSON.stringify({
           request_id: recoveryRequestId,
@@ -324,7 +324,7 @@ describe('Cabinet real NFC bridge mode', () => {
           expires_at: '2026-10-26T12:00:00Z',
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/password-reset/bridge-status')) {
         return new Response(JSON.stringify({
           request_id: recoveryRequestId,
           active: false,
@@ -354,27 +354,27 @@ describe('Cabinet real NFC bridge mode', () => {
     expect(await screen.findByText('Django confirmed password-recovery status: verified.')).toBeTruthy()
     expect(document.body.textContent).not.toContain('never-render-this-authorization')
     expect(fetcher.mock.calls.some(([url, options]) => (
-      String(url) === 'http://127.0.0.1:5001/cabinet/workflow' && options.method === 'POST'
+      String(url) === 'http://localhost:3000/nfc-bridge/cabinet/workflow' && options.method === 'POST'
     ))).toBe(false)
-    expect(fetcher.mock.calls.some(([url]) => String(url) === 'http://127.0.0.1:5001/password-reset/handoff')).toBe(true)
+    expect(fetcher.mock.calls.some(([url]) => String(url) === 'http://localhost:3000/nfc-bridge/password-reset/handoff')).toBe(true)
   })
 
   it('shows a wrong-card response from the recovery reader without processing it as an access scan', async () => {
     const recoveryRequestId = 'opaque-wrong-card'
     const fetcher = vi.fn(async (url) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         return new Response(JSON.stringify({
           mode: 'hardware',
           cabinet_name: 'Cabinet 1',
           stations: [{ name: 'Station 1', status: 'available', session: null }],
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
-      if (requestUrl === 'http://127.0.0.1:5001/password-reset/handoff') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
         return new Response(JSON.stringify({
           request_id: recoveryRequestId,
           state: 'waiting',
@@ -382,7 +382,7 @@ describe('Cabinet real NFC bridge mode', () => {
           expires_at: '2026-10-26T12:00:00Z',
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/password-reset/bridge-status')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/password-reset/bridge-status')) {
         return new Response(JSON.stringify({
           request_id: recoveryRequestId,
           state: 'failed',
@@ -404,7 +404,7 @@ describe('Cabinet real NFC bridge mode', () => {
 
     expect(await screen.findByText('This card does not match the password-reset request.')).toBeTruthy()
     expect(fetcher.mock.calls.some(([url, options]) => (
-      String(url).startsWith('http://127.0.0.1:5001/api/scans') && options.method === 'POST'
+      String(url).startsWith('http://localhost:3000/nfc-bridge/api/scans') && options.method === 'POST'
     ))).toBe(false)
   })
 
@@ -419,7 +419,7 @@ describe('Cabinet real NFC bridge mode', () => {
     }
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
-      if (requestUrl === 'http://127.0.0.1:5001/cabinet/workflow') {
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
         if (options.method === 'GET') {
           return new Response(JSON.stringify({
             mode: 'hardware',
@@ -444,7 +444,7 @@ describe('Cabinet real NFC bridge mode', () => {
           },
         }), { status: 200 })
       }
-      if (requestUrl.startsWith('http://127.0.0.1:5001/api/scans')) {
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
         const after = Number(new URL(requestUrl).searchParams.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }

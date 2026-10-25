@@ -17,9 +17,14 @@ export default defineConfig(({ mode }) => {
   if (mode === 'development' && !djangoServerUrl) {
     throw new Error('VITE_DJANGO_SERVER_URL must be configured for the Cabinet development proxy.')
   }
-  const proxy = mode === 'development' && djangoServerUrl ? {
+  const djangoProxyTarget = djangoServerUrl || 'http://127.0.0.1:8000'
+  const proxy = {
+    '/nfc-bridge': {
+      target: 'http://127.0.0.1:5001',
+      rewrite: (path) => path.replace(/^\/nfc-bridge/, ''),
+    },
     '/api': {
-      target: djangoServerUrl,
+      target: djangoProxyTarget,
       changeOrigin: true,
       secure: false,
       configure: (proxyServer) => {
@@ -29,9 +34,10 @@ export default defineConfig(({ mode }) => {
         })
       },
     },
-  } : undefined
+  }
   return {
     plugins: [react()],
-    ...(proxy ? { server: { proxy } } : {}),
+    server: mode === 'development' ? { proxy } : undefined,
+    preview: { proxy },
   }
 })
