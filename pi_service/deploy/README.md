@@ -98,6 +98,45 @@ VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000
 
 The Cabinet browser calls same-origin `/nfc-bridge/*` and `/api/*` paths. Its Vite preview server proxies those paths to the Pi-local NFC bridge on `127.0.0.1:5001` and Django on `127.0.0.1:8000`. If Django is hosted elsewhere, set the Cabinet's API base and server-side proxy target to that exact reachable deployment before building. Do not use browser `127.0.0.1` URLs for a service on another machine, and never put API credentials in `VITE_` variables or URLs.
 
+Set `TAPTRACK_NFC_ALLOWED_ORIGINS` in `/etc/taptrack/nfc.env` to a comma-separated list of exact browser origins for the Cabinet. For the requested UI URL, use `http://localhost:4000`; add `http://127.0.0.1:4000` or another production origin only if users intentionally open Cabinet at that exact origin. Origins must be HTTP(S) scheme + host + optional port only. Paths, wildcards, `null`, and arbitrary forwarded headers are not accepted. The service validates the browser `Origin` directly and does not derive trust from `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+
+### Recovery-origin fix deployment and rollback
+
+Changed files for this fix:
+
+- `cabinet/vite.config.js`
+- `cabinet/src/services/viteProxy.test.js`
+- `pi_service/nfc_service.py`
+- `pi_service/test_nfc_service.py`
+- `pi_service/deploy/nfc.env.example`
+- `pi_service/deploy/README.md`
+
+The same-origin Cabinet bridge URL and preview proxy were already present in this checkout; the current patch makes the Origin header behavior explicit and adds the configurable Pi allowlist.
+
+Before deploying, inspect `systemctl cat taptrack-nfc.service`, its effective paths, the Cabinet process/port, and the worktree. Cabinet may run as a Vite process rather than a systemd unit; do not restart a nonexistent Cabinet unit. Back up the NFC script and active environment file without printing environment contents. Set the exact Cabinet origin in the environment file loaded by the active NFC unit, preserve restrictive permissions, then restart only `taptrack-nfc.service` after confirming no recovery handoff is active and no motor command is in progress:
+
+```bash
+cp -p /home/taptrack/tap-track-clean/pi_service/nfc_service.py /home/taptrack/tap-track-clean/pi_service/nfc_service.py.before-origin-fix
+cp -p /home/taptrack/tap-track/pi_service/nfc-service.env /home/taptrack/tap-track/pi_service/nfc-service.env.before-origin-fix
+sudoedit /home/taptrack/tap-track/pi_service/nfc-service.env
+python -m py_compile /home/taptrack/tap-track-clean/pi_service/nfc_service.py
+sudo systemctl restart taptrack-nfc.service
+systemctl is-active taptrack-nfc.service
+systemctl show taptrack-nfc.service -p WorkingDirectory -p ExecStart -p EnvironmentFiles --no-pager
+sudo journalctl -u taptrack-nfc.service -n 50 --no-pager
+curl --fail --silent http://127.0.0.1:5001/nfc/status
+```
+
+Verify from the Cabinet browser that handoff uses `/nfc-bridge/password-reset/handoff`, a fresh Portal-created request is accepted, and an unlisted Origin is rejected. Never log request IDs. Do not run a motor command as part of deployment. To roll back, restore the environment backup, move the failed build aside, restore the previous build, and restart only these affected services:
+
+```bash
+cp -p /home/taptrack/tap-track-clean/pi_service/nfc_service.py.before-origin-fix /home/taptrack/tap-track-clean/pi_service/nfc_service.py
+cp -p /home/taptrack/tap-track/pi_service/nfc-service.env.before-origin-fix /home/taptrack/tap-track/pi_service/nfc-service.env
+sudo systemctl restart taptrack-nfc.service
+```
+
+Do not reset or overwrite unrelated worktree changes.
+
 Important:
 
 - VITE values are compiled into the browser bundle. Never put `DEVICE_API_KEY` or a Django API key in VITE variables.

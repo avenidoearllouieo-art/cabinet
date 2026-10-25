@@ -49,7 +49,7 @@ DATABASE_PATH = Path(os.environ.get(
     'TAPTRACK_NFC_DB_PATH',
     str(Path(__file__).resolve().with_name('nfc_events.sqlite3')),
 ))
-ALLOWED_ORIGINS = frozenset({
+DEFAULT_ALLOWED_ORIGINS = frozenset({
     'http://127.0.0.1:4000',
     'http://localhost:4000',
     'http://127.0.0.1:5173',
@@ -57,6 +57,38 @@ ALLOWED_ORIGINS = frozenset({
     'http://127.0.0.1:5176',
     'http://localhost:5176',
 })
+
+
+def load_allowed_origins(configured_origins: str | None = None) -> frozenset[str]:
+    if configured_origins is None:
+        configured_origins = os.environ.get('TAPTRACK_NFC_ALLOWED_ORIGINS')
+    if configured_origins is None:
+        return DEFAULT_ALLOWED_ORIGINS
+
+    origins = [origin.strip() for origin in configured_origins.split(',')]
+    if not origins or any(not origin for origin in origins):
+        raise RuntimeError('TAPTRACK_NFC_ALLOWED_ORIGINS must contain exact HTTP(S) origins.')
+    for origin in origins:
+        try:
+            parsed = urlsplit(origin)
+            parsed.port
+        except ValueError as error:
+            raise RuntimeError('TAPTRACK_NFC_ALLOWED_ORIGINS contains an invalid origin.') from error
+        if (
+            parsed.scheme not in {'http', 'https'}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or origin != f'{parsed.scheme}://{parsed.netloc}'
+        ):
+            raise RuntimeError('TAPTRACK_NFC_ALLOWED_ORIGINS must contain exact HTTP(S) origins without paths.')
+    return frozenset(origins)
+
+
+ALLOWED_ORIGINS = load_allowed_origins()
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 REQUEST_TIMEOUT_SECONDS = 5
@@ -1821,12 +1853,19 @@ class NFCHandler(BaseHTTPRequestHandler):
                         'serial_command': motor_result.command or None if motor_result else None,
                         'transaction_id': motor_result.transaction_id if motor_result else None,
                         'serial_responses': list(motor_result.responses) if motor_result else [],
+                        'serial_accepted': bool(motor_result and motor_result.accepted),
+                        'serial_command_completed': bool(
+                            motor_result
+                            and motor_result.outcome == MotorOutcome.COMPLETED
+                            and motor_result.command_transmitted is True
+                        ),
                         'serial_command_sent': (
                             motor_result.command_transmitted
                             if isinstance(service.motor_controller, SerialMotorController)
                             and motor_result is not None
                             else False
                         ),
+                        'controller_armed': getattr(service.motor_controller, 'armed', False),
                         'serial_connection': getattr(
                             service.motor_controller,
                             'connection_status',

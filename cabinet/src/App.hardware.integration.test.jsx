@@ -41,7 +41,17 @@ describe('Cabinet motor dispatch reporting', () => {
       workflow_action: 'finish_open',
       outcome: 'completed',
       serial_command_sent: true,
-    }, 'finish_open')).toMatch(/Motor dispatched/i)
+      serial_command_completed: true,
+      physical_movement_verified: false,
+    }, 'finish_open')).toMatch(/ESP32 completed its command sequence; physical shutter movement was not verified/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'uncertain',
+      serial_command_sent: true,
+      serial_accepted: true,
+      serial_connection: 'connected',
+      controller_armed: true,
+    }, 'finish_open')).toMatch(/ESP32 accepted the command, but completion is unconfirmed/i)
     expect(motorDispatchStatus({
       workflow_action: 'finish_close',
       outcome: 'uncertain',
@@ -63,6 +73,22 @@ describe('Cabinet motor dispatch reporting', () => {
       serial_command_sent: false,
       error: 'Controller is disarmed.',
     }, 'finish_open')).toMatch(/command was not transmitted/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_close',
+      outcome: 'uncertain',
+      serial_command_sent: false,
+      controller_armed: false,
+      serial_connection: 'disconnected',
+      error: 'Operator recovery is required.',
+    }, 'finish_close')).toMatch(/controller is disarmed.*serial connection is disconnected.*operator recovery is required/i)
+    expect(motorDispatchStatus({
+      workflow_action: 'finish_open',
+      outcome: 'rejected',
+      serial_command_sent: false,
+      controller_armed: false,
+      serial_connection: 'disconnected',
+      error: 'Motor actuation is disabled; no serial command was sent.',
+    }, 'finish_open')).toMatch(/dispatch disabled.*no serial command was sent.*serial connection: disconnected.*controller disarmed/i)
     expect(motorDispatchStatus({
       workflow_action: 'finish_close',
       outcome: 'rejected',
@@ -235,7 +261,7 @@ describe('Cabinet real NFC bridge mode', () => {
     await user.click(screen.getByRole('button', { name: 'OPEN CABINET' }))
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
-    expect(screen.getByText(/ESP32 completed its command sequence. Physical shutter position was not verified/i)).toBeTruthy()
+    expect(screen.getByText(/ESP32 completed its command sequence; physical shutter movement was not verified/i)).toBeTruthy()
   })
 
   it('shows when Django completed Open but motor dispatch was disabled', async () => {
@@ -271,6 +297,9 @@ describe('Cabinet real NFC bridge mode', () => {
             workflow_action: 'finish_open',
             outcome: 'rejected',
             serial_command_sent: false,
+            serial_accepted: false,
+            serial_command_completed: false,
+            controller_armed: false,
             serial_connection: 'disconnected',
             physical_movement_verified: false,
             error: 'Motor actuation is disabled; no serial command was sent.',
@@ -294,7 +323,110 @@ describe('Cabinet real NFC bridge mode', () => {
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
     expect(screen.getByText('Open workflow completed for Station 1.')).toBeTruthy()
-    expect(screen.getByText(/Motor dispatch disabled\. Motor actuation is disabled; no serial command was sent\./i)).toBeTruthy()
+    expect(screen.getByText(/Motor dispatch disabled; no serial command was sent\. Serial connection: disconnected\. Controller disarmed\. Motor actuation is disabled/i)).toBeTruthy()
+  })
+
+  it('routes the authorized Close workflow through finish_close and reports disabled dispatch', async () => {
+    const openingMember = {
+      uid: 'CLOSE-MEMBER-UID',
+      studentId: 'HW-001',
+      fullName: 'Hardware Test Student',
+    }
+    const activeSession = {
+      id: 25,
+      station: 'Station 1',
+      status: 'open',
+      workflow_state: 'idle',
+      opened_by: [openingMember],
+      closed_by: [],
+    }
+    let closeWorkflowStarted = false
+    let memberScanned = false
+    const fetcher = vi.fn(async (url, options = {}) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
+        if (options.method === 'GET') {
+          return new Response(JSON.stringify({
+            mode: 'hardware',
+            cabinet_name: 'Cabinet 1',
+            stations: [
+              { name: 'Station 1', status: 'occupied', session: activeSession },
+              { name: 'Station 2', status: 'available', session: null },
+            ],
+          }), { status: 200 })
+        }
+        const request = JSON.parse(options.body)
+        if (request.command === 'start_close') {
+          closeWorkflowStarted = true
+          return new Response(JSON.stringify({
+            mode: 'hardware',
+            station: request.station,
+            session: { ...activeSession, workflow_state: 'closing' },
+          }), { status: 200 })
+        }
+        if (request.command === 'finish_close') {
+          expect(request).toEqual({ command: 'finish_close', station: 'Station 1' })
+          return new Response(JSON.stringify({
+            mode: 'hardware',
+            station: request.station,
+            session: {
+              ...activeSession,
+              status: 'closed',
+              workflow_state: 'idle',
+              closed_by: [openingMember],
+            },
+            motor_dispatch: {
+              workflow_action: 'finish_close',
+              outcome: 'rejected',
+              serial_command_sent: false,
+              serial_accepted: false,
+              serial_command_completed: false,
+              controller_armed: false,
+              serial_connection: 'disconnected',
+              physical_movement_verified: false,
+              error: 'Motor actuation is disabled; no serial command was sent.',
+            },
+          }), { status: 200 })
+        }
+        throw new Error(`Unexpected workflow command: ${request.command}`)
+      }
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const events = closeWorkflowStarted && !memberScanned ? [{
+          event_id: 2,
+          uid: openingMember.uid,
+          status: 'registered',
+          name: openingMember.fullName,
+          student_id: openingMember.studentId,
+          role: 'student',
+        }] : []
+        if (events.length) memberScanned = true
+        return new Response(JSON.stringify({
+          events,
+          next_cursor: events.length ? 2 : after,
+          has_more: false,
+        }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /close cabinet/i }))
+    await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 1' }))
+    await screen.findByText('Hardware Test Student')
+    await user.click(await screen.findByRole('button', { name: 'CLOSE CABINET' }))
+    await user.click(await screen.findByRole('button', { name: 'CLOSE STATION 1' }))
+
+    expect(await screen.findByRole('heading', { name: 'Close Workflow Complete' })).toBeTruthy()
+    expect(screen.getByText(/Motor dispatch disabled; no serial command was sent\. Serial connection: disconnected\. Controller disarmed/i)).toBeTruthy()
+    expect(screen.getByText('Physical shutter movement was not verified.')).toBeTruthy()
+    expect(fetcher.mock.calls.some(([url, options]) => (
+      String(url) === 'http://localhost:3000/nfc-bridge/cabinet/workflow'
+      && options.method === 'POST'
+      && JSON.stringify(JSON.parse(options.body)) === JSON.stringify({ command: 'finish_close', station: 'Station 1' })
+    ))).toBe(true)
   })
 
   it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
