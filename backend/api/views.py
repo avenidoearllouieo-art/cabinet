@@ -34,7 +34,7 @@ import hashlib
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
 from .models import SubmissionAttachment
-from .models import PasswordResetRequest, NFCEnrollmentSession
+from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
@@ -51,6 +51,7 @@ from .serializers import (
     ActivityAnnouncementSerializer,
     PasswordResetRequestSerializer,
     PasswordResetStatusSerializer,
+    PasswordResetCancellationSerializer,
     PasswordResetNFCVerificationSerializer,
     PasswordResetCabinetHandoffSerializer,
     CabinetRegistrationSerializer,
@@ -66,6 +67,18 @@ import logging
 logger = logging.getLogger(__name__)
 MAX_ACCESS_LOG_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ACCESS_LOG_PHOTO_PIXELS = 20_000_000
+
+
+def record_password_recovery_event(reset_request, event_type, outcome, reason_code='', actor_type='django', correlation_id=''):
+    PasswordRecoveryAuditEvent.objects.create(
+        recovery_request=reset_request,
+        user=reset_request.user,
+        event_type=event_type,
+        outcome=outcome,
+        reason_code=reason_code,
+        actor_type=actor_type,
+        correlation_id=correlation_id[:64],
+    )
 
 
 def get_authorized_access_log_photo_event(request, view, event_id):
@@ -2285,6 +2298,13 @@ class PasswordResetRequestView(APIView):
                     previous_request.status = PasswordResetRequest.StatusChoices.CANCELLED
                     previous_request.reason = 'Replaced by a newer reset request.'
                     previous_request.save(update_fields=['status', 'reason'])
+                    record_password_recovery_event(
+                        previous_request,
+                        PasswordRecoveryAuditEvent.EventType.REQUEST_CANCELLED,
+                        PasswordRecoveryAuditEvent.Outcome.INFO,
+                        reason_code='replaced_by_newer_request',
+                        actor_type=PasswordRecoveryAuditEvent.ActorType.PORTAL,
+                    )
 
             reset_request = PasswordResetRequest.objects.create(
                 user=user,
@@ -2292,6 +2312,12 @@ class PasswordResetRequestView(APIView):
                 email_snapshot=(user.email or '') if user else '',
                 status=PasswordResetRequest.StatusChoices.PENDING,
                 expires_at=timezone.now() + timedelta(minutes=15),
+            )
+            record_password_recovery_event(
+                reset_request,
+                PasswordRecoveryAuditEvent.EventType.REQUEST_CREATED,
+                PasswordRecoveryAuditEvent.Outcome.SUCCESS,
+                actor_type=PasswordRecoveryAuditEvent.ActorType.PORTAL,
             )
 
         return Response(
@@ -2302,6 +2328,66 @@ class PasswordResetRequestView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class PasswordResetCancellationView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetCancellationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request_id = serializer.validated_data['request_id']
+        with transaction.atomic():
+            reset_request = PasswordResetRequest.objects.select_for_update().filter(request_id=request_id).first()
+            if not reset_request:
+                return Response({'cancelled': True})
+            if reset_request.status in (
+                PasswordResetRequest.StatusChoices.VERIFIED,
+                PasswordResetRequest.StatusChoices.USED,
+                PasswordResetRequest.StatusChoices.CANCELLED,
+            ):
+                return Response({'cancelled': False, 'status': reset_request.status})
+            reset_request.status = PasswordResetRequest.StatusChoices.CANCELLED
+            reset_request.reason = 'Cancelled by the cabinet.'
+            reset_request.save(update_fields=['status', 'reason'])
+            record_password_recovery_event(
+                reset_request,
+                PasswordRecoveryAuditEvent.EventType.REQUEST_CANCELLED,
+                PasswordRecoveryAuditEvent.Outcome.INFO,
+                reason_code='cancelled_by_cabinet',
+                actor_type=PasswordRecoveryAuditEvent.ActorType.CABINET,
+            )
+        return Response({'cancelled': True, 'status': reset_request.status})
+
+
+class PasswordResetCabinetQueueView(APIView):
+    authentication_classes = []
+    permission_classes = [HasDeviceAPIKey]
+
+    def get(self, request, *args, **kwargs):
+        now = timezone.now()
+        with transaction.atomic():
+            queued = PasswordResetRequest.objects.select_for_update().filter(
+                status=PasswordResetRequest.StatusChoices.PENDING,
+                user__is_active=True,
+                expires_at__gt=now,
+            ).select_related('user').order_by('requested_at')
+            items = []
+            for reset_request in queued:
+                name = reset_request.user.get_full_name().strip() or reset_request.user.username
+                student_id = reset_request.student_id_snapshot or reset_request.user.student_id or ''
+                masked_reference = f'•••{student_id[-4:]}' if student_id else '••••'
+                items.append({
+                    'request_id': reset_request.request_id,
+                    'display_name': name,
+                    'account_reference': masked_reference,
+                    'status': reset_request.status,
+                    'requested_at': reset_request.requested_at.isoformat(),
+                    'expires_at': reset_request.expires_at.isoformat(),
+                })
+        return Response({'count': len(items), 'results': items})
 
 
 class PasswordResetStatusView(APIView):
@@ -2329,6 +2415,13 @@ class PasswordResetStatusView(APIView):
                 ):
                     reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
                     reset_request.save(update_fields=['status'])
+                    record_password_recovery_event(
+                        reset_request,
+                        PasswordRecoveryAuditEvent.EventType.REQUEST_EXPIRED,
+                        PasswordRecoveryAuditEvent.Outcome.INFO,
+                        reason_code='request_expired',
+                        actor_type=PasswordRecoveryAuditEvent.ActorType.DJANGO,
+                    )
                 return Response({'status': reset_request.status})
 
             if reset_request.status != PasswordResetRequest.StatusChoices.VERIFIED:
@@ -2368,6 +2461,13 @@ class PasswordResetStatusView(APIView):
                     'reset_authorization_expires_at',
                     'reset_authorization_used_at',
                 ])
+                record_password_recovery_event(
+                    reset_request,
+                    PasswordRecoveryAuditEvent.EventType.AUTHORIZATION_ISSUE,
+                    PasswordRecoveryAuditEvent.Outcome.SUCCESS,
+                    reason_code='authorization_issued',
+                    actor_type=PasswordRecoveryAuditEvent.ActorType.DJANGO,
+                )
 
             return Response({
                 'status': PasswordResetRequest.StatusChoices.VERIFIED,
@@ -2416,6 +2516,13 @@ class PasswordResetVerifyNFCView(APIView):
 
             user = reset_request.user
             if not user.is_active or user.nfc_uid != nfc_uid:
+                record_password_recovery_event(
+                    reset_request,
+                    PasswordRecoveryAuditEvent.EventType.NFC_REJECTED,
+                    PasswordRecoveryAuditEvent.Outcome.FAILURE,
+                    reason_code='card_account_mismatch',
+                    actor_type=PasswordRecoveryAuditEvent.ActorType.PI,
+                )
                 return Response({'error': 'NFC card does not match this recovery session.'}, status=status.HTTP_403_FORBIDDEN)
 
             reset_request.status = PasswordResetRequest.StatusChoices.VERIFIED
@@ -2430,6 +2537,13 @@ class PasswordResetVerifyNFCView(APIView):
                 'cabinet_handoff_used_at',
                 'reset_token_hash',
             ])
+            record_password_recovery_event(
+                reset_request,
+                PasswordRecoveryAuditEvent.EventType.NFC_VERIFIED,
+                PasswordRecoveryAuditEvent.Outcome.SUCCESS,
+                reason_code='registered_card_verified',
+                actor_type=PasswordRecoveryAuditEvent.ActorType.PI,
+            )
 
         return Response(
             {
@@ -2492,6 +2606,13 @@ class PasswordResetCabinetHandoffView(APIView):
                 'cabinet_handoff_expires_at',
                 'cabinet_handoff_used_at',
             ])
+            record_password_recovery_event(
+                reset_request,
+                PasswordRecoveryAuditEvent.EventType.CABINET_CLAIMED,
+                PasswordRecoveryAuditEvent.Outcome.SUCCESS,
+                reason_code='cabinet_handoff_claimed',
+                actor_type=PasswordRecoveryAuditEvent.ActorType.CABINET,
+            )
 
         return Response(
             {
@@ -2620,6 +2741,13 @@ class PasswordResetConfirmView(APIView):
                 'reset_token_hash',
                 'reason',
             ])
+            record_password_recovery_event(
+                reset_request,
+                PasswordRecoveryAuditEvent.EventType.RESET_COMPLETED,
+                PasswordRecoveryAuditEvent.Outcome.SUCCESS,
+                reason_code='password_changed',
+                actor_type=PasswordRecoveryAuditEvent.ActorType.PORTAL,
+            )
 
         return Response(
             {

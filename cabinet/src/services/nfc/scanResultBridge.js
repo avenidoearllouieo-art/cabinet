@@ -10,6 +10,7 @@ const workflowUrl = bridgeEndpoint('/cabinet/workflow')
 const recoveryHandoffUrl = bridgeEndpoint('/password-reset/handoff')
 const recoveryCancelUrl = bridgeEndpoint('/password-reset/cancel')
 const recoveryStatusUrl = bridgeEndpoint('/password-reset/bridge-status')
+const recoveryQueueUrl = bridgeEndpoint('/password-reset/queue')
 const djangoApiBase = (import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')
 const passwordResetStatusUrl = `${djangoApiBase}/auth/password-reset/status/`
 
@@ -73,6 +74,44 @@ export async function startPasswordRecovery(requestId, options = {}) {
     throw new Error('Password-recovery bridge returned an invalid handoff response.')
   }
   return payload
+}
+
+export async function fetchPasswordRecoveryQueue({ signal, fetcher = fetch } = {}) {
+    let response
+    try {
+        response = await fetcher(recoveryQueueUrl, {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+            signal,
+        })
+    } catch (error) {
+        if (error.name === 'AbortError') throw error
+        throw new Error('Password-recovery queue unavailable. Check the NFC bridge connection.', { cause: error })
+    }
+    let payload
+    try {
+        payload = await response.json()
+    } catch {
+        throw new Error('Password-recovery queue returned malformed JSON.')
+    }
+    if (!isRecord(payload) || !response.ok || !Array.isArray(payload.results)) {
+        throw new Error(payload?.error || 'Password-recovery queue is unavailable.')
+    }
+    return payload.results
+        .filter((item) => (
+            isRecord(item)
+            && typeof item.request_id === 'string'
+            && typeof item.display_name === 'string'
+            && typeof item.account_reference === 'string'
+            && typeof item.status === 'string'
+        ))
+        .map(({ request_id, display_name, account_reference, status }) => ({
+            request_id,
+            display_name,
+            account_reference,
+            status,
+        }))
 }
 
 export async function cancelPasswordRecovery(requestId, options = {}) {
