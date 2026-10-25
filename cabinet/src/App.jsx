@@ -123,9 +123,10 @@ export default function App() {
   const [workflowLoaded, setWorkflowLoaded] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [serviceStatus, setServiceStatus] = useState(null)
-  const [recoveryRequestInput, setRecoveryRequestInput] = useState('')
   const [recoveryQueue, setRecoveryQueue] = useState([])
   const [recoveryQueueLoading, setRecoveryQueueLoading] = useState(false)
+  const [recoveryQueueError, setRecoveryQueueError] = useState('')
+  const [recoveryQueueAttempt, setRecoveryQueueAttempt] = useState(0)
   const [recoveryRequestId, setRecoveryRequestId] = useState('')
   const [recoveryPhase, setRecoveryPhase] = useState('idle')
   const [recoveryMessage, setRecoveryMessage] = useState('')
@@ -154,8 +155,12 @@ export default function App() {
         setRecoveryRequestId((currentId) => (
           queue.some((item) => item.request_id === currentId) ? currentId : ''
         ))
+        setRecoveryQueueError('')
       } catch (error) {
-        if (!cancelled) setRecoveryError(error.message || 'Password-recovery queue is unavailable.')
+        if (!cancelled) {
+          setRecoveryQueueError(error.message || 'Password-recovery queue is unavailable.')
+          setRecoveryError('')
+        }
       } finally {
         if (!cancelled) setRecoveryQueueLoading(false)
       }
@@ -167,16 +172,19 @@ export default function App() {
       cancelled = true
       window.clearInterval(timeoutId)
     }
-  }, [view, recoveryPhase])
+  }, [view, recoveryPhase, recoveryQueueAttempt])
 
   const beginPasswordRecovery = async (event) => {
     event.preventDefault()
-    setRecoveryRequestId('')
+    if (!recoveryRequestId) {
+      setRecoveryError('Select a password-recovery request first.')
+      return
+    }
     setRecoveryError('')
     setRecoveryMessage('Contacting the NFC bridge and validating the request…')
     setRecoveryPhase('starting')
     try {
-      const handoff = await startPasswordRecovery(recoveryRequestInput.trim())
+      const handoff = await startPasswordRecovery(recoveryRequestId)
       setRecoveryRequestId(handoff.request_id)
       setRecoveryMessage(handoff.message)
       setRecoveryPhase('waiting')
@@ -187,9 +195,8 @@ export default function App() {
     }
   }
 
-  const selectQueuedRecovery = async (requestId) => {
+  const selectQueuedRecovery = (requestId) => {
     setRecoveryRequestId(requestId)
-    setRecoveryRequestInput(requestId)
     setRecoveryError('')
   }
 
@@ -875,7 +882,7 @@ export default function App() {
               <div className="recovery-queue" aria-label="Pending password recovery requests">
                 {recoveryQueue.map((item) => (
                   <button
-                    className={`recovery-request ${recoveryRequestInput === item.request_id ? 'is-selected' : ''}`}
+                    className={`recovery-request ${recoveryRequestId === item.request_id ? 'is-selected' : ''}`}
                     type="button"
                     key={item.request_id}
                     onClick={() => selectQueuedRecovery(item.request_id)}
@@ -890,26 +897,20 @@ export default function App() {
               </div>
             )}
             {recoveryQueueLoading && recoveryQueue.length === 0 && <p className="muted">Loading recovery requests…</p>}
-            {!recoveryQueueLoading && recoveryQueue.length === 0 && (
-              <p className="recovery-empty">No pending recovery requests. Use the request ID fallback if needed.</p>
+            {!recoveryQueueLoading && recoveryQueueError && (
+              <div className="recovery-empty" role="alert">
+                <p>{recoveryQueueError}</p>
+                <button className="btn secondary" type="button" onClick={() => setRecoveryQueueAttempt((attempt) => attempt + 1)}>RETRY</button>
+              </div>
+            )}
+            {!recoveryQueueLoading && !recoveryQueueError && recoveryQueue.length === 0 && (
+              <p className="recovery-empty">No pending recovery requests.</p>
             )}
             {recoveryPhase === 'idle' || recoveryPhase === 'failed' ? (
               <>
                 {recoveryPhase === 'failed' && recoveryMessage && <p className="recovery-status" role="status">{recoveryMessage}</p>}
                 <form className="recovery-form" onSubmit={beginPasswordRecovery}>
-                  <label htmlFor="password-recovery-request-id">Password-reset request ID</label>
-                  <small className="recovery-fallback-label">Manual fallback</small>
-                  <input
-                    id="password-recovery-request-id"
-                    type="text"
-                    autoComplete="off"
-                    maxLength={128}
-                    value={recoveryRequestInput}
-                    onChange={(event) => setRecoveryRequestInput(event.target.value)}
-                    disabled={recoveryPhase === 'starting'}
-                    required
-                  />
-                  <button className="btn primary" type="submit" disabled={recoveryPhase === 'starting' || !recoveryRequestInput.trim()}>
+                  <button className="btn primary" type="submit" disabled={recoveryPhase === 'starting' || !recoveryRequestId || recoveryQueueLoading}>
                     {recoveryPhase === 'starting' ? 'CHECKING REQUEST…' : 'START NFC RECOVERY'}
                   </button>
                 </form>
@@ -924,7 +925,6 @@ export default function App() {
                           : 'Recovery not completed'}
                 </strong>
                 {recoveryMessage && <p>{recoveryMessage}</p>}
-                {recoveryRequestId && <p className="recovery-request-id">Request: {recoveryRequestId}</p>}
               </div>
             )}
             {recoveryError && <div className="error-banner" role="alert">{recoveryError}</div>}
