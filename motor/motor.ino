@@ -11,7 +11,7 @@
 
 static const uint8_t PROTOCOL_VERSION = 2;
 static const size_t MAX_FRAME_BYTES = 96;
-static const uint32_t TEST_STEPS = 200;
+static const uint32_t TEST_STEPS = 3200;
 static const uint32_t PULSE_HALF_PERIOD_US = 1000;
 static const uint32_t PARTIAL_FRAME_TIMEOUT_MS = 250;
 static const uint32_t POST_MOTION_DRAIN_MS = 100;

@@ -267,6 +267,10 @@ class SerialMotorController:
                 self.baud_rate,
             )
             port.open()
+            if self._serial_factory is None:
+                # Allow ESP32-S3 ROM startup output to finish before HELLO.
+                time.sleep(1.0)
+                port.reset_input_buffer()
         except Exception:
             try:
                 port.close()
