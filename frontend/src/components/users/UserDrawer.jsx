@@ -1,16 +1,13 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { X, CheckCircle2, CircleOff, Mail, Wifi, Clock3, Badge, ClipboardList, LayoutList, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import api from '../../services/api.js'
+import Modal from '../Modal.jsx'
 import UserCabinetAccessModal from './UserCabinetAccessModal.jsx'
 
 const getUserId = (user) => {
   if (!user) return '—'
-  const role = (user.role || '').toLowerCase()
-  if (role === 'student') return user.student_id || user.id || '—'
-  if (role === 'instructor') return user.instructor_id || user.id || '—'
-  if (role === 'admin' || role === 'administrator') return user.id || '—'
-  return user.id || '—'
+  return user.id ?? user.pk ?? user.user_id ?? user.uuid ?? '—'
 }
 
 const formatDate = (dateValue) => {
@@ -36,7 +33,7 @@ const roleLabel = (role) => {
 
 const roleColors = (role) => {
   const normalized = (role || '').toLowerCase()
-  if (normalized === 'administrator' || normalized === 'admin') return 'bg-[#F3E8FF] text-[#6D28D9]'
+  if (normalized === 'administrator' || normalized === 'admin') return 'bg-[#eef4fa] text-[#002B5B]'
   if (normalized === 'instructor') return 'bg-[#DBEAFE] text-[#1D4ED8]'
   if (normalized === 'student') return 'bg-[#DCFCE7] text-[#15803D]'
   return 'bg-[#E5E7EB] text-[#374151]'
@@ -47,26 +44,26 @@ const getProfileImageUrl = (user) => {
 }
 
 const InfoCard = ({ icon, label, value }) => (
-  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-    <div className="flex items-center gap-3 text-slate-500">
+  <div className="min-w-0 rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-3">
+    <div className="flex items-center gap-2 text-slate-500">
       {icon}
-      <span className="text-sm font-medium">{label}</span>
+      <span className="text-xs font-medium">{label}</span>
     </div>
-    <p className="mt-3 text-base font-semibold text-slate-900 break-words">{value || '—'}</p>
+    <p className="mt-2 break-words text-sm font-semibold text-slate-900">{value || '—'}</p>
   </div>
 )
 
 const SummaryStat = ({ icon, label, value }) => (
-  <div className="rounded-3xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-    <div className="flex items-center gap-2 text-slate-500">
+  <div className="min-w-0 rounded-lg border border-[#dbe5f0] bg-white p-2.5 text-xs text-slate-700 shadow-sm sm:p-3">
+    <div className="flex flex-col items-start gap-1 text-slate-500 sm:flex-row sm:items-center sm:gap-2">
       {icon}
-      <span>{label}</span>
+      <span className="break-words">{label}</span>
     </div>
-    <p className="mt-3 text-2xl font-semibold text-slate-900">{value}</p>
+    <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
   </div>
 )
 
-export default function UserDrawer({ user, onClose }) {
+export default function UserDrawer({ user, onClose, onAction }) {
   const [logs, setLogs] = useState([])
   const [submissions, setSubmissions] = useState([])
   const [activities, setActivities] = useState([])
@@ -80,6 +77,10 @@ export default function UserDrawer({ user, onClose }) {
   const [recordListHasPrevious, setRecordListHasPrevious] = useState(false)
   const [recordListLoading, setRecordListLoading] = useState(false)
   const [recordListError, setRecordListError] = useState('')
+  const closeButtonRef = useRef(null)
+  const previousFocusRef = useRef(null)
+  const drawerCloseRef = useRef(onClose)
+  const nestedOverlayStateRef = useRef({ recordListType, accessHistoryOpen })
 
   const selectedUserId = user?.id || user?.pk || user?.user_id || user?.uuid
 
@@ -93,8 +94,7 @@ export default function UserDrawer({ user, onClose }) {
   const fetchDetails = useCallback(async (signal) => {
     setLoading(true)
     try {
-      const uid = user?.id || user?.pk || user?.user_id || user?.uuid
-      const response = await api.get(`/users/${uid}/profile-details/`, { signal })
+      const response = await api.get(`/users/${selectedUserId}/profile-details/`, { signal })
       if (signal.aborted) return
       setLogs(response.data.access_logs || [])
       setSubmissions(response.data.submissions || [])
@@ -105,7 +105,7 @@ export default function UserDrawer({ user, onClose }) {
     } finally {
       if (!signal.aborted) setLoading(false)
     }
-  }, [user])
+  }, [selectedUserId])
 
   useEffect(() => {
     if (!user) return
@@ -158,48 +158,96 @@ export default function UserDrawer({ user, onClose }) {
 
   const recordListTitle = recordListType === 'activities' ? 'Activities' : 'Submissions'
 
+  useEffect(() => {
+    drawerCloseRef.current = onClose
+    nestedOverlayStateRef.current = { recordListType, accessHistoryOpen }
+  }, [onClose, recordListType, accessHistoryOpen])
+
+  useEffect(() => {
+    if (!selectedUserId) return undefined
+    previousFocusRef.current = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        const drawer = closeButtonRef.current?.closest('[role="dialog"]')
+        const topDialog = [...document.querySelectorAll('[role="dialog"]')].at(-1)
+        if (topDialog !== drawer) {
+          if (nestedOverlayStateRef.current.recordListType) setRecordListType('')
+          else if (nestedOverlayStateRef.current.accessHistoryOpen) setAccessHistoryOpen(false)
+          return
+        }
+        drawerCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const drawer = closeButtonRef.current?.closest('[role="dialog"]')
+      const focusable = [...(drawer?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') || [])]
+        .filter((element) => element.getClientRects().length)
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus()
+    }
+  }, [selectedUserId])
+
   if (!user) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex bg-slate-950/40">
-      <div className="flex-1" onClick={onClose} />
-      <aside className="relative ml-auto h-full w-[48vw] min-w-[480px] max-w-[760px] overflow-y-auto bg-white p-6 shadow-2xl max-md:w-full max-md:min-w-0">
+    <div className="fixed inset-0 z-[var(--tt-layer-drawer)] flex bg-slate-950/45" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
+      <aside className="relative ml-auto flex h-full w-full max-w-[760px] flex-col overflow-hidden bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="user-profile-title">
+        <header className="z-10 flex shrink-0 items-center gap-3 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] px-3 py-3 sm:px-5">
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-full border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-100"
+          className="order-2 ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] sm:order-last"
           aria-label="Close profile drawer"
         >
           <X size={18} />
         </button>
-
-        <div className="flex flex-col gap-4 pt-2">
-          <div className="flex items-center gap-4">
-            <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] bg-slate-100">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100">
               {profileImageUrl ? (
                 <img src={profileImageUrl} alt={displayName} className="h-full w-full object-cover" />
               ) : (
-                <div className="flex h-full w-full items-center justify-center bg-slate-200 text-3xl font-semibold text-slate-600">
+                <div className="flex h-full w-full items-center justify-center bg-slate-200 text-lg font-semibold text-slate-600">
                   {(user.first_name?.[0] || user.last_name?.[0] || user.username?.[0] || 'U').toUpperCase()}
                 </div>
               )}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">User Profile</p>
-              <h2 className="mt-2 text-2xl font-semibold text-slate-900">{displayName}</h2>
-              <p className="mt-1 text-sm text-slate-600">{user.username || '—'}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${roleColors(user.role)}`}>
+              <p className="text-[10px] font-semibold uppercase text-slate-500">User Profile</p>
+              <h2 id="user-profile-title" className="break-words text-base font-semibold leading-5 text-slate-900 sm:text-lg">{displayName}</h2>
+              <p className="break-all text-xs text-slate-600">@{user.username || '—'}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${roleColors(user.role)}`}>
                   {roleLabel(user.role)}
                 </span>
-                <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${user.is_active ? 'bg-[#ECFDF3] text-[#15803D]' : 'bg-[#FEE2E2] text-[#B91C1C]'}`}>
-                  {user.is_active ? <CheckCircle2 size={12} /> : <CircleOff size={12} />}
-                  {user.is_active ? 'Active' : 'Inactive'}
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${user.is_active ? 'bg-[#ECFDF3] text-[#15803D]' : 'bg-[#FEE2E2] text-[#B91C1C]'}`}>
+                  {user.is_active ? <CheckCircle2 size={11} /> : <CircleOff size={11} />}{user.is_active ? 'Active' : 'Inactive'}
                 </span>
               </div>
             </div>
           </div>
+        </header>
 
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+        <div className="flex flex-col gap-4">
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase text-slate-700">Basic Information</h3>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -210,12 +258,15 @@ export default function UserDrawer({ user, onClose }) {
             <InfoCard icon={<Wifi size={16} />} label="NFC UID" value={user.nfc_uid ? <span className="break-all font-medium text-slate-900">{user.nfc_uid}</span> : 'Not assigned'} />
             <InfoCard icon={<Clock3 size={16} />} label="Last Login" value={formatDate(user.last_login)} />
             </div>
+            <button type="button" onClick={() => onAction?.('assign_nfc', user)} className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-semibold text-[#002B5B] hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107]">
+              <Wifi size={16} />{user.nfc_uid ? 'Change NFC UID' : 'Assign NFC UID'}
+            </button>
           </section>
 
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase text-slate-700">Role Details</h3>
-          {user.role === 'student' && (
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          {String(user.role || '').toLowerCase() === 'student' && (
+            <div className="rounded-lg border border-[#dbe5f0] bg-[#eef4fa] p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Student Details</p>
@@ -229,12 +280,19 @@ export default function UserDrawer({ user, onClose }) {
                 <div>
                   <span className="font-semibold text-slate-900">Section:</span> {user.section_name || user.section || '—'}
                 </div>
+                {(user.section_program || user.section_year_level || user.section_academic_year) && (
+                  <>
+                    {user.section_program && <div><span className="font-semibold text-slate-900">Program:</span> {user.section_program}</div>}
+                    {user.section_year_level && <div><span className="font-semibold text-slate-900">Year level:</span> {user.section_year_level}</div>}
+                    {user.section_academic_year && <div><span className="font-semibold text-slate-900">Academic year:</span> {user.section_academic_year}</div>}
+                  </>
+                )}
               </div>
             </div>
           )}
 
-          {user.role === 'instructor' && (
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          {String(user.role || '').toLowerCase() === 'instructor' && (
+            <div className="rounded-lg border border-[#dbe5f0] bg-[#eef4fa] p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Instructor Details</p>
@@ -242,10 +300,13 @@ export default function UserDrawer({ user, onClose }) {
                 </div>
               </div>
               <div className="mt-4 text-sm text-slate-700">
+                <div>
+                  <span className="font-semibold text-slate-900">Instructor ID:</span> {user.instructor_id || '—'}
+                </div>
                 {user.assigned_sections && user.assigned_sections.length ? (
                   <ul className="space-y-2">
                     {user.assigned_sections.map((section) => (
-                      <li key={section.id || section.section || section.section_name} className="rounded-2xl bg-white p-3 text-slate-700 shadow-sm">
+                      <li key={section.id || section.section || section.section_name} className="rounded-lg bg-white p-3 text-slate-700 shadow-sm">
                         {section.section_name || section.section || 'Unnamed section'}
                       </li>
                     ))}
@@ -257,8 +318,8 @@ export default function UserDrawer({ user, onClose }) {
             </div>
           )}
 
-          {user.role === 'admin' && (
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          {['admin', 'administrator'].includes(String(user.role || '').toLowerCase()) && (
+            <div className="rounded-lg border border-[#dbe5f0] bg-[#eef4fa] p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Administrator Details</p>
@@ -277,7 +338,7 @@ export default function UserDrawer({ user, onClose }) {
           )}
           </section>
 
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          <div className="rounded-lg border border-[#dbe5f0] bg-[#eef4fa] p-3">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Recent activity summary</p>
@@ -285,7 +346,7 @@ export default function UserDrawer({ user, onClose }) {
               </div>
               {loading && <span className="text-xs text-slate-500">Updating…</span>}
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="mt-3 grid grid-cols-1 gap-2 min-[380px]:grid-cols-3">
               <SummaryStat icon={<LayoutList size={18} />} label="Access Logs" value={counts.access_logs} />
               <SummaryStat icon={<BookOpen size={18} />} label="Activities" value={counts.activities} />
               <SummaryStat icon={<ClipboardList size={18} />} label="Submissions" value={counts.submissions} />
@@ -294,9 +355,9 @@ export default function UserDrawer({ user, onClose }) {
 
           <div className="space-y-6">
             <div>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-sm font-semibold text-slate-900">Recent Cabinet Access</h3>
-                <span className="text-right text-xs text-slate-500">Latest 5 entries for {displayName}</span>
+                <span className="text-xs text-slate-500 sm:ml-auto sm:text-right">Latest 5 entries for {displayName}</span>
                 <button type="button" onClick={() => setAccessHistoryOpen(true)} className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">View All</button>
               </div>
               <div className="mt-4 text-sm text-slate-700">
@@ -366,7 +427,7 @@ export default function UserDrawer({ user, onClose }) {
                   <p className="text-slate-500">Loading activities…</p>
                 ) : activities.length ? (
                   activities.slice(0, 5).map((activity) => (
-                    <div key={activity.id || activity.title} className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div key={activity.id || activity.title} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                       <div className="font-medium text-slate-900">{activity.title || activity.name || 'Untitled activity'}</div>
                       <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                         <Clock3 size={14} />
@@ -390,7 +451,7 @@ export default function UserDrawer({ user, onClose }) {
                   <p className="text-slate-500">Loading submissions…</p>
                 ) : submissions.length ? (
                   submissions.slice(0, 5).map((submission) => (
-                    <div key={submission.id || `${submission.activity}_${submission.submitted_at}`} className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div key={submission.id || `${submission.activity}_${submission.submitted_at}`} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                       <div className="font-medium text-slate-900">{submission.activity_title || submission.activity || 'Untitled submission'}</div>
                       <div className="mt-1 text-xs text-slate-500">{formatDate(submission.submitted_at)}</div>
                     </div>
@@ -402,6 +463,7 @@ export default function UserDrawer({ user, onClose }) {
             </div>
           </div>
         </div>
+        </div>
       </aside>
       <UserCabinetAccessModal
         isOpen={accessHistoryOpen}
@@ -409,75 +471,75 @@ export default function UserDrawer({ user, onClose }) {
         fullName={displayName}
         onClose={() => setAccessHistoryOpen(false)}
       />
-      {recordListType && (
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-slate-950/50 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setRecordListType('') }}>
-          <section className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="profile-records-title">
-            <header className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-              <div>
-                <h2 id="profile-records-title" className="text-lg font-semibold text-slate-900">{recordListTitle} · {displayName}</h2>
-                <p className="mt-1 text-sm text-slate-500">Records for this user only.</p>
-              </div>
-              <button type="button" onClick={() => setRecordListType('')} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Close records">
-                <X size={18} />
-              </button>
-            </header>
-            <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-              {recordListError && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{recordListError}</p>}
-              {recordListLoading ? (
-                <p className="py-10 text-center text-sm text-slate-500">Loading {recordListTitle.toLowerCase()}…</p>
-              ) : recordListItems.length ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200">
-                  <table className="w-full table-fixed border-collapse text-left text-sm">
-                    <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-600">
-                      <tr>
-                        <th className="border-b border-r border-slate-200 px-3 py-3">{recordListType === 'activities' ? 'Activity' : 'Activity'}</th>
-                        {recordListType === 'activities' ? (
-                          <>
-                            <th className="border-b border-r border-slate-200 px-3 py-3">Section</th>
-                            <th className="border-b border-slate-200 px-3 py-3">Due Date</th>
-                          </>
-                        ) : (
-                          <>
-                            <th className="border-b border-r border-slate-200 px-3 py-3">Submitted</th>
-                            <th className="border-b border-slate-200 px-3 py-3">Status / Score</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {recordListItems.map((item) => (
-                        <tr key={item.id}>
-                          <td className="break-words border-r border-slate-100 px-3 py-3 font-medium text-slate-800">{item.title || item.activity_title || item.activity || 'Untitled'}</td>
-                          {recordListType === 'activities' ? (
-                            <>
-                              <td className="break-words border-r border-slate-100 px-3 py-3 text-slate-700">{item.section_name || item.section || '—'}</td>
-                              <td className="break-words px-3 py-3 text-slate-700">{formatDate(item.due_date)}</td>
-                            </>
-                          ) : (
-                            <>
-                              <td className="break-words border-r border-slate-100 px-3 py-3 text-slate-700">{formatDate(item.submitted_at)}</td>
-                              <td className="break-words px-3 py-3 text-slate-700">{item.status || item.submission_status || 'Submitted'}{item.score != null ? ` · ${item.score}` : ''}</td>
-                            </>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : !recordListError ? (
-                <p className="py-10 text-center text-sm text-slate-500">No {recordListTitle.toLowerCase()} found for this user.</p>
-              ) : null}
+      <Modal
+        isOpen={Boolean(recordListType)}
+        onClose={() => setRecordListType('')}
+        title={`${recordListTitle} · ${displayName}`}
+        description="Records for this user only."
+        contentSized={!recordListLoading && !recordListItems.length && !recordListError}
+        maxWidth="min(92vw, 64rem)"
+        footer={(recordListItems.length || recordListHasNext || recordListHasPrevious) ? (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-500">Page {recordListPage}</span>
+            <div className="flex gap-2">
+              <button type="button" disabled={!recordListHasPrevious || recordListLoading} onClick={() => setRecordListPage((page) => Math.max(1, page - 1))} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:opacity-50"><ChevronLeft size={16} /> Previous</button>
+              <button type="button" disabled={!recordListHasNext || recordListLoading} onClick={() => setRecordListPage((page) => page + 1)} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:opacity-50">Next <ChevronRight size={16} /></button>
             </div>
-            <footer className="flex items-center justify-between border-t border-slate-200 px-5 py-3">
-              <span className="text-xs text-slate-500">Page {recordListPage}</span>
-              <div className="flex gap-2">
-                <button type="button" disabled={!recordListHasPrevious || recordListLoading} onClick={() => setRecordListPage((page) => Math.max(1, page - 1))} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:opacity-50"><ChevronLeft size={16} /> Previous</button>
-                <button type="button" disabled={!recordListHasNext || recordListLoading} onClick={() => setRecordListPage((page) => page + 1)} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:opacity-50">Next <ChevronRight size={16} /></button>
-              </div>
-            </footer>
-          </section>
-        </div>
-      )}
+          </div>
+        ) : null}
+      >
+        {recordListError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{recordListError}</p>}
+        {recordListLoading ? (
+          <p className="py-8 text-center text-sm text-slate-500">Loading {recordListTitle.toLowerCase()}…</p>
+        ) : recordListItems.length ? (
+          <div className="overflow-x-auto rounded-lg border border-[#dbe5f0]">
+            <table className="min-w-[640px] w-full table-fixed border-collapse text-left text-sm">
+              <thead className="bg-[#eef4fa] text-xs font-semibold uppercase text-[#526780]">
+                <tr>
+                  <th className="border-b border-r border-[#dbe5f0] px-3 py-3">Activity</th>
+                  {recordListType === 'activities' ? (
+                    <>
+                      <th className="border-b border-r border-[#dbe5f0] px-3 py-3">Section</th>
+                      <th className="border-b border-[#dbe5f0] px-3 py-3">Due Date</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="border-b border-r border-[#dbe5f0] px-3 py-3">Submitted</th>
+                      <th className="border-b border-[#dbe5f0] px-3 py-3">Status / Score</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {recordListItems.map((item) => (
+                  <tr key={item.id}>
+                    <td className="break-words border-r border-slate-100 px-3 py-3 font-medium text-slate-800">{item.title || item.activity_title || item.activity || 'Untitled'}</td>
+                    {recordListType === 'activities' ? (
+                      <>
+                        <td className="break-words border-r border-slate-100 px-3 py-3 text-slate-700">{item.section_name || item.section || '—'}</td>
+                        <td className="break-words px-3 py-3 text-slate-700">{formatDate(item.due_date)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="break-words border-r border-slate-100 px-3 py-3 text-slate-700">{formatDate(item.submitted_at)}</td>
+                        <td className="break-words px-3 py-3 text-slate-700">{item.status || item.submission_status || 'Submitted'}{item.score != null ? ` · ${item.score}` : ''}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : !recordListError ? (
+          <div className="mx-auto flex max-w-lg items-center gap-4 rounded-xl border border-dashed border-[#cbd8e6] bg-[#eef4fa] px-5 py-6">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-[#082b53]"><ClipboardList size={20} /></span>
+            <div>
+              <p className="font-semibold text-[#102a4c]">No {recordListTitle.toLowerCase()} found</p>
+              <p className="mt-1 text-sm text-[#64748b]">There are no records for this user yet.</p>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>,
     document.body,
   )

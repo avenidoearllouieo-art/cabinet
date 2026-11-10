@@ -225,7 +225,7 @@ export default function CabinetEvents() {
             <p className="text-sm text-[#6B7280]">Browse and manage smart cabinet access events.</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
             <label className="relative block">
               <span className="sr-only">Search events</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" />

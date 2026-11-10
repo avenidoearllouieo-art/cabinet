@@ -19,6 +19,7 @@ body {
 .login-shell {
   background: #eef4fa;
   isolation: isolate;
+  min-height: 100svh;
 }
 
 .login-grid {
@@ -103,6 +104,33 @@ body {
 
 .login-card .login-field input::placeholder {
   color: #9aa8b8;
+}
+
+.login-card .login-field input::selection {
+  background: rgba(255, 193, 7, 0.48);
+  color: #002B5B;
+}
+
+.login-card .login-field input:autofill {
+  -webkit-text-fill-color: #14243a;
+  caret-color: #14243a;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+}
+
+.login-card .login-field input:-webkit-autofill,
+.login-card .login-field input:-webkit-autofill:hover,
+.login-card .login-field input:-webkit-autofill:focus,
+.login-card .login-field input:-webkit-autofill:active {
+  -webkit-text-fill-color: #14243a;
+  caret-color: #14243a;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+}
+
+.login-card .login-logo {
+  transform: scale(1.1);
+  transform-origin: center;
 }
 
 .login-cabinet-mark span {

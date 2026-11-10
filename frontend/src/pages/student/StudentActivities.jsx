@@ -312,7 +312,7 @@ export default function StudentActivities() {
     <div className="space-y-5">
       <PageHeader title="Student Activities" description="Review the activities assigned to your section and manage your submissions." />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard icon={<ClipboardList size={18} />} label="Total Activities" value={stats.totalActivities} subtitle="Activities assigned to your section" />
         <StatCard icon={<Search size={18} />} label="Pending Activities" value={stats.pendingActivities} subtitle="Not submitted yet" />
         <StatCard icon={<CheckCircle2 size={18} />} label="Submitted Activities" value={stats.submittedActivities} subtitle="Activities you have submitted" />

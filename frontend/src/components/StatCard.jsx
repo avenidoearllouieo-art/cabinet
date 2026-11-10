@@ -5,6 +5,7 @@ export default function StatCard({
   label,
   value,
   subtitle,
+  mobileSubtitle,
   trend,
   bgColor = 'bg-blue-50',
   textColor = 'text-blue-900',
@@ -21,6 +22,7 @@ export default function StatCard({
       value={value}
       icon={icon}
       trendText={trend?.label || subtitle}
+      mobileTrendText={mobileSubtitle || trend?.label || subtitle}
       trendColor={trendColor}
       iconBg={bgColor}
       iconColor={textColor}

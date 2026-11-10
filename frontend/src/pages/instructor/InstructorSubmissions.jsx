@@ -4,9 +4,11 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
+import Pagination from '../../components/Pagination'
 import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import GradeSubmissionModal from '../../components/submissions/GradeSubmissionModal.jsx'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import {
   Search,
   Eye,
@@ -53,6 +55,8 @@ export default function InstructorSubmissions() {
   const [totalActivities, setTotalActivities] = useState(0)
   const [pendingReviewCount, setPendingReviewCount] = useState(0)
   const [gradedCount, setGradedCount] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageCount, setPageCount] = useState(1)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false)
   const [selectedSubmission, setSelectedSubmission] = useState(null)
@@ -61,21 +65,13 @@ export default function InstructorSubmissions() {
 
   const fetchFilters = useCallback(async () => {
     try {
-      const [sectionsRes, activitiesRes] = await Promise.all([
-        api.get('/sections/'),
-        api.get('/activities/', { params: activeSectionId ? { section: activeSectionId } : undefined }),
+      const [sectionPage, activityPage] = await Promise.all([
+        fetchAllResults(api, '/sections/'),
+        fetchAllResults(api, '/activities/', activeSectionId ? { section: activeSectionId } : {}),
       ])
-
-      const sectionResults = Array.isArray(sectionsRes.data)
-        ? sectionsRes.data
-        : sectionsRes.data.results || []
-      const activityResults = Array.isArray(activitiesRes.data)
-        ? activitiesRes.data
-        : activitiesRes.data.results || []
-
-      setSections(sectionResults)
-      setActivities(activityResults)
-      setTotalActivities(activityResults.length)
+      setSections(sectionPage.results)
+      setActivities(activityPage.results)
+      setTotalActivities(activityPage.count)
     } catch (err) {
       console.error('Error fetching filter lists:', err)
     }
@@ -90,16 +86,22 @@ export default function InstructorSubmissions() {
         activity: selectedActivity || undefined,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         ordering: selectedSort === 'oldest' ? 'submitted_at' : selectedSort === 'highest_score' ? '-score' : selectedSort === 'lowest_score' ? 'score' : '-submitted_at',
+        page,
       }
 
-      const response = await api.get('/submissions/', { params })
+      const [response, statsResponse] = await Promise.all([
+        api.get('/submissions/', { params }),
+        api.get('/submissions/stats/', { params: { ...params, page: undefined, ordering: undefined } }),
+      ])
       const rawSubmissions = Array.isArray(response.data)
         ? response.data
         : response.data.results || []
       setSubmissions(rawSubmissions)
-      setTotalSubmissions(response.data.count ?? rawSubmissions.length)
-      setPendingReviewCount(rawSubmissions.filter((submission) => submission.score === null).length)
-      setGradedCount(rawSubmissions.filter((submission) => submission.score !== null).length)
+      const summary = statsResponse.data || {}
+      setTotalSubmissions(summary.totalSubmissions ?? response.data.count ?? rawSubmissions.length)
+      setPendingReviewCount(summary.pendingReview ?? 0)
+      setGradedCount(summary.graded ?? 0)
+      setPageCount(Math.max(1, Math.ceil((response.data.count ?? rawSubmissions.length) / 10)))
       setError('')
     } catch (err) {
       console.error('Error fetching submissions:', err)
@@ -107,19 +109,17 @@ export default function InstructorSubmissions() {
     } finally {
       setLoading(false)
     }
-  }, [activeSectionId, query, selectedActivity, selectedSort, selectedStatus])
+  }, [activeSectionId, page, query, selectedActivity, selectedSort, selectedStatus])
 
   const handleSubmissionGraded = async (gradedSubmission) => {
     setSubmissions((existing) =>
       existing.map((sub) => (sub.id === gradedSubmission.id ? gradedSubmission : sub))
     )
-    setPendingReviewCount((prev) => Math.max(0, prev - 1))
-    setGradedCount((prev) => prev + 1)
-    setToastMessage('Submission graded successfully.')
     setIsGradeModalOpen(false)
     setSelectedSubmission(null)
     window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
     await fetchSubmissions()
+    setToastMessage('Submission grade saved successfully.')
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 
@@ -150,37 +150,32 @@ export default function InstructorSubmissions() {
   const columns = [
     {
       key: 'student_id',
-      label: 'Student ID',
-      className: 'min-w-[120px]',
-    },
-    {
-      key: 'student_name',
-      label: 'Student Name',
-      className: 'min-w-[180px]',
-      render: (value, row) => `${value} ${row.student_last_name || ''}`.trim() || '—',
+      label: 'Student',
+      className: 'min-w-[150px]',
+      render: (_value, row) => <div><p className="font-semibold text-[#102a4c]">{`${row.student_name || ''} ${row.student_last_name || ''}`.trim() || row.student_username || 'Unknown student'}</p><p className="text-xs text-slate-500">{row.student_id || 'ID unavailable'}</p></div>,
     },
     {
       key: 'student_section',
       label: 'Section',
-      className: 'min-w-[160px]',
+      className: 'min-w-[95px]',
       render: (value) => value || '—',
     },
     {
       key: 'activity_title',
       label: 'Activity',
-      className: 'min-w-[220px]',
+      className: 'min-w-[150px]',
       render: (value) => value || '—',
     },
     {
       key: 'submitted_at',
       label: 'Submitted At',
-      className: 'min-w-[180px]',
+      className: 'min-w-[135px]',
       render: (value) => formatDate(value),
     },
     {
       key: 'status',
       label: 'Status',
-      className: 'min-w-[120px]',
+      className: 'min-w-[100px]',
       render: (_value, row) => {
         const label = row.status ? String(row.status).replaceAll('_', ' ') : 'Unknown'
         return <StatusBadge status={label} label={label} />
@@ -189,19 +184,13 @@ export default function InstructorSubmissions() {
     {
       key: 'score',
       label: 'Score',
-      className: 'min-w-[100px]',
+      className: 'min-w-[70px]',
       render: (value) => (value !== null && value !== undefined ? value : 'Pending'),
-    },
-    {
-      key: 'updated_at',
-      label: 'Last Updated',
-      className: 'min-w-[170px]',
-      render: (_value, row) => formatDate(row.updated_at || row.graded_at || row.submitted_at),
     },
     {
       key: 'actions',
       label: 'Actions',
-      className: 'min-w-[220px]',
+      className: 'min-w-[145px]',
       render: (_value, row) => (
         <div className="flex flex-wrap gap-2">
           <button
@@ -230,7 +219,7 @@ export default function InstructorSubmissions() {
       <div className="space-y-3">
         <PageHeader title="Instructor Submissions" description="Review, grade, and track student submissions." />
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
           <StatCard icon={<Circle />} label="Activities" value={totalActivities} subtitle="Created by you" />
           <StatCard icon={<Send />} label="Submissions" value={totalSubmissions} subtitle="Received" />
           <StatCard icon={<Filter />} label="Pending Review" value={pendingReviewCount} subtitle="Awaiting grading" bgColor="bg-amber-50" textColor="text-amber-900" />
@@ -238,7 +227,7 @@ export default function InstructorSubmissions() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+      <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
         <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-3 md:flex-row">
           <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
             <Search size={18} className="text-slate-400" />
@@ -246,7 +235,7 @@ export default function InstructorSubmissions() {
               type="text"
               placeholder="Search student ID, name, or activity..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setPage(1) }}
               className="h-11 flex-1 border-0 bg-transparent text-sm outline-none"
             />
           </div>
@@ -256,7 +245,7 @@ export default function InstructorSubmissions() {
             Section
             <select
               value={activeSectionId}
-              onChange={(e) => setSelectedSection(e.target.value)}
+              onChange={(e) => { setSelectedSection(e.target.value); setPage(1) }}
               className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               {!sectionScoped && <option value="">All Sections</option>}
@@ -272,7 +261,7 @@ export default function InstructorSubmissions() {
             Activity
             <select
               value={selectedActivity}
-              onChange={(e) => setSelectedActivity(e.target.value)}
+              onChange={(e) => { setSelectedActivity(e.target.value); setPage(1) }}
               className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               <option value="">All Activities</option>
@@ -288,14 +277,13 @@ export default function InstructorSubmissions() {
             Status
             <select
               value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
+              onChange={(e) => { setSelectedStatus(e.target.value); setPage(1) }}
               className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               <option value="all">All</option>
               <option value="submitted">Submitted</option>
               <option value="late">Late</option>
               <option value="graded">Graded</option>
-              <option value="missing">Missing</option>
             </select>
           </label>
 
@@ -303,7 +291,7 @@ export default function InstructorSubmissions() {
             Sort by
             <select
               value={selectedSort}
-              onChange={(e) => setSelectedSort(e.target.value)}
+              onChange={(e) => { setSelectedSort(e.target.value); setPage(1) }}
               className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
             >
               {sortOptions.map((option) => (
@@ -335,7 +323,28 @@ export default function InstructorSubmissions() {
               </p>
             </div>
           ) : (
-            <DataTable columns={columns} rows={filteredSubmissions} variant="instructor" />
+            <div className="space-y-4">
+            <DataTable
+              columns={columns}
+              rows={filteredSubmissions}
+              variant="instructor"
+              renderMobileCard={(row) => (
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><p className="break-words font-semibold text-[#102a4c]">{`${row.student_name || ''} ${row.student_last_name || ''}`.trim() || row.student_username || 'Unknown student'}</p><p className="text-xs text-slate-500">{row.student_id || 'ID unavailable'}</p></div>
+                    <StatusBadge status={String(row.status || 'Unknown').replaceAll('_', ' ')} />
+                  </div>
+                  <p className="break-words text-sm text-slate-700">{row.activity_title || 'Unknown activity'}</p>
+                  <div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{formatDate(row.submitted_at)}</span><span>Score: {row.score ?? 'Pending'}</span></div>
+                  <div className="flex gap-2 border-t border-slate-100 pt-2">
+                    <button type="button" onClick={() => handleViewSubmission(row)} className="instructor-table-action"><Eye size={14} />View</button>
+                    <button type="button" onClick={() => handleGradeSubmission(row)} className="instructor-table-action"><CheckCircle2 size={14} />{row.score == null ? 'Grade' : 'Edit Grade'}</button>
+                  </div>
+                </div>
+              )}
+            />
+            {pageCount > 1 && <Pagination page={page} pageCount={pageCount} onPageChange={setPage} />}
+            </div>
           )}
         </div>
       </div>

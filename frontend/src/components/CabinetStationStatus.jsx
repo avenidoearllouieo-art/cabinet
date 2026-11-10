@@ -5,74 +5,98 @@ const REFRESH_INTERVAL_MS = 15000
 
 function formatOpenedAt(value) {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value))
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 export default function CabinetStationStatus({ detailLevel = 'student' }) {
   const [stations, setStations] = useState([])
   const [loadError, setLoadError] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [checkedAt, setCheckedAt] = useState(null)
 
   useEffect(() => {
     let mounted = true
+    let timeoutId
     const refreshStatus = async () => {
       try {
         const response = await api.get('/cabinet-sessions/station-status/')
         if (mounted) {
           setStations(Array.isArray(response.data?.stations) ? response.data.stations : [])
           setLoadError(false)
+          setCheckedAt(new Date())
         }
       } catch {
-        if (mounted) setLoadError(true)
+        if (mounted) {
+          setLoadError(true)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+          timeoutId = window.setTimeout(refreshStatus, REFRESH_INTERVAL_MS)
+        }
       }
     }
 
     void refreshStatus()
-    const intervalId = window.setInterval(() => { void refreshStatus() }, REFRESH_INTERVAL_MS)
     return () => {
       mounted = false
-      window.clearInterval(intervalId)
+      window.clearTimeout(timeoutId)
     }
   }, [])
 
+  const checkedAtLabel = checkedAt
+    ? new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(checkedAt)
+    : null
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm" aria-labelledby="cabinet-station-status-title">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-3 sm:px-6 sm:py-4">
         <h2 id="cabinet-station-status-title" className="text-base font-semibold text-taptrack-navy">Cabinet Station Status</h2>
         <span className="text-xs text-slate-500" aria-live="polite">
-          {loadError ? 'Status refresh unavailable' : 'Live · refreshes every 15 seconds'}
+          {loadError ? `Offline · ${checkedAtLabel ? `last confirmed ${checkedAtLabel}` : 'status unavailable'}` : checkedAtLabel ? `Checked ${checkedAtLabel} · refreshes every 15 seconds` : 'Checking status…'}
         </span>
       </div>
 
       {stations.length ? (
         <ul className="grid grid-cols-1 divide-y divide-slate-100 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
           {stations.map((station) => {
-            const occupied = station.status === 'OCCUPIED'
+            const stationStatus = loadError
+              ? 'OFFLINE'
+              : station.status === 'OCCUPIED'
+                ? 'OCCUPIED'
+                : station.status === 'AVAILABLE'
+                  ? 'AVAILABLE'
+                  : 'UNKNOWN'
+            const occupied = stationStatus === 'OCCUPIED'
+            const available = stationStatus === 'AVAILABLE'
+            const statusClass = occupied
+              ? 'bg-red-50 text-red-800'
+              : available
+                ? 'bg-emerald-50 text-emerald-800'
+                : 'bg-amber-50 text-amber-900'
             const session = station.active_session
             return (
-              <li key={station.station} className="min-w-0 p-5 sm:p-6">
+              <li key={station.station} className="min-w-0 p-3 sm:p-6">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="truncate font-semibold text-slate-900">{station.station}</h3>
-                  <span className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs font-bold ${occupied ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>
-                    <span className={`h-2.5 w-2.5 rounded-full ${occupied ? 'bg-red-600' : 'bg-emerald-600'}`} aria-hidden="true" />
-                    {occupied ? 'OCCUPIED' : 'AVAILABLE'}
+                  <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold sm:gap-2 sm:px-3 sm:text-xs ${statusClass}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${occupied ? 'bg-red-600' : available ? 'bg-emerald-600' : 'bg-amber-600'}`} aria-hidden="true" />
+                    {stationStatus}
                   </span>
                 </div>
 
-                {detailLevel !== 'student' && occupied && session && (
-                  <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                {loadError ? (
+                  <p className="mt-3 text-sm text-slate-500">Station status could not be refreshed.</p>
+                ) : detailLevel !== 'student' && occupied && session && (
+                  <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                     <dt className="text-slate-500">Opened by</dt>
-                    <dd className="text-right font-medium text-slate-800">{session.participant_count}</dd>
-                    <dt className="text-slate-500">Opened</dt>
-                    <dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.opened_at)}</dd>
-                    {detailLevel === 'admin' && (
-                      <>
-                        <dt className="text-slate-500">Session</dt>
-                        <dd className="text-right font-medium text-slate-800">#{session.id}</dd>
-                      </>
-                    )}
+                    <dd className="text-right font-medium text-slate-800">Unknown user</dd>
+                    {Number(session.participant_count) > 0 && <><dt className="text-slate-500">Participants</dt><dd className="text-right font-medium text-slate-800">{session.participant_count}</dd></>}
+                    {session.opened_at && <><dt className="text-slate-500">Opened</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.opened_at)}</dd></>}
+                    {session.updated_at && <><dt className="text-slate-500">Last updated</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.updated_at)}</dd></>}
+                    {detailLevel === 'admin' && session.id && <><dt className="text-slate-500">Session</dt><dd className="text-right font-medium text-slate-800">#{session.id}</dd></>}
                   </dl>
                 )}
               </li>
@@ -80,8 +104,8 @@ export default function CabinetStationStatus({ detailLevel = 'student' }) {
           })}
         </ul>
       ) : (
-        <p className="px-5 py-6 text-sm text-slate-500 sm:px-6">
-          {loadError ? 'Station status is currently unavailable.' : 'Loading station status…'}
+        <p className="px-3 py-4 text-sm text-slate-500 sm:px-6 sm:py-6">
+          {loadError ? 'Station status is currently unavailable.' : loading ? 'Loading station status…' : 'No station status is configured.'}
         </p>
       )}
     </section>

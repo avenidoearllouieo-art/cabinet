@@ -177,6 +177,7 @@ class InstructorSectionOverviewScopeTests(TestCase):
         })
         self.assertEqual({student['id'] for student in payload['students']}, {self.student_a.pk})
         self.assertEqual({activity['id'] for activity in payload['activities']}, {self.activity_a.pk})
+        self.assertEqual({item['id'] for item in payload['recent_submissions']}, {self.student_a.submissions.get().pk})
         self.assertEqual({log['user'] for log in payload['access_logs']}, {self.student_a.pk})
         self.assertEqual(payload['cabinet_stations'], [{'station': 'Cabinet Station 1', 'status': 'Available'}])
 
@@ -354,6 +355,46 @@ class InstructorSectionAssignmentTests(TestCase):
         self.assertEqual(response.status_code, 200, response.json())
         self.assertFalse(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
         self.assertTrue(self.second_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+
+    def test_bulk_section_assignment_updates_owner_relationships(self):
+        self.section_a.instructor = self.first_instructor
+        self.section_a.save(update_fields=['instructor'])
+        self.first_instructor.assigned_sections.add(self.section_a)
+
+        response = self.client.patch('/api/sections/assign-instructor/', {
+            'section_ids': [self.section_a.pk, self.section_b.pk],
+            'instructor_id': self.second_instructor.pk,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.section_a.refresh_from_db()
+        self.section_b.refresh_from_db()
+        self.assertEqual(self.section_a.instructor, self.second_instructor)
+        self.assertEqual(self.section_b.instructor, self.second_instructor)
+        self.assertFalse(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
+        self.assertEqual(self.second_instructor.assigned_sections.count(), 2)
+
+    def test_bulk_section_assignment_is_atomic_when_a_section_is_missing(self):
+        response = self.client.patch('/api/sections/assign-instructor/', {
+            'section_ids': [self.section_a.pk, 999999],
+            'instructor_id': self.second_instructor.pk,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 404, response.json())
+        self.section_a.refresh_from_db()
+        self.assertIsNone(self.section_a.instructor)
+
+    def test_bulk_section_assignment_requires_admin(self):
+        self.client.force_authenticate(user=self.first_instructor)
+
+        response = self.client.patch('/api/sections/assign-instructor/', {
+            'section_ids': [self.section_a.pk],
+            'instructor_id': self.second_instructor.pk,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 403)
+        self.section_a.refresh_from_db()
+        self.assertIsNone(self.section_a.instructor)
 
     def test_legacy_section_owner_is_included_in_user_response(self):
         self.section_a.instructor = self.first_instructor
@@ -585,6 +626,51 @@ class SubmissionGradingTests(TestCase):
         self.assertEqual(self.submission.graded_by, self.instructor)
         self.assertIsNotNone(self.submission.graded_at)
         self.assertEqual(self.submission.status, 'Graded')
+
+    def test_assigned_section_instructor_can_grade_and_view_stats(self):
+        assigned_instructor = User.objects.create_user(
+            username='assigned-grader',
+            email='assigned-grader@example.com',
+            password='secret123',
+            role='instructor',
+            instructor_id='I-ASSIGNED-GRADE',
+            nfc_uid='NFC-ASSIGNED-GRADE-001',
+        )
+        assigned_instructor.assigned_sections.add(self.section)
+        self.client.force_authenticate(user=assigned_instructor)
+
+        stats = self.client.get('/api/submissions/stats/')
+        self.assertEqual(stats.status_code, 200, stats.json())
+        self.assertEqual(stats.json()['totalSubmissions'], 1)
+        self.assertEqual(stats.json()['pendingReview'], 1)
+
+        response = self.client.post(f'/api/submissions/{self.submission.id}/grade/', {
+            'score': 88,
+            'feedback': 'Reviewed for the assigned section',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['graded_by'], assigned_instructor.pk)
+
+    def test_unassigned_instructor_cannot_grade_another_sections_submission(self):
+        other = User.objects.create_user(
+            username='unassigned-grader',
+            email='unassigned-grader@example.com',
+            password='secret123',
+            role='instructor',
+            instructor_id='I-UNASSIGNED-GRADE',
+            nfc_uid='NFC-UNASSIGNED-GRADE-001',
+        )
+        self.client.force_authenticate(user=other)
+
+        response = self.client.post(f'/api/submissions/{self.submission.id}/grade/', {
+            'score': 88,
+            'feedback': 'Should not be accepted',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 404)
+        self.submission.refresh_from_db()
+        self.assertIsNone(self.submission.score)
 
     def test_grade_rejects_score_above_maximum(self):
         self.client.force_authenticate(user=self.instructor)

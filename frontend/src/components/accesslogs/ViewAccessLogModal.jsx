@@ -2,6 +2,9 @@ import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import api from '../../services/api.js'
 import AccessLogPhotoPanel from './AccessLogPhotoPanel.jsx'
+import { formatAccessLogDuration } from './accessLogFormatters.js'
+import StatusBadge from '../StatusBadge.jsx'
+import { X } from 'lucide-react'
 
 export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnauthorized }) {
   const resolvedLogId = log?.id ?? logId
@@ -54,32 +57,25 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
     }
   }
 
-  const formatDuration = (seconds) => {
-    if (seconds == null) return '—'
-    if (seconds < 60) return `${seconds}s`
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = seconds % 60
-    return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes} min`
-  }
-
   const statusColor = (status) => {
-    if (!status) return 'text-slate-600'
     const lower = String(status).toLowerCase()
-    if (lower === 'success') return 'text-green-600'
-    if (lower) return 'text-red-600'
-    return 'text-slate-600'
+    if (lower === 'success') return 'success'
+    if (lower.includes('denied') || lower === 'failed' || lower === 'error') return 'danger'
+    return 'warning'
   }
 
   return createPortal(
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-8 shadow-xl" role="dialog" aria-modal="true" aria-label="View Access Log">
-        <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="max-h-[90vh] w-full max-w-[700px] overflow-y-auto rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-xl sm:p-6" role="dialog" aria-modal="true" aria-label="View Access Log">
+        <div className="mb-5 flex items-start justify-between gap-4 rounded-lg border-l-4 border-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
           <div>
-            <h2 className="text-2xl font-semibold text-[#0F172A]">Access Log Details</h2>
-            <p className="mt-1 text-sm text-[#6B7280]">Event #{displayLog.id || resolvedLogId}</p>
+            <p className="text-xs font-bold uppercase text-[#526780]">{displayLog.access_type || 'Access event'}</p>
+            <h2 className="mt-1 text-xl font-bold text-[#102a4c] sm:text-2xl">Access Log Details</h2>
+            <p className="mt-1 text-sm text-[#526780]">Event #{displayLog.id || resolvedLogId}</p>
+            <div className="mt-2"><StatusBadge label={displayLog.status || 'Unknown'} tone={statusColor(displayLog.status)} /></div>
           </div>
-          <button type="button" onClick={onClose} className="text-xl font-bold text-[#475569] transition hover:text-[#0F172A]" aria-label="Close modal">
-            ×
+          <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#f3f6fa] hover:text-[#102a4c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#082b53]" aria-label="Close modal">
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -98,11 +94,10 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Station</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.station || '—'}</dd></div>
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Access Type</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.access_type || '—'}</dd></div>
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Access Method</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.access_method || '—'}</dd></div>
-            {displayLog.nfc_uid && <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">NFC UID</dt><dd className="mt-1 break-all font-mono text-sm text-slate-900">{displayLog.nfc_uid}</dd></div>}
-            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Result</dt><dd className={`mt-1 text-sm font-medium ${statusColor(displayLog.status)}`}>{displayLog.status || '—'}</dd></div>
+            <div className="rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-3"><dt className="text-xs font-medium text-slate-600">Result</dt><dd className="mt-1"><StatusBadge label={displayLog.status || '—'} tone={statusColor(displayLog.status)} /></dd></div>
             {String(displayLog.status || '').toLowerCase() !== 'success' && displayLog.reason && <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:col-span-2"><dt className="text-xs font-medium text-slate-600">Failure Reason</dt><dd className="mt-1 text-sm text-slate-900">{displayLog.reason}</dd></div>}
             <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Date and Time</dt><dd className="mt-1 text-sm text-slate-900">{formatDate(displayLog.access_time)}</dd></div>
-            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Duration</dt><dd className="mt-1 text-sm text-slate-900">{formatDuration(displayLog.duration_seconds)}</dd></div>
+            <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3"><dt className="text-xs font-medium text-slate-600">Duration</dt><dd className="mt-1 text-sm text-slate-900">{formatAccessLogDuration(displayLog.duration_seconds)}</dd></div>
           </dl>
           <div className="mt-4">
             <AccessLogPhotoPanel eventId={resolvedLogId} captureStatus={displayLog.photo_capture_status} allowImage />
@@ -114,7 +109,7 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
+            className="min-h-10 rounded-lg border border-[#dbe5f0] bg-white px-4 py-2 text-sm font-semibold text-[#102a4c] hover:bg-[#f3f6fa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#082b53]"
           >
             Close
           </button>

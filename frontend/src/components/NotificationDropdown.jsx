@@ -141,21 +141,21 @@ export default function NotificationDropdown() {
         <div className="fixed inset-0 z-[60] flex justify-end">
           <button type="button" aria-label="Close notifications" className="notification-overlay absolute inset-0" onClick={() => setOpen(false)} />
           <aside className="relative flex h-full w-[400px] max-w-[92vw] flex-col border-l border-[#E5E7EB] bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-[#E5E7EB] px-5 py-5">
-              <div>
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E5E7EB] px-3 py-4 sm:flex-nowrap sm:px-5 sm:py-5">
+              <div className="min-w-0">
                 <h2 className="text-lg font-semibold text-[#111827]">Notifications</h2>
                 <p className="mt-1 text-sm text-[#6B7280]">{unreadCount} unread</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
                 <button
                   type="button"
                   onClick={markAllRead}
                   disabled={busyAction || unreadCount === 0}
-                  className="rounded-full border border-[#E5E7EB] px-3 py-1.5 text-sm font-medium text-[#334155] transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-10 rounded-lg border border-[#E5E7EB] px-3 py-2 text-xs font-medium text-[#334155] transition hover:bg-[#F8FAFC] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
                 >
                   Mark All as Read
                 </button>
-                <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="rounded-full p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]">
+                <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107]">
                   <X size={18} />
                 </button>
               </div>

@@ -269,7 +269,7 @@ export default function StudentProfile() {
         {instructors.length ? (
           <div className="grid gap-3 sm:grid-cols-2">
             {instructors.map((instructor) => (
-              <InstructorContactCard key={instructor.id} instructor={instructor} sectionName={profile?.section_name} />
+              <InstructorInfoCard key={instructor.id} instructor={instructor} sectionName={profile?.section_name} />
             ))}
           </div>
         ) : (
@@ -345,27 +345,22 @@ function ProfileFact({ label, value }) {
   )
 }
 
-function InstructorContactCard({ instructor, sectionName }) {
+function InstructorInfoCard({ instructor, sectionName }) {
   const fullName = instructor.full_name || `${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || instructor.username || 'Instructor'
   const initials = fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
   return (
-    <article className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:flex-row">
-      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-white">
+    <article className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-4 rounded-xl border border-[#dbe5f0] bg-[#eef4fa] p-4 sm:p-5">
+      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[#dbe5f0] bg-white sm:h-16 sm:w-16">
         {instructor.profile_image_url ? <img src={instructor.profile_image_url} alt={`${fullName} profile`} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-lg font-bold text-[#0B2A4A]">{initials || 'I'}</div>}
       </div>
       <div className="min-w-0 flex-1">
         <h3 className="break-words font-semibold text-[#0B2A4A]">{fullName}</h3>
         <span className="mt-1 inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{instructor.role === 'instructor' ? 'Instructor / Faculty' : instructor.role || 'Faculty'}</span>
-        <dl className="mt-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+        <dl className="mt-4 grid gap-2 text-sm min-[480px]:grid-cols-2">
           <ProfileFact label="Email Address" value={instructor.email} />
           <ProfileFact label="Contact Number" value={instructor.contact_number} />
-          <div className="sm:col-span-2"><ProfileFact label="Assigned Section" value={sectionName} /></div>
+          <div className="min-[480px]:col-span-2"><ProfileFact label="Assigned Section" value={sectionName} /></div>
         </dl>
-        {instructor.email ? (
-          <a href={`mailto:${instructor.email}`} className="mt-3 inline-flex min-h-10 items-center justify-center rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">Contact Instructor</a>
-        ) : (
-          <button type="button" disabled className="mt-3 inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500">Contact Instructor</button>
-        )}
       </div>
     </article>
   )

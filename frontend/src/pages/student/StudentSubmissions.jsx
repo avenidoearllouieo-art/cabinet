@@ -176,7 +176,7 @@ export default function StudentSubmissions() {
         description="Review your submitted work, progress, and instructor results in one place."
       />
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard
           icon={<FilePlus size={18} />}
           label="Submitted"
@@ -256,8 +256,8 @@ export default function StudentSubmissions() {
         {loading ? (
           <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">Loading submissions...</div>
         ) : submissions.length === 0 ? (
-          <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-12 text-center">
-            <div className="mb-4 text-4xl text-[#9CA3AF]">No submissions yet.</div>
+          <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-6 text-center sm:p-12">
+            <div className="mb-4 text-2xl font-semibold text-[#9CA3AF] sm:text-4xl">No submissions yet.</div>
             <p className="text-sm text-[#6B7280]">Your submission history will appear here once you submit an activity.</p>
           </div>
         ) : (

@@ -34,21 +34,6 @@ const StudentAccessLogs = lazy(() => import('./pages/student/StudentAccessLogs.j
 const StudentProfile = lazy(() => import('./pages/student/StudentProfile.jsx'))
 const StudentChangePassword = lazy(() => import('./pages/student/StudentChangePassword.jsx'))
 
-// Placeholder page component for pages under construction
-function PagePlaceholder({ title, description }) {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">{title}</h1>
-        <p className="text-slate-600 mt-2">{description}</p>
-      </div>
-      <div className="bg-white rounded-lg shadow p-8 text-center">
-        <p className="text-slate-500 text-lg">Coming soon</p>
-      </div>
-    </div>
-  )
-}
-
 function App() {
   return (
     <BrowserRouter>
@@ -71,15 +56,7 @@ function App() {
           <Route path='access-logs' element={<AccessLogs />} />
           <Route path='cabinet-events' element={<CabinetEvents />} />
           <Route path='sections' element={<Sections />} />
-          <Route
-            path='settings'
-            element={
-              <PagePlaceholder 
-                title="Settings" 
-                description="Configure system settings and preferences"
-              />
-            }
-          />
+          <Route path='settings' element={<Navigate to='dashboard' replace />} />
         </Route>
         </Route>
 

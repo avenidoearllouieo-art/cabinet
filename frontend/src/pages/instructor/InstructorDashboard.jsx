@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
@@ -16,7 +18,9 @@ import {
 } from 'lucide-react'
 
 export default function InstructorDashboard() {
+  const navigate = useNavigate()
   const [user, setUser] = useState(null)
+  const [sectionNamesById, setSectionNamesById] = useState({})
   const [stats, setStats] = useState({
     totalActivities: 0,
     activeActivities: 0,
@@ -27,9 +31,11 @@ export default function InstructorDashboard() {
   const [upcomingDeadlines, setUpcomingDeadlines] = useState([])
   const [recentSubmissions, setRecentSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true)
+    setLoadError('')
     try {
       // Get current user
       const userStr = localStorage.getItem('user')
@@ -38,44 +44,42 @@ export default function InstructorDashboard() {
       }
 
       // Get dashboard statistics
-      const dashboardRes = await api.get('/dashboard/')
+      const [dashboardRes, activityPage, sectionPage, submissionsRes] = await Promise.all([
+        api.get('/dashboard/'),
+        fetchAllResults(api, '/activities/', { page_size: 100 }),
+        fetchAllResults(api, '/sections/', { page_size: 100 }),
+        api.get('/submissions/', { params: { ordering: '-submitted_at' } }),
+      ])
       const dashboardData = dashboardRes.data
+      const activities = activityPage.results
+      const sections = sectionPage.results
+      const activeStatuses = new Set(['active', 'ongoing', 'published'])
 
       setStats({
         totalActivities: dashboardData.total_activities || 0,
-        activeActivities: dashboardData.total_activities || 0,
+        activeActivities: activities.filter((activity) => activeStatuses.has(String(activity.status || '').toLowerCase())).length,
         totalSubmissions: dashboardData.total_submissions || 0,
         pendingGrading: dashboardData.pending_grading || 0,
       })
+      setSectionNamesById(Object.fromEntries(sections.map((section) => [String(section.id), section.section_name])))
 
-      // Get recent activities and sort for upcoming deadlines
-      const activitiesRes = await api.get('/activities/')
-      const activities = Array.isArray(activitiesRes.data) 
-        ? activitiesRes.data 
-        : activitiesRes.data.results || []
-      
-      // Sort by created date descending for recent activities
-      const recent = activities.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5)
+      const recent = [...activities].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0)).slice(0, 5)
       setRecentActivities(recent)
 
-      // Sort by due date for upcoming deadlines (only those with future due dates)
       const now = new Date()
       const upcoming = activities
-        .filter(activity => activity.due_date && new Date(activity.due_date) > now)
-        .sort((a, b) => new Date(a.due_date) - new Date(b.due_date))
+        .filter((activity) => activity.due_date && Date.parse(activity.due_date) > now.getTime())
+        .sort((a, b) => Date.parse(a.due_date) - Date.parse(b.due_date))
         .slice(0, 5)
       setUpcomingDeadlines(upcoming)
 
-      // Get recent submissions
-      const submissionsRes = await api.get('/submissions/', {
-        params: { ordering: '-submitted_at', limit: 5 }
-      })
       const submissions = Array.isArray(submissionsRes.data) 
         ? submissionsRes.data 
         : submissionsRes.data.results || []
       setRecentSubmissions(submissions.slice(0, 5))
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error)
+      setLoadError('Dashboard information could not be refreshed. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -119,32 +123,54 @@ export default function InstructorDashboard() {
   }
 
   const getDaysUntilDue = (dueDate) => {
-    if (!dueDate) return null
-    const days = Math.ceil((new Date(dueDate) - new Date()) / (1000 * 60 * 60 * 24))
-    if (days < 0) return `Overdue by ${Math.abs(days)}d`
-    if (days === 0) return 'Due today'
-    if (days === 1) return 'Due tomorrow'
-    return `Due in ${days}d`
+    if (!dueDate) return { label: 'No due date', tone: 'neutral' }
+    const due = new Date(dueDate)
+    if (Number.isNaN(due.getTime())) return { label: 'Date unavailable', tone: 'neutral' }
+    const now = new Date()
+    if (due < now) return { label: `Overdue by ${Math.max(1, Math.ceil((now - due) / 86400000))}d`, tone: 'danger' }
+    if (due.toDateString() === now.toDateString()) return { label: 'Due today', tone: 'warning' }
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    if (due.toDateString() === tomorrow.toDateString()) return { label: 'Due tomorrow', tone: 'warning' }
+    const days = Math.ceil((due - now) / 86400000)
+    return { label: `Due in ${days}d`, tone: days <= 3 ? 'warning' : 'info' }
+  }
+
+  const getAssignedSectionNames = (activity) => {
+    const ids = Array.isArray(activity.assigned_sections) ? activity.assigned_sections : []
+    const names = ids.map((section) => {
+      const id = typeof section === 'object' ? section.id ?? section.section_id : section
+      return sectionNamesById[String(id)]
+    }).filter(Boolean)
+    if (names.length) return names.join(', ')
+    return activity.section_name || sectionNamesById[String(activity.section)] || 'No section'
   }
 
   const recentActivityColumns = [
     { key: 'title', label: 'Activity', className: 'min-w-[220px]', render: (value) => value || 'Untitled activity' },
-    { key: 'section_name', label: 'Section', className: 'min-w-[140px]', render: (value) => value || 'No section' },
+    { key: 'section_name', label: 'Assigned Sections', className: 'min-w-[140px]', render: (_value, activity) => getAssignedSectionNames(activity) },
     { key: 'created_at', label: 'Created', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
     { key: 'due_date', label: 'Due Date', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
     {
       key: 'due_status',
       label: 'Due Status',
       className: 'min-w-[130px]',
-      render: (_value, activity) => activity.due_date ? getDaysUntilDue(activity.due_date) : 'No due date',
+      render: (_value, activity) => {
+        const dueStatus = getDaysUntilDue(activity.due_date)
+        return <StatusBadge label={dueStatus.label} tone={dueStatus.tone} />
+      },
     },
+    { key: 'status', label: 'Status', className: 'min-w-[110px]', render: (value) => <StatusBadge status={value || 'unknown'} label={value || 'Unknown'} /> },
   ]
 
   const upcomingDeadlineColumns = [
     { key: 'title', label: 'Activity', className: 'min-w-[220px]', render: (value) => value || 'Untitled activity' },
-    { key: 'section_name', label: 'Section', className: 'min-w-[140px]', render: (value) => value || 'No section' },
+    { key: 'section_name', label: 'Assigned Sections', className: 'min-w-[140px]', render: (_value, activity) => getAssignedSectionNames(activity) },
     { key: 'due_date', label: 'Due Date', className: 'min-w-[150px]', render: (value) => formatDateShort(value) },
-    { key: 'time_remaining', label: 'Time Remaining', className: 'min-w-[150px]', render: (_value, activity) => getDaysUntilDue(activity.due_date) },
+    { key: 'time_remaining', label: 'Time Remaining', className: 'min-w-[150px]', render: (_value, activity) => {
+      const dueStatus = getDaysUntilDue(activity.due_date)
+      return <StatusBadge label={dueStatus.label} tone={dueStatus.tone} />
+    } },
   ]
 
   const recentSubmissionColumns = [
@@ -159,22 +185,17 @@ export default function InstructorDashboard() {
     { key: 'status', label: 'Status', className: 'min-w-[120px]', render: (_value, submission) => getSubmissionStatusBadge(submission) },
     { key: 'score', label: 'Score', className: 'min-w-[90px]', render: (value) => value ?? 'Pending' },
   ]
+  const displayName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim() || user?.username
+  const dashboardDescription = displayName
+    ? `Welcome back, ${displayName}. Here's a summary of your activities and submissions.`
+    : 'Your activities and student submissions.'
 
   return (
     <div className="space-y-5">
-      <div>
-        <PageHeader
-          title="Instructor Dashboard"
-          description="Your activities and student submissions"
-        />
-        {user && (
-          <p className="mt-3 text-sm text-slate-600">
-            Welcome back, <span className="font-semibold text-slate-900">{user.first_name} {user.last_name}</span>! Here's a summary of your activities and submissions.
-          </p>
-        )}
-      </div>
+      <PageHeader compact title="Instructor Dashboard" description={dashboardDescription} />
       <CabinetStationStatus detailLevel="instructor" />
 
+      {loadError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{loadError}<button type="button" onClick={fetchDashboardData} className="ml-3 font-semibold underline">Retry</button></div>}
       {loading ? (
         <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-12 text-center text-[#6B7280] shadow-sm">
           Loading dashboard...
@@ -182,12 +203,13 @@ export default function InstructorDashboard() {
       ) : (
         <>
           {/* Statistics Cards */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
             <StatCard 
               icon={<ClipboardList size={20} />} 
               label="Total Activities" 
               value={stats.totalActivities} 
               subtitle="Created by you"
+              mobileSubtitle="Created"
               bgColor="bg-amber-50"
               textColor="text-amber-700"
             />
@@ -196,6 +218,7 @@ export default function InstructorDashboard() {
               label="Active Activities" 
               value={stats.activeActivities} 
               subtitle="Open now"
+              mobileSubtitle="Open"
               bgColor="bg-emerald-50"
               textColor="text-emerald-700"
             />
@@ -204,6 +227,7 @@ export default function InstructorDashboard() {
               label="Submissions"
               value={stats.totalSubmissions} 
               subtitle="Received from students"
+              mobileSubtitle="Received"
               bgColor="bg-blue-50"
               textColor="text-blue-700"
             />
@@ -212,23 +236,24 @@ export default function InstructorDashboard() {
               label="Pending Grading" 
               value={stats.pendingGrading} 
               subtitle="Awaiting grading"
+              mobileSubtitle="To grade"
               bgColor="bg-amber-50"
               textColor="text-amber-700"
             />
           </div>
 
-          <div className="space-y-5">
-            <section className="space-y-3">
+          <div className="space-y-4 sm:space-y-5">
+            <section className="space-y-2 sm:space-y-3">
               <h2 className="text-lg font-semibold text-[#102a4c]">Recent Activities</h2>
-              <DataTable columns={recentActivityColumns} rows={recentActivities} variant="instructor" showActions={false} emptyMessage="No activities created yet." />
+              <DataTable columns={recentActivityColumns} rows={recentActivities} variant="instructor" showActions={false} onRowClick={(activity) => activity.id && navigate(`/instructor/activities/${activity.id}`)} emptyMessage="No activities created yet." />
             </section>
 
-            <section className="space-y-3">
+            <section className="space-y-2 sm:space-y-3">
               <h2 className="text-lg font-semibold text-[#102a4c]">Upcoming Deadlines</h2>
-              <DataTable columns={upcomingDeadlineColumns} rows={upcomingDeadlines} variant="instructor" showActions={false} emptyMessage="No upcoming deadlines." />
+              <DataTable columns={upcomingDeadlineColumns} rows={upcomingDeadlines} variant="instructor" showActions={false} onRowClick={(activity) => activity.id && navigate(`/instructor/activities/${activity.id}`)} emptyMessage="No upcoming deadlines." />
             </section>
 
-            <section className="space-y-3">
+            <section className="space-y-2 sm:space-y-3">
               <h2 className="text-lg font-semibold text-[#102a4c]">Recent Submissions</h2>
               <DataTable columns={recentSubmissionColumns} rows={recentSubmissions} variant="instructor" showActions={false} emptyMessage="No submissions yet." />
             </section>

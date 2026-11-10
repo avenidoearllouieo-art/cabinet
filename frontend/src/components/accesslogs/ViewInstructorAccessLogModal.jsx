@@ -17,19 +17,21 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, all
 
   return createPortal(
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-[#071f41]/55 p-4 backdrop-blur-[2px]">
-      <div className="max-h-[90vh] w-full max-w-[760px] overflow-y-auto rounded-xl border border-[#dbe5f0] bg-white p-5 shadow-xl sm:p-6" role="dialog" aria-modal="true" aria-label="Cabinet Access Log Details">
-        <div className="mb-5 flex items-start justify-between gap-4 border-b border-[#dbe5f0] pb-4">
+      <div className="max-h-[90vh] w-full max-w-[760px] overflow-y-auto rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-xl sm:p-6" role="dialog" aria-modal="true" aria-label="Cabinet Access Log Details">
+        <div className="mb-5 flex items-start justify-between gap-4 rounded-lg border-l-4 border-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
           <div>
-            <h2 className="text-xl font-semibold text-[#102a4c]">Cabinet Access Log Details</h2>
-            <p className="mt-1 text-sm text-slate-500">Audit details for event {accessLogValue(log.id)}.</p>
+            <p className="text-xs font-bold uppercase text-[#526780]">{accessLogValue(log.action)} event</p>
+            <h2 className="mt-1 text-xl font-bold text-[#102a4c]">Cabinet Access Log Details</h2>
+            <p className="mt-1 text-sm text-[#526780]">Audit details for event {accessLogValue(log.id)}.</p>
+            <div className="mt-2">{result === 'Not recorded' ? <StatusBadge label={result} tone="neutral" /> : <StatusBadge status={result.toLowerCase()} label={result} />}</div>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#dbe5f0] text-[#28415f] transition hover:border-[#ffc107] hover:bg-[#fff9e5]" aria-label="Close modal">
+          <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close modal">
             <X size={17} />
           </button>
         </div>
 
         <div className="space-y-5">
-          <section className="rounded-lg border border-[#dbe5f0] bg-[#f7f9fc] p-4">
+          <section className="rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-4">
             <h3 className="mb-3 text-sm font-semibold text-[#102a4c]">Access Event</h3>
             <dl className="grid gap-4 sm:grid-cols-2">
               <DetailField label="Event ID">{accessLogValue(log.id)}</DetailField>
@@ -44,17 +46,17 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, all
             </dl>
           </section>
 
-          <section className="rounded-lg border border-[#dbe5f0] bg-[#f7f9fc] p-4">
+          <section className="rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-4">
             <h3 className="mb-3 text-sm font-semibold text-[#102a4c]">Student Information</h3>
             <dl className="grid gap-4 sm:grid-cols-2">
               <DetailField label="Student ID">{accessLogValue(log.student_id)}</DetailField>
               <DetailField label="Full Name">{accessLogValue(log.student_name)}</DetailField>
               <DetailField label="Section">{accessLogValue(log.section_name)}</DetailField>
-              <DetailField label="NFC UID">{accessLogValue(log.nfc_uid)}</DetailField>
+              <DetailField label="Access Type">{accessLogValue(log.access_type)}</DetailField>
             </dl>
           </section>
 
-          <section className="rounded-lg border border-[#dbe5f0] bg-[#f7f9fc] p-4">
+          <section className="rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-4">
             <h3 className="mb-3 text-sm font-semibold text-[#102a4c]">Cabinet Information</h3>
             <dl className="grid gap-4 sm:grid-cols-2">
               <DetailField label="Cabinet Name">{accessLogValue(log.cabinet_name)}</DetailField>
@@ -70,7 +72,7 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, all
         </div>
 
         <div className="mt-5 flex justify-end border-t border-[#dbe5f0] pt-4">
-          <button type="button" onClick={onClose} className="tt-button tt-button-primary">Close</button>
+          <button type="button" onClick={onClose} className="tt-button tt-button-secondary">Close</button>
         </div>
       </div>
     </div>,

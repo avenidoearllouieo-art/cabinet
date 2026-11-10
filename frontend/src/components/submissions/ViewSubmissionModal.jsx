@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Download } from 'lucide-react'
 import Modal from '../Modal.jsx'
+import StatusBadge from '../StatusBadge.jsx'
 import api from '../../services/api.js'
 
 const formatDate = (value) => {
@@ -75,28 +76,28 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
   }, [isOpen, submissionId, submission, fetchSubmission])
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Submission History">
+    <Modal isOpen={isOpen} onClose={onClose} title="Submission History" description="Review submitted files, status, and instructor feedback.">
       {error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
       {loading ? (
-        <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">Loading submission details...</div>
+        <div className="rounded-xl border border-[#dbe5f0] bg-[#eef4fa] p-8 text-center text-[#526780]">Loading submission details...</div>
       ) : !details ? (
-        <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-8 text-center text-[#6B7280] shadow-sm">
-          <p className="text-lg font-semibold">No submission yet.</p>
+        <div className="rounded-xl border border-dashed border-[#cbd8e6] bg-[#eef4fa] p-6 text-center text-[#526780]">
+          <p className="text-base font-semibold text-[#102a4c]">No submission yet.</p>
           <p className="text-sm text-slate-500">You have not submitted for this activity.</p>
         </div>
       ) : (
         <div className="space-y-6">
-          <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
+          <div className="rounded-xl border border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] p-4 leading-6 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold">{details?.activity_title || details?.activity?.title || 'Activity'}</h3>
                 <div className="mt-2 text-sm text-slate-700">{details?.activity_description || details?.activity?.description || 'No description provided.'}</div>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-[#334155]">Read-only</span>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#526780]">Read-only</span>
             </div>
             <div className="mt-5 grid grid-cols-1 gap-4 text-sm text-[#334155] md:grid-cols-3">
               <div><strong>Instructor:</strong> {details?.instructor_name || details?.activity?.created_by_name || '—'}</div>
-              <div><strong>Submission Status:</strong> {resolveStatus(details)}</div>
+              <div className="flex flex-wrap items-center gap-2"><strong>Submission Status:</strong> <StatusBadge status={resolveStatus(details)} /></div>
               <div><strong>Submitted:</strong> {formatDate(details?.submitted_at)}</div>
             </div>
           </div>
@@ -197,7 +198,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full border border-[#002B5B] bg-white px-4 py-2 text-sm font-semibold text-[#002B5B] transition hover:bg-[#002B5B]/5"
+              className="tt-button tt-button-secondary min-h-10"
             >
               Close
             </button>

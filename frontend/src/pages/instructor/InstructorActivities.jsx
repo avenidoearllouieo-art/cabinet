@@ -10,6 +10,7 @@ import ViewActivityModal from '../../components/activities/ViewActivityModal.jsx
 import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
 import { Search, Plus, ClipboardList, Edit2, Trash2, Eye } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -36,15 +37,19 @@ export default function InstructorActivities() {
   const [selectedActivity, setSelectedActivity] = useState(null)
   const [deletingActivity, setDeletingActivity] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
+  const [sectionNamesById, setSectionNamesById] = useState({})
   const location = useLocation()
   const sectionId = new URLSearchParams(location.search).get('section')
 
   const fetchActivities = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await api.get('/activities/', { params: sectionId ? { section: sectionId } : undefined })
-      const rawActivities = Array.isArray(response.data) ? response.data : response.data.results || []
-      setActivities(rawActivities)
+      const [activityPage, sectionPage] = await Promise.all([
+        fetchAllResults(api, '/activities/', sectionId ? { section: sectionId } : {}),
+        fetchAllResults(api, '/sections/'),
+      ])
+      setActivities(activityPage.results)
+      setSectionNamesById(Object.fromEntries(sectionPage.results.map((section) => [String(section.id), section.section_name])))
       setError('')
     } catch (err) {
       console.error('Error fetching activities:', err)
@@ -58,22 +63,6 @@ export default function InstructorActivities() {
     const timeoutId = window.setTimeout(fetchActivities, 0)
     return () => window.clearTimeout(timeoutId)
   }, [fetchActivities])
-
-  useEffect(() => {
-    window.openEditActivityModal = (id, row) => {
-      if (!id) return
-      setEditingActivityId(id)
-      setSelectedActivity(row || null)
-      setIsEditModalOpen(true)
-    }
-    return () => {
-      try {
-        delete window.openEditActivityModal
-      } catch {
-        // no-op: best effort cleanup for browser globals
-      }
-    }
-  }, [])
 
   const handleActivitySaved = async (savedActivity) => {
     if (!savedActivity || !savedActivity.id) {
@@ -139,15 +128,36 @@ export default function InstructorActivities() {
     )
   }, [activities, query])
 
+  const getAssignedSections = (activity) => {
+    const assigned = Array.isArray(activity.assigned_sections) ? activity.assigned_sections : []
+    const names = assigned.map((section) => {
+      const id = typeof section === 'object' ? section.id ?? section.section_id : section
+      return sectionNamesById[String(id)] || (typeof section === 'object' ? section.section_name : '')
+    }).filter(Boolean)
+    if (names.length) return names.join(', ')
+    return activity.section_name || sectionNamesById[String(activity.section)] || 'No section assigned'
+  }
+
+  const getDueStatus = (value) => {
+    if (!value) return { label: 'No due date', tone: 'neutral' }
+    const dueDate = new Date(value)
+    if (Number.isNaN(dueDate.getTime())) return { label: 'Date unavailable', tone: 'neutral' }
+    const now = new Date()
+    if (dueDate < now) return { label: 'Overdue', tone: 'danger' }
+    if (dueDate.toDateString() === now.toDateString()) return { label: 'Due today', tone: 'warning' }
+    return { label: 'Upcoming', tone: 'info' }
+  }
+
   const columns = [
-    { key: 'id', label: 'ID', className: 'min-w-[60px]' },
-    { key: 'title', label: 'Title', className: 'min-w-[250px]', render: (value) => value || '—' },
-    { key: 'due_date', label: 'Due Date', className: 'min-w-[180px]', render: (value) => formatDate(value) },
-    { key: 'created_at', label: 'Created', className: 'min-w-[180px]', render: (value) => formatDate(value) },
+    { key: 'title', label: 'Activity', className: 'min-w-[190px]', render: (value) => value || 'Untitled activity' },
+    { key: 'assigned_sections', label: 'Assigned Sections', className: 'min-w-[140px]', render: (_value, row) => getAssignedSections(row) },
+    { key: 'created_at', label: 'Created', className: 'min-w-[115px]', render: (value) => formatDate(value) },
+    { key: 'due_date', label: 'Due Date', className: 'min-w-[130px]', render: (value) => formatDate(value) },
+    { key: 'due_status', label: 'Due Status', className: 'min-w-[105px]', render: (_value, row) => { const status = getDueStatus(row.due_date); return <StatusBadge label={status.label} tone={status.tone} /> } },
     {
       key: 'status',
       label: 'Status',
-      className: 'min-w-[120px]',
+      className: 'min-w-[95px]',
       render: (value) => {
         const label = value ? String(value).replaceAll('_', ' ') : 'Unknown'
         return <StatusBadge status={label} label={label} />
@@ -156,7 +166,7 @@ export default function InstructorActivities() {
     {
       key: 'actions',
       label: 'Action',
-      className: 'min-w-[110px]',
+      className: 'min-w-[115px]',
       render: (_value, row) => (
         <div className="flex items-center gap-2">
           <button
@@ -182,29 +192,19 @@ export default function InstructorActivities() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4">
-        <PageHeader title="My Activities" description="Create and manage your teaching activities" />
-        <button
-          type="button"
-          onClick={() => {
-            setEditingActivityId(null)
-            setSelectedActivity(null)
-            setIsAddModalOpen(true)
-          }}
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700"
-        >
-          <Plus size={18} />
-          Add Activity
-        </button>
-      </div>
+      <PageHeader
+        title="My Activities"
+        description="Create and manage your teaching activities"
+        action={<button type="button" onClick={() => { setEditingActivityId(null); setSelectedActivity(null); setIsAddModalOpen(true) }} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[#FFBE0B] px-4 py-2 font-semibold text-[#082B53] transition hover:bg-[#e0a800] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#082B53]"><Plus size={18} />Add Activity</button>}
+      />
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-        <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-3 md:flex-row">
+        <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-[#dbe5f0] bg-[#f7f9fc] p-3 md:flex-row">
           <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
             <Search size={18} className="text-slate-400" />
             <input type="text" placeholder="Search activities..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-full flex-1 border-0 bg-transparent text-sm outline-none" />
           </div>
-          <div className="flex w-full flex-wrap items-center gap-3 md:w-auto" />
+          <span className="text-sm text-slate-500">{filteredActivities.length} activities</span>
         </div>
 
         {error && (
@@ -225,7 +225,7 @@ export default function InstructorActivities() {
             </p>
           </div>
         ) : (
-          <DataTable columns={columns} rows={filteredActivities} variant="instructor" />
+          <DataTable columns={columns} rows={filteredActivities} variant="instructor" constrainTableHeight={false} />
         )}
       </div>
 

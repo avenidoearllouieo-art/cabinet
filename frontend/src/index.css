@@ -16,6 +16,7 @@ html {
 }
 
 :root {
+  --taptrack-navigation-bg: #052b55;
   --tt-navy: #002b5b;
   --tt-navy-deep: #071f41;
   --tt-gold: #ffc107;
@@ -38,6 +39,11 @@ html {
   --tt-control-radius: 8px;
   --tt-control-height: 44px;
   --tt-shadow: 0 2px 8px rgba(0, 43, 91, 0.06);
+  --tt-layer-drawer: 60;
+  --tt-layer-modal: 70;
+  --tt-layer-popover: 80;
+  --tt-layer-nested-dialog: 90;
+  --tt-layer-toast: 100;
   --ustp-navy: var(--tt-navy);
   --ustp-white: var(--tt-surface);
   --ustp-yellow: var(--tt-gold);
@@ -46,6 +52,11 @@ html {
   --ustp-muted: var(--tt-muted);
   color: var(--tt-ink);
   background: var(--tt-canvas);
+}
+
+.app-header,
+.app-sidebar {
+  background-color: var(--taptrack-navigation-bg);
 }
 
 body {
@@ -363,14 +374,43 @@ body {
   margin-top: 2px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 599.98px) {
   :is(.admin-shell, .instructor-shell, .student-shell) .admin-main {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   :is(.admin-shell, .instructor-shell, .student-shell) .admin-page-header h1 {
-    font-size: 25px;
+    font-size: 23px;
+    line-height: 1.25;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main {
+    min-width: 0;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main input:not([type="checkbox"]):not([type="radio"]),
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main select,
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main textarea {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main [class*="min-w-["]:not(table) {
+    min-width: 0;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main :is(article, aside, form, label, section) {
+    min-width: 0;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main :is(h1, h2, h3, p, dd, dt) {
+    overflow-wrap: anywhere;
+  }
+
+  :is(.admin-shell, .instructor-shell, .student-shell) .admin-main button {
+    max-width: 100%;
+    white-space: normal;
   }
 }
 
@@ -382,6 +422,14 @@ body {
   border-color: var(--tt-line);
   border-radius: 10px;
   box-shadow: var(--tt-shadow);
+}
+
+@media (max-width: 639px) {
+  .instructor-shell .admin-summary-card {
+    height: auto;
+    min-height: 104px;
+    padding: 12px;
+  }
 }
 
 .instructor-shell .instructor-data-table {

@@ -23,7 +23,7 @@ const sectionName = (section) => section?.section_name || section?.name || secti
 const sectionId = (section) => section?.id ?? section?.section_id
 const snapshot = (form) => JSON.stringify(form)
 
-export default function UserFormWorkflow({ isOpen, userId, user, initialRole = 'student', onClose, onUnauthorized, onSaved, onDeleted, mode = 'create' }) {
+export default function UserFormWorkflow({ isOpen, userId, user, initialRole = 'student', onClose, onUnauthorized, onSaved, mode = 'create' }) {
   const resolvedId = user?.id ?? userId
   const editing = mode === 'edit'
   const [step, setStep] = useState(0)
@@ -36,9 +36,6 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleteSaving, setDeleteSaving] = useState(false)
-  const [deleteError, setDeleteError] = useState('')
 
   const loadSections = useCallback(async () => {
     setLoadingSections(true)
@@ -85,7 +82,6 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       setErrors({})
       setFormError('')
       setSuccessMessage('')
-      setDeleteOpen(false)
       loadSections()
       if (editing && resolvedId) loadUser(resolvedId)
     }, 0)
@@ -198,23 +194,6 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
     }
   }
 
-  const handleDelete = async () => {
-    if (!resolvedId || deleteSaving) return
-    setDeleteSaving(true)
-    setDeleteError('')
-    try {
-      await api.delete(`/users/${resolvedId}/`)
-      onDeleted?.(resolvedId)
-      setDeleteOpen(false)
-      onClose?.()
-    } catch (error) {
-      if (error.response?.status === 401) return onUnauthorized?.()
-      setDeleteError(error.response?.data?.detail || 'Failed to delete this user.')
-    } finally {
-      setDeleteSaving(false)
-    }
-  }
-
   const selectedSections = useMemo(() => sections.filter((section) => form.assigned_sections.includes(sectionId(section))), [sections, form.assigned_sections])
   const idLabel = form.role === 'student' ? 'Student ID' : form.role === 'instructor' ? 'Instructor ID' : 'Admin ID'
   const idValue = form.role === 'student' ? form.student_id : form.role === 'instructor' ? form.instructor_id : form.admin_id
@@ -228,8 +207,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       description={editing ? 'Update identity, access, and account settings.' : 'Create a TapTrack account in four clear steps.'}
       onClose={onClose} onSubmit={handleSubmit} dirty={dirty} busy={saving}
       stepper={<FormStepper steps={steps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Update user' : 'Create user'} busy={saving} disabled={loading || loadingSections} dirty={dirty} destructiveAction={editing ? <button type="button" onClick={() => setDeleteOpen(true)} className="min-h-11 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-600">Delete user</button> : undefined} />}
-      zIndex={editing ? 'z-[99999]' : 'z-[9999]'}
+      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Update user' : 'Create user'} busy={saving} disabled={loading || loadingSections} dirty={dirty} />}
     >
       <div className="space-y-4">
         <InlineFeedback>{formError}</InlineFeedback><InlineFeedback type="success">{successMessage}</InlineFeedback>
@@ -269,12 +247,10 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
               <ReviewItem label="Username" value={form.username || 'Not provided'} /><ReviewItem label="NFC access" value={form.nfc_uid || 'Not assigned'} />
               <ReviewItem label="Sections" value={form.role === 'student' ? sectionName(sections.find((section) => String(sectionId(section)) === String(form.section))) : form.role === 'instructor' ? selectedSections.map(sectionName).join(', ') || 'None assigned' : 'Not applicable'} /><ReviewItem label="Account status" value={form.is_active ? 'Active' : 'Inactive'} />
             </dl>
-            {form.role === 'instructor' && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Instructor section choices are shown for review. The current User API exposes assigned sections as read-only, so deployment still requires the planned serializer update for these assignments to persist.</p>}
           </FormSection>
         )}
       </div>
     </FormDialog>
-    <FormDialog isOpen={deleteOpen} title="Delete user" description="This permanently removes the account and cannot be undone." onClose={() => setDeleteOpen(false)} onSubmit={(event) => { event.preventDefault(); handleDelete() }} busy={deleteSaving} zIndex="z-[100000]" maxWidth="max-w-lg" actions={<div className="flex justify-end gap-3"><button type="button" onClick={() => setDeleteOpen(false)} disabled={deleteSaving} className="min-h-11 rounded-xl border border-slate-300 px-5 text-sm font-semibold text-slate-700">Cancel</button><button type="submit" disabled={deleteSaving} className="min-h-11 rounded-xl bg-rose-600 px-5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50">{deleteSaving ? 'Deleting…' : 'Delete user'}</button></div>}><InlineFeedback>{deleteError}</InlineFeedback><p className="text-sm leading-6 text-slate-700">Delete <strong>{form.first_name || form.username || 'this user'}</strong>? Their account access will stop immediately.</p></FormDialog>
   </>
 }
 

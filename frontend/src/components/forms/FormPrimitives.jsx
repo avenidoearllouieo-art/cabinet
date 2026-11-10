@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertCircle,
@@ -21,7 +21,7 @@ export function InlineFeedback({ type = 'error', children, className = '' }) {
       className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${success ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'} ${className}`}
     >
       <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{children}</span>
+      <span className="min-w-0 break-words">{children}</span>
     </div>
   )
 }
@@ -103,8 +103,61 @@ export function FormDialog({
   headerActions,
   asForm = true,
   maxWidth = 'max-w-4xl',
-  zIndex = 'z-[9999]',
+  zIndex = 'z-[var(--tt-layer-modal)]',
 }) {
+  const surfaceRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  const dialogStateRef = useRef({ busy, dirty })
+  useEffect(() => {
+    onCloseRef.current = onClose
+    dialogStateRef.current = { busy, dirty }
+  }, [onClose, busy, dirty])
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const focusableSelector = 'button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])'
+    const focusFirst = () => {
+      const firstFocusable = surfaceRef.current?.querySelector(focusableSelector)
+      ;(firstFocusable || surfaceRef.current)?.focus({ preventScroll: true })
+    }
+    const focusTimer = window.setTimeout(focusFirst, 0)
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !dialogStateRef.current.busy) {
+        if (!dialogStateRef.current.dirty || window.confirm('Discard your unsaved changes?')) onCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusable = [...(surfaceRef.current?.querySelectorAll(focusableSelector) || [])]
+        .filter((element) => element.getClientRects().length)
+      if (!focusable.length) {
+        event.preventDefault()
+        surfaceRef.current?.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
+  }, [isOpen])
+
   if (!isOpen) return null
 
   const DialogSurface = asForm ? 'form' : 'div'
@@ -112,16 +165,16 @@ export function FormDialog({
   const requestClose = () => {
     if (busy) return
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
-    onClose?.()
+    onCloseRef.current?.()
   }
 
   return createPortal(
-    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-950/65 p-3 sm:p-4`} onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-      <DialogSurface {...submitProps} className={`flex max-h-[94vh] w-full ${maxWidth} flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xl`} role="dialog" aria-modal="true" aria-label={title}>
-        <header className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
-          <div>
-            <h2 className="text-xl font-bold text-[#0B1F3A] sm:text-2xl">{title}</h2>
-            {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-950/65 p-2 sm:p-4`} onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
+      <DialogSurface ref={surfaceRef} tabIndex={-1} {...submitProps} className={`flex max-h-[94vh] max-h-[calc(100dvh-1rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-2xl sm:rounded-xl`} role="dialog" aria-modal="true" aria-label={title}>
+        <header className="sticky top-0 z-20 flex items-start justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
+          <div className="min-w-0">
+            <h2 className="break-words text-xl font-bold text-[#0B1F3A] sm:text-2xl">{title}</h2>
+            {description && <p className="mt-1 break-words text-sm text-slate-500">{description}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {headerActions}
@@ -131,8 +184,8 @@ export function FormDialog({
           </div>
         </header>
         {stepper}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
-        {actions && <footer className="sticky bottom-0 z-20 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">{actions}</footer>}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">{children}</div>
+        {actions && <footer className="sticky bottom-0 z-20 border-t border-slate-200 bg-white px-3 py-3 sm:px-6">{actions}</footer>}
       </DialogSurface>
     </div>,
     document.body,

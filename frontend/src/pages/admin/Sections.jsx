@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
@@ -6,7 +7,8 @@ import StatusBadge from '../../components/StatusBadge'
 import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
-import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, Layers3 } from 'lucide-react'
+import AssignInstructorModal from '../../components/sections/AssignInstructorModal.jsx'
+import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, Layers3, X } from 'lucide-react'
 
 export default function Sections() {
   const [sections, setSections] = useState([])
@@ -26,10 +28,13 @@ export default function Sections() {
   const [openActionId, setOpenActionId] = useState(null)
   const [selectedSectionForDrawer, setSelectedSectionForDrawer] = useState(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+  const [isAssignInstructorOpen, setIsAssignInstructorOpen] = useState(false)
+  const [assignmentSections, setAssignmentSections] = useState([])
   const [instructorFilter, setInstructorFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('name')
-  const actionMenuRef = useRef(null)
+  const drawerRef = useRef(null)
+  const drawerCloseButtonRef = useRef(null)
 
   const fetchSections = async () => {
     try {
@@ -55,14 +60,52 @@ export default function Sections() {
 
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
-        setOpenActionId(null)
-      }
+      if (!event.target?.closest?.('[data-section-action-menu]')) setOpenActionId(null)
     }
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    if (!isDrawerOpen) return undefined
+
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const focusTimer = window.setTimeout(() => drawerCloseButtonRef.current?.focus({ preventScroll: true }), 0)
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsDrawerOpen(false)
+        setSelectedSectionForDrawer(null)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...(drawerRef.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') || [])]
+        .filter((element) => element.getClientRects().length)
+      if (!focusable.length) {
+        event.preventDefault()
+        drawerRef.current?.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
+  }, [isDrawerOpen])
 
   const handleSectionAdded = (newSection) => {
     if (!newSection || !newSection.id) {
@@ -226,15 +269,54 @@ export default function Sections() {
     setSelectedSectionForDrawer(null)
   }
 
-  const handleBulkAction = (action) => {
-    if (!selectedIds.length) return
-    const label = action === 'assign' ? 'Assign Instructor' : action === 'export' ? 'Export' : action === 'archive' ? 'Archive' : 'Delete'
-    setToastMessage(`${label} action queued for ${selectedIds.length} section${selectedIds.length > 1 ? 's' : ''}.`)
+  const openAssignInstructor = () => {
+    const selected = sections.filter((section) => selectedIds.includes(section.id))
+    if (!selected.length) return
+    setAssignmentSections(selected)
+    setIsAssignInstructorOpen(true)
+  }
+
+  const handleInstructorAssigned = (updatedSections) => {
+    setSections((current) => current.map((section) => {
+      const updated = updatedSections.find((item) => Number(item.id) === Number(section.id))
+      return updated ? { ...section, ...updated } : section
+    }))
+    setSelectedIds([])
+    setIsAssignInstructorOpen(false)
+    setAssignmentSections([])
+    setToastMessage(`Instructor assigned to ${updatedSections.length} section${updatedSections.length === 1 ? '' : 's'}.`)
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 
+  const renderSectionActions = (section) => (
+    <div className="relative" data-section-action-menu>
+      <button
+        type="button"
+        onClick={() => setOpenActionId((current) => (current === section.id ? null : section.id))}
+        className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] sm:h-9 sm:w-9"
+        aria-label={`Open actions for ${section.section_name || 'section'}`}
+        aria-expanded={openActionId === section.id}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {openActionId === section.id && (
+        <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
+          <button type="button" onClick={() => { setOpenActionId(null); openSectionDrawer(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
+            <Eye size={14} />View Details
+          </button>
+          <button type="button" onClick={() => { setOpenActionId(null); handleOpenEditModal(section.id, section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
+            <Edit2 size={14} />Edit Section
+          </button>
+          <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
+            <Trash2 size={14} />Delete
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-5 sm:space-y-6">
       <PageHeader
         title="Sections Management"
         description="Create and manage academic sections used throughout the system."
@@ -250,7 +332,7 @@ export default function Sections() {
         }
       />
 
-      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <SummaryCard icon={BookOpen} title="Total Sections" value={totalSections} trendText="All sections" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={Users} title="Students Enrolled" value={totalStudents} trendText="Across all sections" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={UserCog} title="Assigned Instructors" value={totalInstructors} trendText="Sections with instructors" iconBg="bg-violet-50" iconColor="text-violet-900" />
@@ -263,7 +345,7 @@ export default function Sections() {
         </div>
       )}
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-3 shadow-sm sm:p-6">
         <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">Section Directory</h2>
@@ -311,18 +393,44 @@ export default function Sections() {
           <div className="flex flex-wrap gap-2">
             {selectedIds.length > 0 && (
               <>
-                <button type="button" onClick={() => handleBulkAction('assign')} className="rounded-[8px] border border-[#D1D5DB] bg-white px-3 py-2 text-sm font-semibold text-[#374151]">Assign Instructor</button>
-                <button type="button" onClick={() => handleBulkAction('export')} className="rounded-[8px] border border-[#D1D5DB] bg-white px-3 py-2 text-sm font-semibold text-[#374151]">Export</button>
-                <button type="button" onClick={() => handleBulkAction('archive')} className="rounded-[8px] border border-[#D1D5DB] bg-white px-3 py-2 text-sm font-semibold text-[#374151]">Archive</button>
-                <button type="button" onClick={() => handleBulkAction('delete')} className="rounded-[8px] border border-[#DC2626] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#DC2626]">Delete</button>
+                <button type="button" onClick={openAssignInstructor} className="tt-button tt-button-primary min-h-10">Assign Instructor ({selectedIds.length})</button>
+                <button type="button" onClick={() => setSelectedIds([])} className="tt-button tt-button-secondary min-h-10">Clear selection</button>
               </>
             )}
           </div>
           <div className="text-sm text-slate-500">{filteredSections.length} result{filteredSections.length === 1 ? '' : 's'}</div>
         </div>
 
-        <div className="overflow-x-hidden rounded-[12px] border border-[#E5E7EB]">
-          <table className="w-full table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
+        <div className="space-y-2 min-[600px]:hidden" aria-label="Section records">
+          {loading && <p className="rounded-lg bg-[#F9FAFB] px-3 py-5 text-center text-sm text-[#6B7280]">Loading sections…</p>}
+          {!loading && !filteredSections.length && <p className="rounded-lg bg-[#F9FAFB] px-3 py-5 text-center text-sm text-[#6B7280]">No sections available.</p>}
+          {!loading && filteredSections.map((section) => (
+            <article key={section.id} className="min-w-0 rounded-lg border border-[#E5E7EB] bg-white p-3 shadow-sm">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(section.id)}
+                  onChange={() => toggleSelection(section.id)}
+                  aria-label={`Select ${section.section_name || 'section'}`}
+                  className="mt-1 h-5 w-5 shrink-0 rounded border-[#D1D5DB]"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="min-w-0 break-words text-sm font-semibold text-[#111827]">{getSectionSummary(section)}</div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">{getInstructorBadge(section)}{getStatusBadge(section.status, section)}</div>
+                </div>
+                {renderSectionActions(section)}
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#E5E7EB] pt-3 text-xs">
+                <div><dt className="text-[#6B7280]">Students</dt><dd className="mt-0.5 font-medium text-[#374151]">{getStudentCountLabel(section)}</dd></div>
+                <div><dt className="text-[#6B7280]">Activities</dt><dd className="mt-0.5 font-medium text-[#374151]">{getActivityCount(section)}</dd></div>
+                <div className="col-span-2 min-w-0"><dt className="text-[#6B7280]">Assigned Cabinet</dt><dd className="mt-0.5 break-words font-medium text-[#374151]">{getAssignedCabinet(section)}</dd></div>
+              </dl>
+            </article>
+          ))}
+        </div>
+
+        <div className="hidden overflow-x-auto rounded-[12px] border border-[#E5E7EB] min-[600px]:block">
+          <table className="w-full min-w-[760px] table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
             <thead className="bg-[#F9FAFB]">
               <tr>
                 <th className="w-[4%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left">
@@ -353,26 +461,7 @@ export default function Sections() {
                   <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getActivityCount(section)}</td>
                   <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getAssignedCabinet(section)}</td>
                   <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getStatusBadge(section.status, section)}</td>
-                  <td className="px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">
-                    <div className="relative" ref={openActionId === section.id ? actionMenuRef : null}>
-                      <button type="button" onClick={() => setOpenActionId((current) => (current === section.id ? null : section.id))} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB]" aria-label="Open section actions">
-                        <MoreHorizontal size={16} />
-                      </button>
-                      {openActionId === section.id && (
-                        <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
-                          <button type="button" onClick={() => { setOpenActionId(null); openSectionDrawer(section) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
-                            <Eye size={14} />View Details
-                          </button>
-                          <button type="button" onClick={() => { setOpenActionId(null); handleOpenEditModal(section.id, section) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]">
-                            <Edit2 size={14} />Edit Section
-                          </button>
-                          <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(section) }} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]">
-                            <Trash2 size={14} />Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </td>
+                  <td className="px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{renderSectionActions(section)}</td>
                 </tr>
               ))}
             </tbody>
@@ -387,49 +476,53 @@ export default function Sections() {
       )}
 
       {isDrawerOpen && selectedSectionForDrawer && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/30">
-          <div className="h-full w-full max-w-md border-l border-[#E5E7EB] bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-wide text-[#2563EB]">Section Details</p>
-                <h3 className="mt-1 text-xl font-semibold text-[#111827]">{selectedSectionForDrawer.section_name || 'Section Details'}</h3>
-              </div>
-              <button type="button" onClick={closeSectionDrawer} className="rounded-full border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151]">Close</button>
-            </div>
-            <div className="mt-6 space-y-4 text-sm text-[#374151]">
-              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+        createPortal(
+          <div className="fixed inset-0 z-[var(--tt-layer-drawer)] flex justify-end bg-[#071f41]/55 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && closeSectionDrawer()}>
+            <button type="button" className="flex-1 cursor-default" onClick={closeSectionDrawer} aria-label="Close section details" />
+            <aside ref={drawerRef} tabIndex={-1} className="flex h-full min-h-0 w-full max-w-lg flex-col overflow-hidden border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="section-details-title" onMouseDown={(event) => event.stopPropagation()}>
+              <header className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-3 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#526780]">Section Details</p>
+                  <h2 id="section-details-title" className="mt-1 break-words text-xl font-bold text-[#102a4c]">{selectedSectionForDrawer.section_name || 'Section Details'}</h2>
+                  <p className="mt-1 text-sm text-[#526780]">{selectedSectionForDrawer.subject_code || 'Subject code not recorded'}</p>
+                  <div className="mt-2">{getStatusBadge(selectedSectionForDrawer.status, selectedSectionForDrawer)}</div>
+                </div>
+                <button ref={drawerCloseButtonRef} type="button" onClick={closeSectionDrawer} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close section details"><X size={18} /></button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm text-[#374151] sm:p-5">
+                <div className="space-y-4 pb-4">
+              <div className="rounded-xl border border-[#dbe5f0] bg-[#eef4fa] p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Overview</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded-full bg-[#DBEAFE] px-3 py-1 text-xs font-semibold text-[#1D4ED8]">{selectedSectionForDrawer.subject_code || 'No code'}</span>
-                  <span className="rounded-full bg-[#ECFDF5] px-3 py-1 text-xs font-semibold text-[#16A34A]">{selectedSectionForDrawer.program || 'No program'}</span>
-                  <span className="rounded-full bg-[#FEF3C7] px-3 py-1 text-xs font-semibold text-[#92400E]">{selectedSectionForDrawer.year_level || 'No year level'}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#082b53]">{selectedSectionForDrawer.subject_code || 'No code'}</span>
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">{selectedSectionForDrawer.program || 'No program'}</span>
+                  <span className="rounded-full bg-[#fff5d6] px-3 py-1 text-xs font-semibold text-[#8a5900]">{selectedSectionForDrawer.year_level || 'No year level'}</span>
                 </div>
               </div>
-              <div className="rounded-[10px] border border-[#E5E7EB] p-4">
+              <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Instructor</div>
                 <div className="mt-2 font-medium text-[#111827]">{selectedSectionForDrawer.instructor_name || 'No Instructor Assigned'}</div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-[10px] border border-[#E5E7EB] p-4">
+                <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Students</div>
                   <div className="mt-2 text-lg font-semibold text-[#111827]">{selectedSectionForDrawer.student_count || 0}</div>
                 </div>
-                <div className="rounded-[10px] border border-[#E5E7EB] p-4">
+                <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Activities</div>
                   <div className="mt-2 text-lg font-semibold text-[#111827]">{selectedSectionForDrawer.activity_count || 0}</div>
                 </div>
               </div>
-              <div className="rounded-[10px] border border-[#E5E7EB] p-4">
+              <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Assigned Cabinet</div>
                 <div className="mt-2 font-medium text-[#111827]">{getAssignedCabinet(selectedSectionForDrawer)}</div>
               </div>
-              <div className="rounded-[10px] border border-[#E5E7EB] p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Status</div>
-                <div className="mt-2">{getStatusBadge(selectedSectionForDrawer.status, selectedSectionForDrawer)}</div>
+                </div>
               </div>
-            </div>
+            </aside>
           </div>
-        </div>
+          , document.body,
+        )
       )}
 
       <AddSectionModal
@@ -468,6 +561,19 @@ export default function Sections() {
           setDeletingSection(null)
         }}
         onDeleted={handleSectionDeleted}
+      />
+      <AssignInstructorModal
+        isOpen={isAssignInstructorOpen}
+        sections={assignmentSections}
+        onClose={() => {
+          setIsAssignInstructorOpen(false)
+          setAssignmentSections([])
+        }}
+        onUnauthorized={() => {
+          setIsAssignInstructorOpen(false)
+          setAssignmentSections([])
+        }}
+        onAssigned={handleInstructorAssigned}
       />
     </div>
   )

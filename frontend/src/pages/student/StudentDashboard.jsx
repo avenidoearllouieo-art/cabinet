@@ -103,11 +103,18 @@ export default function StudentDashboard() {
     return null
   }
 
+  const sortedUpcomingActivities = [...upcomingActivities].sort(
+    (a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0),
+  )
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
+        compact
         title="Student Dashboard"
-        description="Track your activities, submissions, and cabinet access activity"
+        description={user
+          ? `Welcome back, ${user.first_name || user.username || 'student'}. Here's a summary of your activities and cabinet access.`
+          : 'Welcome back. Here is a summary of your activities and cabinet access.'}
       />
       <CabinetStationStatus detailLevel="student" />
 
@@ -117,20 +124,13 @@ export default function StudentDashboard() {
         </div>
       ) : (
         <>
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-                <div className="col-span-1 md:col-span-2 xl:col-span-1">
-                  <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-                    <p className="text-sm text-slate-500">Welcome back</p>
-                    <h1 className="mt-1 text-2xl font-semibold text-slate-900">{user ? `Hi, ${user.first_name || user.username}` : 'Hi there'}</h1>
-                    <p className="mt-2 text-sm text-slate-500">Here's a summary of your activities and cabinet activity.</p>
-                  </div>
-                </div>
-
+              <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
                 <StatCard
                   icon={<BookOpen size={18} />}
                   label="Assigned Activities"
                   value={stats.totalActivities}
                   subtitle="Open and upcoming tasks"
+                  mobileSubtitle="Open tasks"
                   bgColor="bg-blue-50"
                   textColor="text-blue-600"
                   borderColor="border-blue-200"
@@ -140,6 +140,7 @@ export default function StudentDashboard() {
                   label="Submitted"
                   value={stats.submittedActivities}
                   subtitle="Activities you submitted"
+                  mobileSubtitle="Submitted"
                   bgColor="bg-emerald-50"
                   textColor="text-emerald-700"
                   borderColor="border-emerald-200"
@@ -149,6 +150,7 @@ export default function StudentDashboard() {
                   label="Pending"
                   value={stats.pendingActivities}
                   subtitle="Still to complete"
+                  mobileSubtitle="To do"
                   bgColor="bg-amber-50"
                   textColor="text-amber-700"
                   borderColor="border-amber-200"
@@ -158,15 +160,16 @@ export default function StudentDashboard() {
                   label="Cabinet Access Today"
                   value={stats.cabinetAccessToday}
                   subtitle="Today’s access attempts"
+                  mobileSubtitle="Today"
                   bgColor="bg-violet-50"
                   textColor="text-violet-700"
                   borderColor="border-violet-200"
                 />
               </div>
 
-          <div className="grid gap-6 xl:grid-cols-3">
-            <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm xl:col-span-2">
-              <div className="mb-4 flex items-center justify-between gap-4">
+          <div className="grid gap-4 xl:grid-cols-3 xl:gap-6">
+            <div className="min-w-0 rounded-[12px] border border-[#E5E7EB] bg-white p-4 shadow-sm sm:p-6 xl:col-span-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 sm:mb-4 sm:gap-4">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Upcoming Activities</h2>
                   <p className="mt-1 text-sm text-slate-500">Deadlines and tasks you need to complete.</p>
@@ -175,15 +178,37 @@ export default function StudentDashboard() {
               </div>
 
               {upcomingActivities.length === 0 ? (
-                <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-16 text-center">
+                <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-8 text-center sm:p-16">
                   <div className="mx-auto max-w-md">
                     <p className="font-semibold text-[#28415f]">No upcoming activities</p>
                     <p className="mt-2 text-sm text-[#64748b]">You&apos;re all caught up. New activities will appear here when assigned.</p>
                   </div>
                 </div>
               ) : (
-                <div className="overflow-x-hidden">
-                  <table className="w-full table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
+                <>
+                <div className="space-y-2 min-[600px]:hidden" role="list" aria-label="Upcoming activities">
+                  {sortedUpcomingActivities.map((activity) => (
+                    <article key={activity.id} role="listitem" className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <h3 className="min-w-0 break-words text-sm font-semibold text-slate-900">{activity.title}</h3>
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{activity.status || 'Active'}</span>
+                      </div>
+                      <p className="mt-1 break-words text-xs text-slate-500">{activity.section_name || activity.subject || '—'}</p>
+                      <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                        <div className="min-w-0">
+                          <dt className="text-slate-500">Due date</dt>
+                          <dd className="mt-1 break-words font-medium text-slate-700">{formatDate(activity.due_date)} {dueBadge(activity.due_date)}</dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-slate-500">Remaining</dt>
+                          <dd className="mt-1 break-words font-medium text-slate-700">{timeRemaining(activity.due_date)}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+                <div className="hidden w-full overflow-x-auto min-[600px]:block" role="region" aria-label="Upcoming activities table" tabIndex={0}>
+                  <table className="w-full min-w-[640px] table-fixed border-collapse text-xs sm:text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50">
                         <th className="w-[28%] border-r border-slate-200 px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-slate-600 sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Activity</th>
@@ -194,10 +219,7 @@ export default function StudentDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {upcomingActivities
-                        .slice()
-                        .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0))
-                        .map((activity) => (
+                      {sortedUpcomingActivities.map((activity) => (
                         <tr key={activity.id} className="border-b border-slate-100 even:bg-slate-50 hover:bg-slate-100">
                           <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-900 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.title}</td>
                           <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.section_name || activity.subject || '—'}</td>
@@ -209,11 +231,12 @@ export default function StudentDashboard() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </div>
 
-            <div className="space-y-6">
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+            <div className="space-y-4 sm:space-y-6">
+              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-4 shadow-sm sm:p-6">
                 <h3 className="text-sm font-semibold text-slate-900">Cabinet Status</h3>
                 <p className="mt-1 text-xs text-slate-500">Quick cabinet info</p>
                 <div className="mt-4 space-y-3 text-sm text-slate-700">
@@ -241,7 +264,7 @@ export default function StudentDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
+              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-4 shadow-sm sm:p-6">
                 <h3 className="text-sm font-semibold text-slate-900">Progress Overview</h3>
                 <p className="mt-1 text-xs text-slate-500">Your activity and submission progress</p>
                 <div className="mt-4 space-y-3">
@@ -262,7 +285,7 @@ export default function StudentDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-3 shadow-sm sm:p-4">
                 <h4 className="text-sm font-semibold text-slate-900">Upcoming Deadlines</h4>
                 <div className="mt-3 space-y-2 text-sm text-slate-700">
                   {upcomingActivities.length === 0 ? (
@@ -284,8 +307,8 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center justify-between gap-4">
+          <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-4 shadow-sm sm:p-6">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 sm:mb-4 sm:gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Recent Submissions</h2>
                 <p className="mt-1 text-sm text-slate-500">Review the status of your latest work.</p>

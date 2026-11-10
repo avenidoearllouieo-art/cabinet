@@ -15,6 +15,12 @@ const getStatusBadge = (status) => {
   return <StatusBadge status={label} label={label} />
 }
 
+const maskNfcId = (value) => {
+  const raw = String(value || '').trim()
+  if (!raw) return '—'
+  return `••••${raw.slice(-4)}`
+}
+
 const formatDate = (value) => {
   if (!value) return '—'
   try {
@@ -97,26 +103,18 @@ export default function StudentAccessLogs() {
   const columns = [
     {
       key: 'access_time',
-      label: 'Date',
-      render: (value) => formatDate(value).split(',')[0] || '—',
-    },
-    {
-      key: 'access_time',
-      label: 'Time',
-      render: (value) => {
-        const formatted = formatDate(value)
-        return formatted.includes(',') ? formatted.split(',')[1].trim() : formatted
-      },
+      label: 'Date & Time',
+      render: (value) => formatDate(value),
     },
     {
       key: 'cabinet_name',
       label: 'Cabinet',
-      render: (value) => value || '—',
+      render: (value) => value || 'Not recorded',
     },
     {
       key: 'nfc_uid',
-      label: 'NFC',
-      render: (value) => value || '—',
+      label: 'Card',
+      render: (value) => maskNfcId(value),
     },
     {
       key: 'status',
@@ -151,7 +149,7 @@ export default function StudentAccessLogs() {
         description="Review your cabinet access history, attempt results, and recent activity."
       />
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard icon={<LogIn size={18} />} label="Today’s Accesses" value={stats.total_accesses_today} subtitle="All attempts today" />
         <StatCard icon={<CheckCircle2 size={18} />} label="Successful Access" value={stats.successful_accesses_today} subtitle="Approved cabinet access" />
         <StatCard icon={<AlertCircle size={18} />} label="Failed Access" value={stats.failed_accesses_today} subtitle="Denied attempts" />

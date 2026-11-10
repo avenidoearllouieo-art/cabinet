@@ -1,29 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Search, Send, CheckCircle2, AlertCircle, Clock, MoreHorizontal, Eye, Trash2 } from 'lucide-react'
+import { Search, Send, CheckCircle2, AlertCircle, Clock, X } from 'lucide-react'
 import api from '../../services/api.js'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
+import Pagination from '../../components/Pagination.jsx'
+import SubmissionActionsMenu from '../../components/submissions/SubmissionActionsMenu.jsx'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import DeleteSubmissionModal from '../../components/submissions/DeleteSubmissionModal.jsx'
 
-const activityTypeOptions = [
-  { value: 'all', label: 'All Activities' },
-  { value: 'assignment', label: 'Assignment' },
-  { value: 'quiz', label: 'Quiz' },
-  { value: 'laboratory', label: 'Laboratory' },
-  { value: 'project', label: 'Project' },
-]
-
 const statusOptions = [
-  { value: 'all', label: 'All' },
+  { value: '', label: 'All statuses' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'late', label: 'Late' },
   { value: 'graded', label: 'Graded' },
-  { value: 'pending', label: 'Pending' },
 ]
+
+const PAGE_SIZE = 10
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -38,21 +34,12 @@ const formatDate = (value) => {
 }
 
 const resolveActivityType = (submission) => {
-  return (
-    submission.activity_type ||
-    submission.activity?.activity_type ||
-    submission.activity?.type ||
-    submission.activity?.description ||
-    '—'
-  )
+  return submission.activity_type || submission.activity?.activity_type || submission.activity?.type || '—'
 }
 
 const resolveStatus = (submission) => {
   const raw = submission.status ? String(submission.status).toLowerCase() : null
-  if (raw === 'graded') return 'graded'
-  if (raw === 'late') return 'late'
-  if (raw === 'submitted') return 'submitted'
-  if (raw === 'pending') return 'pending'
+  if (['graded', 'late', 'submitted'].includes(raw)) return raw
 
   const dueDate = submission.activity?.due_date
   const submittedAt = submission.submitted_at
@@ -65,8 +52,7 @@ const resolveStatus = (submission) => {
   }
 
   if (submission.score != null) return 'graded'
-  if (submission.file || submittedAt) return 'submitted'
-  return 'pending'
+  return 'submitted'
 }
 
 const resolveInstructor = (submission) => {
@@ -82,8 +68,6 @@ const resolveInstructor = (submission) => {
   return '—'
 }
 
-const normalizeText = (value) => (value || '').toString().toLowerCase()
-
 export default function Submissions() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -91,44 +75,39 @@ export default function Submissions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [activityFilter, setActivityFilter] = useState('all')
   const [activityIdFilter, setActivityIdFilter] = useState(() => {
     const params = new URLSearchParams(location.search)
     return params.get('activity') || ''
   })
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [sortBy, setSortBy] = useState('-submitted_at')
+  const [submittedAfter, setSubmittedAfter] = useState('')
+  const [submittedBefore, setSubmittedBefore] = useState('')
+  const [activityOptions, setActivityOptions] = useState([])
+  const [stats, setStats] = useState({ total: 0, pending: 0, graded: 0, late: 0 })
+  const [totalCount, setTotalCount] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageCount, setPageCount] = useState(1)
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
   const [deletingSubmission, setDeletingSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
-  const [openActionId, setOpenActionId] = useState(null)
-  const actionMenuRef = useRef(null)
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      const params = new URLSearchParams(location.search)
-      setActivityIdFilter(params.get('activity') || '')
-    }, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [location.search])
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
-        setOpenActionId(null)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
 
   const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await api.get('/submissions/')
+      const params = { page, ordering: sortBy }
+      if (query.trim()) params.search = query.trim()
+      if (activityIdFilter) params.activity = activityIdFilter
+      if (statusFilter) params.status = statusFilter
+      if (submittedAfter) params.submitted_at_after = submittedAfter
+      if (submittedBefore) params.submitted_at_before = submittedBefore
+      const response = await api.get('/submissions/', { params })
       const rawData = Array.isArray(response.data) ? response.data : response.data.results || []
       setSubmissions(rawData)
+      const count = Array.isArray(response.data) ? rawData.length : Number(response.data.count || 0)
+      setTotalCount(count)
+      setPageCount(Math.max(1, Math.ceil(count / PAGE_SIZE)))
       setError('')
     } catch (err) {
       console.error('Error fetching submissions:', err)
@@ -136,42 +115,44 @@ export default function Submissions() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [activityIdFilter, page, query, sortBy, statusFilter, submittedAfter, submittedBefore])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(fetchSubmissions, 0)
     return () => window.clearTimeout(timeoutId)
   }, [fetchSubmissions])
 
-  const filteredSubmissions = useMemo(() => {
-    const keyword = query.trim().toLowerCase()
-
-    return submissions.filter((submission) => {
-      const activityType = resolveActivityType(submission).toLowerCase()
-      const status = resolveStatus(submission)
-      const studentName = normalizeText(submission.student_name || `${submission.student?.first_name || ''} ${submission.student?.last_name || ''}`)
-      const studentId = normalizeText(submission.student?.student_id)
-      const activityTitle = normalizeText(submission.activity_title || submission.activity?.title)
-      const sectionName = normalizeText(submission.student?.section_name || submission.student?.section?.section_name)
-
-      const matchesSearch =
-        !keyword ||
-        [studentName, studentId, activityTitle, sectionName]
-          .filter(Boolean)
-          .some((value) => value.includes(keyword))
-
-      const matchesActivityFilter = activityFilter === 'all' || activityType === activityFilter
-      const matchesActivityIdFilter = !activityIdFilter || String(submission.activity?.id ?? submission.activity_id ?? submission.activity?.activity_id ?? '').toString() === String(activityIdFilter)
-      const matchesStatusFilter = statusFilter === 'all' || status === statusFilter
-
-      return matchesSearch && matchesActivityFilter && matchesActivityIdFilter && matchesStatusFilter
+  useEffect(() => {
+    let active = true
+    Promise.all([
+      api.get('/submissions/stats/'),
+      fetchAllResults(api, '/activities/'),
+    ]).then(([statsResponse, activitiesResponse]) => {
+      if (!active) return
+      const data = statsResponse.data || {}
+      setStats({ total: Number(data.totalSubmissions || 0), pending: Number(data.pendingReview || 0), graded: Number(data.graded || 0), late: Number(data.lateSubmissions || 0) })
+      setActivityOptions(activitiesResponse.results.map((activity) => ({ id: activity.id, title: activity.title || 'Untitled activity', type: activity.activity_type || activity.type || '' })))
+    }).catch((error) => {
+      if (error.response?.status === 401) navigate('/admin/login')
+      else console.error('Failed to load submission filters or statistics', error)
     })
-  }, [submissions, query, activityFilter, activityIdFilter, statusFilter])
+    return () => { active = false }
+  }, [navigate])
 
-  const totalSubmissions = submissions.length
-  const lateCount = submissions.filter((submission) => resolveStatus(submission) === 'late').length
-  const pendingCount = submissions.filter((submission) => resolveStatus(submission) === 'pending').length
-  const gradedCount = submissions.filter((submission) => resolveStatus(submission) === 'graded').length
+  const filteredSubmissions = submissions
+  const totalSubmissions = stats.total
+  const lateCount = stats.late
+  const pendingCount = stats.pending
+  const gradedCount = stats.graded
+
+  const handleSubmissionAction = (action, row) => {
+    if (action === 'view') {
+      setSelectedSubmissionId(row.id)
+      setIsViewOpen(true)
+    } else if (action === 'delete') {
+      setDeletingSubmission(row)
+    }
+  }
 
   const columns = [
     {
@@ -230,52 +211,8 @@ export default function Submissions() {
     {
       key: 'actions',
       label: 'Action',
-      className: 'w-[13%] text-left',
-      render: (_value, row) => (
-        <div className="relative" ref={openActionId === row.id ? actionMenuRef : null}>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setOpenActionId((current) => (current === row.id ? null : row.id))
-            }}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB]"
-            aria-label="Open submission actions"
-          >
-            <MoreHorizontal size={16} />
-          </button>
-
-          {openActionId === row.id && (
-            <div className="absolute right-0 z-30 mt-2 w-40 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setSelectedSubmissionId(row.id)
-                  setIsViewOpen(true)
-                  setOpenActionId(null)
-                }}
-                className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6]"
-              >
-                <Eye size={14} />
-                View
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setDeletingSubmission(row)
-                  setOpenActionId(null)
-                }}
-                className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2]"
-              >
-                <Trash2 size={14} />
-                Delete
-              </button>
-            </div>
-          )}
-        </div>
-      ),
+      className: 'w-[9%] text-left',
+      render: (_value, row) => <SubmissionActionsMenu submission={row} onAction={handleSubmissionAction} />,
     },
   ]
 
@@ -287,13 +224,13 @@ export default function Submissions() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5 sm:space-y-6">
       <PageHeader
         title="Submissions Management"
         description="Monitor and manage all student activity submissions."
       />
 
-      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <SummaryCard icon={Send} title="Total Submissions" value={totalSubmissions} trendText="All student submissions" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={CheckCircle2} title="Graded" value={gradedCount} trendText="Fully reviewed" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={Clock} title="Pending Review" value={pendingCount} trendText="Awaiting review" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
@@ -306,62 +243,32 @@ export default function Submissions() {
         </div>
       )}
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <section className="min-w-0 rounded-[12px] border border-[#E5E7EB] bg-white p-3 shadow-sm sm:p-5">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Submission Directory</h2>
-            <p className="text-sm text-[#6B7280]">Browse and review student submissions across activities.</p>
+            <h2 className="text-lg font-semibold text-[#102a4c]">Submission Directory</h2>
+            <p className="text-sm text-[#64748b]">Browse and review student submissions across activities.</p>
           </div>
         </div>
 
-        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <label className="relative block w-full lg:max-w-[360px]">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
-              <Search size={16} />
-            </span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search submissions..."
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
+        <div className="mb-4 flex flex-col gap-3">
+          <label className="relative block min-w-0">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
+            <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search student, ID, activity, or section" aria-label="Search submissions" className="tt-control w-full pl-10 pr-10" />
+            {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear submission search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
           </label>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <label className="block min-w-[180px]">
-              <span className="sr-only">Filter activity type</span>
-              <select
-                value={activityFilter}
-                onChange={(event) => setActivityFilter(event.target.value)}
-                className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
-              >
-                {activityTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block min-w-[180px]">
-              <span className="sr-only">Filter status</span>
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
-              >
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="min-w-0"><span className="sr-only">Filter activity</span><select value={activityIdFilter} onChange={(event) => { setActivityIdFilter(event.target.value); setPage(1) }} className="tt-control w-full"><option value="">All activities</option>{activityOptions.map((activity) => <option key={activity.id} value={activity.id}>{activity.title}{activity.type ? ` · ${activity.type}` : ''}</option>)}</select></label>
+            <label className="min-w-0"><span className="sr-only">Filter submission status</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">{statusOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}</select></label>
+            <label className="min-w-0"><span className="sr-only">Submitted after</span><input type="date" aria-label="Submitted after" value={submittedAfter} onChange={(event) => { setSubmittedAfter(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
+            <label className="min-w-0"><span className="sr-only">Submitted before</span><input type="date" aria-label="Submitted before" value={submittedBefore} onChange={(event) => { setSubmittedBefore(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
+            <label className="min-w-0"><span className="sr-only">Sort submissions</span><select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1) }} className="tt-control w-full"><option value="-submitted_at">Newest first</option><option value="submitted_at">Oldest first</option><option value="activity__title">Activity title</option><option value="student__student_id">Student ID</option><option value="score">Grade</option></select></label>
           </div>
         </div>
 
-        <div className="mb-4 flex items-center justify-between text-sm text-slate-500">
-          <div />
-          <div>{filteredSubmissions.length} result{filteredSubmissions.length === 1 ? '' : 's'}</div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+          <span>{totalCount} result{totalCount === 1 ? '' : 's'}{loading ? ' · Loading…' : ''}</span>
+          {(query || activityIdFilter || statusFilter || submittedAfter || submittedBefore) && <button type="button" onClick={() => { setQuery(''); setActivityIdFilter(''); setStatusFilter(''); setSubmittedAfter(''); setSubmittedBefore(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button>}
         </div>
 
         <DataTable
@@ -370,6 +277,33 @@ export default function Submissions() {
           loading={loading}
           expandable
           variant="admin"
+          constrainTableHeight={false}
+          renderMobileCard={(row, { expanded, toggleExpanded }) => {
+            const name = `${row.student_name || ''} ${row.student_last_name || ''}`.trim() || 'Unknown student'
+            const status = resolveStatus(row)
+            const grade = row.score != null ? `${row.score} / ${row.activity_max_score ?? row.activity?.max_score ?? '—'}` : 'Not graded'
+            return (
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-semibold text-[#102a4c]">{name}</p>
+                    <p className="break-all text-xs text-slate-500">{row.student_id || row.student?.student_id || 'Student ID unavailable'}</p>
+                  </div>
+                  <SubmissionActionsMenu submission={row} onAction={handleSubmissionAction} />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2"><StatusBadge status={status} label={status === 'graded' ? 'Graded' : status === 'late' ? 'Late' : 'Submitted'} /></div>
+                <p className="mt-2 break-words text-sm font-medium text-slate-800">{row.activity_title || row.activity?.title || 'Activity'}</p>
+                <p className="text-xs text-slate-500">{resolveActivityType(row)}</p>
+                <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-slate-100 pt-3 text-xs">
+                  <dt className="text-slate-500">Submitted</dt><dd className="break-words text-right text-slate-700">{formatDate(row.submitted_at)}</dd>
+                  <dt className="text-slate-500">Section</dt><dd className="break-words text-right text-slate-700">{row.student?.section_name || row.student_section || '—'}</dd>
+                  <dt className="text-slate-500">Grade</dt><dd className="break-words text-right font-medium text-slate-700">{grade}</dd>
+                </dl>
+                <button type="button" aria-expanded={expanded} onClick={toggleExpanded} className="mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Hide details' : 'More details'}</button>
+                {expanded && <div className="mt-2 space-y-2 border-t border-slate-100 pt-2 text-xs"><p className="whitespace-pre-wrap break-words"><strong>Instructor:</strong> {resolveInstructor(row)}</p><p className="whitespace-pre-wrap break-words"><strong>Remarks:</strong> {row.remarks || '—'}</p><p className="whitespace-pre-wrap break-words"><strong>Feedback:</strong> {row.feedback || '—'}</p></div>}
+              </div>
+            )
+          }}
           renderExpandedRow={(row) => (
             <dl className="grid gap-2 sm:grid-cols-2">
               <div><dt className="font-semibold">Student ID</dt><dd>{row.student?.student_id || row.student_id || '—'}</dd></div>
@@ -378,12 +312,13 @@ export default function Submissions() {
               <div className="sm:col-span-2"><dt className="font-semibold">Feedback</dt><dd className="whitespace-pre-wrap">{row.feedback || '—'}</dd></div>
             </dl>
           )}
-          emptyMessage={submissions.length ? 'No submissions match your filters.' : 'No submissions available.'}
+          emptyMessage={totalCount ? 'No submissions match your filters.' : 'No submissions available.'}
         />
-      </div>
+        {!loading && pageCount > 1 && <Pagination page={page} pageCount={pageCount} onPageChange={setPage} label="Page" />}
+      </section>
 
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-[14px] border border-[#D1FAE5] bg-[#ECFDF5] px-5 py-4 text-sm text-[#065F46] shadow-lg">
+        <div role="status" className="fixed bottom-4 right-4 z-[var(--tt-layer-toast)] max-w-[320px] rounded-[12px] border border-[#D1FAE5] bg-[#ECFDF5] px-4 py-3 text-sm text-[#065F46] shadow-lg">
           {toastMessage}
         </div>
       )}

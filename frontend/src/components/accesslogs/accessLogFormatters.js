@@ -23,6 +23,27 @@ export const formatAccessLogTime = (value) => {
     : 'Not recorded'
 }
 
+export const formatAccessLogDuration = (value) => {
+  if (value === null || value === undefined || value === '') return '—'
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+
+  const totalSeconds = Math.floor(seconds)
+  if (totalSeconds < 60) return `${totalSeconds} sec`
+
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const remainingSeconds = totalSeconds % 60
+  if (totalMinutes < 60) return `${totalMinutes} min${remainingSeconds ? ` ${remainingSeconds} sec` : ''}`
+
+  const totalHours = Math.floor(totalMinutes / 60)
+  const remainingMinutes = totalMinutes % 60
+  if (totalHours < 24) return `${totalHours} hr${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
+
+  const days = Math.floor(totalHours / 24)
+  const remainingHours = totalHours % 24
+  return `${days} day${days === 1 ? '' : 's'}${remainingHours ? ` ${remainingHours} hr` : ''}${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
+}
+
 export const accessLogResult = (log) => {
   const result = String(log?.access_result || log?.status || '').trim().toLowerCase()
   if (!result) return 'Not recorded'

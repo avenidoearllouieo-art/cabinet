@@ -1,7 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { useState } from 'react'
-import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, Settings, BookOpen, LogIn, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import TapTrackLogo from './TapTrackLogo.jsx'
+import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, BookOpen, LogIn } from 'lucide-react'
 
 const menuItems = [
   { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutGrid },
@@ -11,7 +9,6 @@ const menuItems = [
   { label: 'Access Logs', path: '/admin/access-logs', icon: ShieldCheck },
   { label: 'Cabinet Events', path: '/admin/cabinet-events', icon: CalendarDays },
   { label: 'Sections', path: '/admin/sections', icon: Library },
-  { label: 'Settings', path: '/admin/settings', icon: Settings },
 ]
 
 const studentMenuItems = [
@@ -35,42 +32,26 @@ const sidebarVariants = {
   instructor: { title: 'Instructor Menu', subtitle: 'Manage your activities and submissions', items: instructorMenuItems },
 }
 
-export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
+export default function Sidebar({ variant = 'admin', collapsed = false, mobileOpen = false, onMobileClose }) {
   const location = useLocation()
   const config = sidebarVariants[variant] || sidebarVariants.admin
-  const storageKey = `${variant}-sidebar-collapsed`
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKey) === 'true')
-
-  const toggleSidebar = () => {
-    setCollapsed((current) => {
-      const next = !current
-      localStorage.setItem(storageKey, String(next))
-      onCollapsedChange?.(next)
-      return next
-    })
-  }
+  const showLabels = !collapsed || mobileOpen
 
   return (
-    <aside className={`app-sidebar fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto bg-[#071f41] text-white shadow-[8px_0_28px_rgba(0,43,91,0.08)] transition-[width] duration-300 ${collapsed ? 'w-[76px]' : 'w-[250px] max-sm:w-[76px]'}`}>
-      <div className={`border-b border-white/10 py-5 ${collapsed ? 'px-3' : 'px-6 max-sm:px-3'}`}>
-        <div className={`mb-5 flex ${collapsed ? 'justify-center' : 'justify-start max-sm:justify-center'}`}>
-          <TapTrackLogo compact={collapsed} mobileCompact className={collapsed ? 'h-10 w-10' : 'h-auto w-[165px]'} />
-        </div>
-        <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-3 max-sm:justify-center'}`}>
-          {!collapsed && <p className="text-sm font-semibold text-white max-sm:hidden">{config.title}</p>}
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#FFC107]"
-            aria-label={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
-            title={collapsed ? `Expand ${config.title}` : `Collapse ${config.title}`}
-          >
-            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          </button>
-        </div>
-        {!collapsed && <p className="mt-1 text-xs text-white/75 max-sm:hidden">{config.subtitle}</p>}
+    <aside
+      id={`${variant}-sidebar`}
+      aria-label={`${config.title} navigation`}
+      className={`app-sidebar fixed bottom-0 left-0 top-[70px] z-40 overflow-y-auto text-white transition-[width,transform] duration-300 ${collapsed ? 'min-[600px]:w-[76px]' : 'min-[600px]:w-[250px]'} max-[599.98px]:w-[260px] max-[599.98px]:max-w-[85vw] ${mobileOpen ? 'max-[599.98px]:visible max-[599.98px]:translate-x-0' : 'max-[599.98px]:invisible max-[599.98px]:-translate-x-full'}`}
+    >
+      <div className={`border-b border-white/10 py-4 ${showLabels ? 'px-5' : 'px-3'}`}>
+        {showLabels && (
+          <div className="mb-3">
+            <p className="text-sm font-semibold text-white">{config.title}</p>
+            <p className="mt-1 text-xs text-white/75">{config.subtitle}</p>
+          </div>
+        )}
       </div>
-      <nav className="space-y-1 px-3 py-5">
+      <nav aria-label={`${config.title} navigation`} className="space-y-1 px-3 py-3">
         {config.items.map((item) => {
           const Icon = item.icon
           const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
@@ -80,14 +61,16 @@ export default function Sidebar({ variant = 'admin', onCollapsedChange }) {
               key={item.path}
               to={item.path}
               title={item.label}
-              className={`flex h-11 items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-4 max-sm:justify-center max-sm:px-0'} ${
+              onClick={onMobileClose}
+              aria-current={active ? 'page' : undefined}
+              className={`flex h-11 items-center rounded-lg text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] ${showLabels ? 'gap-3 px-4' : 'justify-center px-0'} ${
                 active
                   ? 'bg-[#FFC107] font-bold text-[#071f41] shadow-[0_6px_16px_rgba(255,193,7,0.16)]'
                   : 'text-white/70 hover:bg-white/10 hover:text-white'
               }`}
             >
-              <Icon size={18} strokeWidth={active ? 2.4 : 2} />
-                <span className={collapsed ? 'sr-only' : 'max-sm:sr-only'}>{item.label}</span>
+              <Icon size={18} strokeWidth={active ? 2.4 : 2} aria-hidden="true" />
+              <span className={showLabels ? 'truncate' : 'sr-only'}>{item.label}</span>
             </Link>
           )
         })}

@@ -8,6 +8,7 @@ import StatusBadge from '../../components/StatusBadge'
 import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.jsx'
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
+import { formatAccessLogDuration } from '../../components/accesslogs/accessLogFormatters.js'
 import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus } from 'lucide-react'
 
 const formatDate = (value) => {
@@ -348,11 +349,7 @@ export default function AccessLogs() {
   }
 
   const getDurationValue = (row) => {
-    if (row.duration_seconds == null) return '—'
-    const seconds = row.duration_seconds
-    if (seconds < 60) return `${seconds}s`
-    const minutes = Math.floor(seconds / 60)
-    return `${minutes} min`
+    return formatAccessLogDuration(row.duration_seconds)
   }
 
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize))
@@ -369,7 +366,7 @@ export default function AccessLogs() {
         description="Monitor cabinet and NFC access events across all users."
       />
 
-      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <SummaryCard icon={LogIn} title="Total Access Logs" value={totalLogs} trendText="All login records" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={CheckCircle2} title="Successful Access" value={successfulLogins} trendText="Completed sessions" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={AlertCircle} title="Failed Access" value={failedLogins} trendText="Login failures" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />

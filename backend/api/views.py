@@ -314,6 +314,46 @@ class SectionViewSet(viewsets.ModelViewSet):
 
         return Section.objects.filter(instructor=user)
 
+    @action(detail=False, methods=['patch'], url_path='assign-instructor')
+    def assign_instructor(self, request):
+        section_ids = request.data.get('section_ids')
+        instructor_id = request.data.get('instructor_id')
+        if not isinstance(section_ids, list) or not section_ids:
+            return Response({'section_ids': ['Select at least one section.']}, status=status.HTTP_400_BAD_REQUEST)
+        if any(not isinstance(section_id, int) or isinstance(section_id, bool) or section_id < 1 for section_id in section_ids):
+            return Response({'section_ids': ['Section IDs must be positive integers.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(instructor_id, int) or isinstance(instructor_id, bool):
+            return Response({'instructor_id': ['Select a registered instructor.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        unique_ids = list(dict.fromkeys(section_ids))
+        instructor = User.objects.filter(pk=instructor_id, role=User.RoleChoices.INSTRUCTOR).first()
+        if not instructor:
+            return Response({'instructor_id': ['Select a registered instructor.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            sections = list(Section.objects.select_for_update().filter(section_id__in=unique_ids))
+            if len(sections) != len(unique_ids):
+                return Response({'section_ids': ['One or more selected sections no longer exist.']}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer_class = self.get_serializer_class()
+            for section in sections:
+                serializer = serializer_class(
+                    section,
+                    data={'instructor': instructor.pk},
+                    partial=True,
+                    context=self.get_serializer_context(),
+                )
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+
+            response_data = serializer_class(
+                sections,
+                many=True,
+                context=self.get_serializer_context(),
+            ).data
+
+        return Response(response_data)
+
     def get_queryset(self):
         user = self.request.user
         queryset = Section.objects.annotate(
@@ -385,6 +425,7 @@ class SectionViewSet(viewsets.ModelViewSet):
             },
             'students': UserSerializer(students[:5], many=True, context=context).data,
             'activities': ActivitySerializer(activities[:4], many=True, context=context).data,
+            'recent_submissions': SubmissionSerializer(submissions[:5], many=True, context=context).data,
             'access_logs': AccessLogSerializer(access_logs[:5], many=True, context=context).data,
             'cabinet_stations': cabinet_stations,
         })
@@ -1208,14 +1249,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         `pendingReview`, `graded`, `lateSubmissions`.
         """
         user = request.user
-        if user.role == 'admin':
-            base_qs = Submission.objects.all()
-        elif user.role == 'instructor':
-            base_qs = Submission.objects.filter(models.Q(activity__created_by=user) | models.Q(student__section__instructor=user))
-        elif user.role == 'student':
-            base_qs = Submission.objects.filter(student=user)
-        else:
+        if user.role not in ('admin', 'instructor', 'student'):
             return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        base_qs = self.filter_queryset(self.get_queryset())
 
         total = base_qs.count()
         graded = base_qs.filter(score__isnull=False).count()
@@ -1234,9 +1270,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         """Grade a submission and update the existing record in place."""
         submission = self.get_object()
 
-        if request.user.role == 'instructor' and submission.activity.created_by != request.user:
+        if request.user.role == 'instructor' and not self._is_instructor_authorized_for_submission(submission):
             return Response(
-                {'detail': 'Permission denied. You can only grade submissions for your own activities.'},
+                {'detail': 'Permission denied. You can only grade submissions for your activities or assigned sections.'},
                 status=status.HTTP_403_FORBIDDEN
             )
         if request.user.role not in ['instructor', 'admin']:

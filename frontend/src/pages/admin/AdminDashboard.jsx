@@ -53,24 +53,24 @@ export default function AdminDashboard() {
   }, [])
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Operations Overview" description="Live cabinet activity and system readiness." />
+    <div className="space-y-5">
+      <PageHeader compact title="Operations Overview" description="Live cabinet activity and system readiness." />
       <CabinetStationStatus detailLevel="admin" />
 
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500 shadow-sm">Loading operations dashboard…</div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <SummaryCard icon={Users} title="Enrolled Students" value={stats.totalStudents} trendText="Registered system users" iconBg="bg-blue-50" iconColor="text-blue-900" />
-            <SummaryCard icon={ClipboardList} title="Active Activities" value={stats.totalAssignments} trendText="Published coursework" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-            <SummaryCard icon={Send} title="Submissions" value={stats.totalSubmissions} trendText="Files received" iconBg="bg-violet-50" iconColor="text-violet-900" />
-            <SummaryCard icon={ShieldCheck} title="Access Records" value={stats.totalAccessLogs} trendText="Recorded NFC and login events" iconBg="bg-amber-50" iconColor="text-amber-900" />
+          <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
+            <SummaryCard icon={Users} title="Enrolled Students" value={stats.totalStudents} trendText="Registered system users" mobileTrendText="Students" iconBg="bg-blue-50" iconColor="text-blue-900" />
+            <SummaryCard icon={ClipboardList} title="Active Activities" value={stats.totalAssignments} trendText="Published coursework" mobileTrendText="Published" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+            <SummaryCard icon={Send} title="Submissions" value={stats.totalSubmissions} trendText="Files received" mobileTrendText="Received" iconBg="bg-violet-50" iconColor="text-violet-900" />
+            <SummaryCard icon={ShieldCheck} title="Access Records" value={stats.totalAccessLogs} trendText="Recorded NFC and login events" mobileTrendText="NFC and login" iconBg="bg-amber-50" iconColor="text-amber-900" />
           </div>
 
           <div className="grid gap-6">
             <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 sm:px-6 sm:py-5">
                 <div>
                   <p className="flex items-center gap-2 text-sm font-semibold text-taptrack-navy"><Radio size={18} className="text-taptrack-gold" /> Recent access activity</p>
                   <p className="mt-1 text-sm text-slate-500">Latest events recorded by TapTrack.</p>
@@ -81,7 +81,7 @@ export default function AdminDashboard() {
                 {recentAccessLogs.length ? recentAccessLogs.slice(0, 5).map((log, index) => {
                   const success = String(log.status).toLowerCase() === 'success'
                   return (
-                    <div key={log.id || index} className={`flex min-h-14 items-center justify-between gap-4 px-6 py-3 ${index % 2 ? 'bg-taptrack-stripe' : 'bg-white'} hover:bg-slate-100`}>
+                    <div key={log.id || index} className={`flex min-h-12 items-center justify-between gap-3 px-3 py-2 sm:min-h-14 sm:gap-4 sm:px-6 sm:py-3 ${index % 2 ? 'bg-taptrack-stripe' : 'bg-white'} hover:bg-slate-100`}>
                       <div className="min-w-0">
                         <p className="truncate font-medium text-taptrack-navy">{log.user?.name?.trim() || 'Unregistered card'}</p>
                         <p className="text-xs text-slate-500">{log.user?.student_id || 'NFC access event'} · {formatDate(log.access_time)}</p>
@@ -89,7 +89,7 @@ export default function AdminDashboard() {
                       <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${success ? 'bg-emerald-50 text-[#16A34A]' : 'bg-red-50 text-[#B91C1C]'}`}>{success ? 'Success' : 'Failed'}</span>
                     </div>
                   )
-                }) : <div className="px-6 py-12 text-center text-sm text-slate-500">No access activity has been recorded yet.</div>}
+                }) : <div className="px-3 py-7 text-center text-sm text-slate-500 sm:px-6 sm:py-12">No access activity has been recorded yet.</div>}
               </div>
             </section>
           </div>

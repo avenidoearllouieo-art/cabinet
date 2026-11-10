@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
@@ -6,7 +6,7 @@ import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import StatusBadge from '../../components/StatusBadge'
 import DataTable from '../../components/DataTable'
-import { Search, BookOpen, Users, ClipboardCheck, Clock3, BadgeCheck, CircleOff, X } from 'lucide-react'
+import { Search, BookOpen, Users, ClipboardCheck, Clock3, BadgeCheck, X } from 'lucide-react'
 
 const getStatusBadge = (status) => {
   if (!status) return <span className="inline-flex rounded-full px-3 py-1 text-xs font-semibold text-slate-600">—</span>
@@ -46,10 +46,14 @@ const formatAcademicYear = (value) => {
   return schoolYear ? `${schoolYear[1]}–${schoolYear[2]}` : raw || '—'
 }
 
-const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError, onClose, onViewStudents, onViewActivities, onViewSubmissions, onViewAccess }) => {
+const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError, onClose, onViewStudent, onViewActivity, onViewStudents, onViewActivities, onViewSubmissions, onViewAccess }) => {
+  const [activeTab, setActiveTab] = useState('overview')
+  const drawerRef = useRef(null)
+  const closeButtonRef = useRef(null)
   const metrics = overview?.counts || {}
   const students = overview?.students || []
   const sectionActivities = overview?.activities || []
+  const recentSubmissions = overview?.recent_submissions || []
   const accessLogs = overview?.access_logs || []
   const cabinetStations = overview?.cabinet_stations || []
   const studentCount = metrics.students || 0
@@ -62,41 +66,87 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
   const sectionData = overview?.section || section
 
   useEffect(() => {
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus({ preventScroll: true }), 0)
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...(drawerRef.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') || [])]
+        .filter((element) => element.getClientRects().length)
+      if (!focusable.length) {
+        event.preventDefault()
+        drawerRef.current?.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKeyDown)
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
   }, [onClose])
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex bg-[#071f41]/55 backdrop-blur-[2px]">
       <button type="button" className="flex-1" onClick={onClose} aria-label="Close section drawer" />
-      <aside className="relative flex w-full max-w-[600px] flex-col overflow-y-auto border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-[-18px_0_50px_rgba(0,43,91,0.18)] sm:p-0">
-        <button
-          type="button"
-          onClick={onClose}
-          className="sticky right-4 top-4 z-20 ml-auto mr-4 mt-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#cbd8e6] bg-white text-[#28415f] shadow-sm transition hover:border-[#002B5B] hover:bg-[#f4f8fc]"
-          aria-label="Close section drawer"
-          title="Close details"
-        >
-          <X size={18} />
-        </button>
+      <aside ref={drawerRef} tabIndex={-1} className="relative flex h-full min-h-0 w-full max-w-[640px] flex-col overflow-hidden border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-[-18px_0_50px_rgba(0,43,91,0.18)]" role="dialog" aria-modal="true" aria-labelledby="instructor-section-overview-title">
+        <header className="sticky top-0 z-20 shrink-0 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[#082b53]">Section overview</span>
+                {getStatusBadge(sectionData.status)}
+              </div>
+              <h2 id="instructor-section-overview-title" className="mt-3 break-words text-xl font-bold tracking-tight text-[#102a4c] sm:text-2xl">{sectionData.section_name || 'Unnamed Section'}</h2>
+              <p className="mt-1 text-sm font-medium text-[#64748b]">{sectionData.subject_code || 'Subject Code not available'}</p>
+            </div>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={onClose}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]"
+              aria-label="Close section drawer"
+              title="Close details"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <nav className="mt-4 flex gap-1 overflow-x-auto border-b border-[#dbe5f0]" role="tablist" aria-label="Section details">
+            {[
+              ['overview', 'Overview'],
+              ['students', 'Students'],
+              ['activities', 'Activities'],
+              ['submissions', 'Submissions'],
+              ['cabinet', 'Cabinet Access'],
+            ].map(([tab, label]) => (
+              <button key={tab} id={`section-tab-${tab}`} type="button" role="tab" aria-selected={activeTab === tab} aria-controls={`section-tabpanel-${tab}`} onClick={() => setActiveTab(tab)} className={`shrink-0 border-b-2 px-3 py-2 text-xs font-semibold transition sm:text-sm ${activeTab === tab ? 'border-[#ffc107] text-[#082b53]' : 'border-transparent text-[#64748b] hover:text-[#102a4c]'}`}>
+                {label}
+              </button>
+            ))}
+          </nav>
+        </header>
 
-        <div className="space-y-4 px-4 pb-6 pt-2 sm:px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="space-y-4">
           {overviewLoading && <p className="text-sm text-slate-500">Loading this section&apos;s workspace…</p>}
           {overviewError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{overviewError}</p>}
-          <div className="rounded-xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)]">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-[#eef4fa] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[#1d5b91]">
-                Section overview
-              </span>
-              {getStatusBadge(sectionData.status)}
-            </div>
-            <h2 className="mt-3 text-2xl font-bold tracking-tight text-[#102a4c]">{sectionData.section_name || 'Unnamed Section'}</h2>
-            <p className="mt-1 text-sm font-medium text-[#64748b]">{sectionData.subject_code || 'Subject Code not available'}</p>
-          </div>
-
+          {activeTab === 'overview' && <section id="section-tabpanel-overview" role="tabpanel" aria-labelledby="section-tab-overview" className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
               <p className="text-sm font-bold text-[#28415f]">Section information</p>
@@ -116,7 +166,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                 </div>
                 <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
                   <div className="flex items-center gap-2 text-[#64748b]"><BookOpen size={15} /> <span className="text-xs">Activities</span></div>
-                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{sectionActivities.length}</p>
+                  <p className="mt-1 text-2xl font-bold text-[#102a4c]">{activityCount}</p>
                 </div>
                 <div className="rounded-xl border border-[#e7edf4] bg-[#f7f9fc] p-3">
                   <div className="flex items-center gap-2 text-[#64748b]"><BadgeCheck size={15} /> <span className="text-xs">Submitted</span></div>
@@ -129,31 +179,9 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
               </div>
             </div>
           </div>
+          </section>}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button type="button" onClick={onViewStudents} className="rounded-xl border border-[#dbe5f0] bg-white p-4 text-left shadow-sm transition hover:border-[#FFC107] hover:shadow-md">
-              <span className="flex items-center gap-2 text-sm font-bold text-[#102a4c]"><Users size={17} /> STUDENTS</span>
-              <span className="mt-2 block text-sm text-slate-600">{studentCount} students</span>
-              <span className="mt-3 block text-sm font-semibold text-[#1d5b91]">View →</span>
-            </button>
-            <button type="button" onClick={onViewActivities} className="rounded-xl border border-[#dbe5f0] bg-white p-4 text-left shadow-sm transition hover:border-[#FFC107] hover:shadow-md">
-              <span className="flex items-center gap-2 text-sm font-bold text-[#102a4c]"><BookOpen size={17} /> ACTIVITIES</span>
-              <span className="mt-2 block text-sm text-slate-600">{activityCount} activities</span>
-              <span className="mt-3 block text-sm font-semibold text-[#1d5b91]">View →</span>
-            </button>
-            <button type="button" onClick={onViewSubmissions} className="rounded-xl border border-[#dbe5f0] bg-white p-4 text-left shadow-sm transition hover:border-[#FFC107] hover:shadow-md">
-              <span className="flex items-center gap-2 text-sm font-bold text-[#102a4c]"><ClipboardCheck size={17} /> SUBMISSIONS</span>
-              <span className="mt-2 block text-sm text-slate-600">{submittedCount} submitted · {missingCount} missing</span>
-              <span className="mt-3 block text-sm font-semibold text-[#1d5b91]">View →</span>
-            </button>
-            <button type="button" onClick={onViewAccess} className="rounded-xl border border-[#dbe5f0] bg-white p-4 text-left shadow-sm transition hover:border-[#FFC107] hover:shadow-md">
-              <span className="flex items-center gap-2 text-sm font-bold text-[#102a4c]"><CircleOff size={17} /> CABINET ACCESS</span>
-              <span className="mt-2 block text-sm text-slate-600">{cabinetStations.length ? cabinetStations.map((item) => item.station).join(', ') : 'No cabinet assigned'}</span>
-              <span className="mt-3 block text-sm font-semibold text-[#1d5b91]">View →</span>
-            </button>
-          </div>
-
-          <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+          {activeTab === 'students' && <section id="section-tabpanel-students" role="tabpanel" aria-labelledby="section-tab-students" className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-[#28415f]">Student preview</p>
@@ -163,7 +191,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
             </div>
             <div className="mt-4 space-y-2">
               {students.slice(0, 4).map((student) => (
-                <div key={student.id || student.student_id} className="flex items-center justify-between rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2.5">
+                <button key={student.id || student.student_id} type="button" onClick={() => onViewStudent(student.id)} disabled={!student.id} className="flex w-full items-center justify-between rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2.5 text-left transition hover:border-[#ffc107] disabled:cursor-default">
                   <div className="flex items-center gap-3">
                     <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#dcecf9] text-sm font-bold text-[#1d5b91]">
                       {(student.first_name?.[0] || student.last_name?.[0] || 'S').toUpperCase()}
@@ -173,14 +201,14 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                       <p className="text-xs text-slate-500">{student.student_id || 'Student ID not set'}</p>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
               {studentCount > 4 && <p className="text-sm text-slate-500">+{studentCount - 4} more learners</p>}
               {!studentCount && <p className="text-sm text-slate-500">No students are currently linked to this section.</p>}
             </div>
-          </div>
+          </section>}
 
-          <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+          {activeTab === 'activities' && <section id="section-tabpanel-activities" role="tabpanel" aria-labelledby="section-tab-activities" className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-[#28415f]">Latest activities</p>
@@ -190,7 +218,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
             </div>
             <div className="mt-4 space-y-2">
               {sectionActivities.slice(0, 3).map((activity) => (
-                <div key={activity.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-3">
+                <button key={activity.id} type="button" onClick={() => onViewActivity(activity.id)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-3 text-left transition hover:border-[#ffc107]">
                   <div>
                     <p className="text-sm font-medium text-slate-900">{activity.title || 'Untitled activity'}</p>
                     <p className="text-xs text-slate-500">{activity.due_date ? `Due ${new Date(activity.due_date).toLocaleDateString()}` : 'No due date'}</p>
@@ -198,13 +226,13 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${String(activity.status || '').toLowerCase().includes('complete') ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
                     {activity.status || 'Active'}
                   </span>
-                </div>
+                </button>
               ))}
               {!sectionActivities.length && <p className="text-sm text-slate-500">No activities have been linked to this section yet.</p>}
             </div>
-          </div>
+          </section>}
 
-          <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
+          {activeTab === 'submissions' && <section id="section-tabpanel-submissions" role="tabpanel" aria-labelledby="section-tab-submissions" className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-[#28415f]">Submission overview</p>
@@ -233,34 +261,48 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
             <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200">
               <div className="h-full rounded-full bg-[#FFC107] transition-all" style={{ width: `${Math.min(100, completionRate)}%` }} />
             </div>
-          </div>
+            <div className="mt-5 border-t border-[#e7edf4] pt-4">
+              <p className="text-sm font-bold text-[#28415f]">Recent submissions</p>
+              {recentSubmissions.length ? (
+                <ul className="mt-3 space-y-2">
+                  {recentSubmissions.slice(0, 5).map((submission) => (
+                    <li key={submission.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2">
+                      <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{submission.student_name || 'Unknown student'} · {submission.activity_title || 'Unknown activity'}</p><p className="text-xs text-slate-500">{submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Date unavailable'}</p></div>
+                      <StatusBadge status={submission.status || 'submitted'} label={submission.score == null ? submission.status || 'Submitted' : `Graded · ${submission.score}`} />
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="mt-2 text-sm text-slate-500">No submissions have been recorded for this section.</p>}
+            </div>
+          </section>}
 
+          {activeTab === 'cabinet' && (
+            <section id="section-tabpanel-cabinet" role="tabpanel" aria-labelledby="section-tab-cabinet" className="space-y-4">
           <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[#28415f]">Cabinet information</p>
-                <p className="text-xs text-slate-500">Assigned to this section</p>
+                <p className="text-sm font-bold text-[#28415f]">Stations used by assigned activities</p>
+                <p className="text-xs text-slate-500">Current station availability, not access history</p>
               </div>
-              <button type="button" onClick={onViewAccess} className="shrink-0 text-xs font-semibold text-[#1d5b91] hover:underline">View all →</button>
             </div>
             {cabinetStations.length ? (
               <div className="mt-3 space-y-2">
                 {cabinetStations.map((item) => (
                   <div key={item.station} className="flex items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2.5">
                     <span className="text-sm font-semibold text-slate-900">{item.station}</span>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${item.status === 'Occupied' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>{item.status}</span>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${item.status === 'Occupied' ? 'bg-amber-50 text-amber-800' : item.status === 'Available' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>{item.status || 'Unknown'}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">No cabinet assigned</p>
+              <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">No station is currently assigned by an activity. Historical access is listed below.</p>
             )}
           </div>
 
           <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[#28415f]">Recent cabinet access</p>
+                <p className="text-sm font-bold text-[#28415f]">Historical cabinet access</p>
                 <p className="text-xs text-slate-500">Latest records for students in this section</p>
               </div>
               <button type="button" onClick={onViewAccess} className="shrink-0 text-xs font-semibold text-[#1d5b91] hover:underline">View all →</button>
@@ -277,7 +319,10 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
               ))}
               {!accessLogs.length && <p className="text-sm text-slate-500">No cabinet access records for this section.</p>}
             </div>
-          </div>
+            </div>
+            </section>
+          )}
+        </div>
         </div>
       </aside>
     </div>,
@@ -419,6 +464,11 @@ export default function InstructorSections() {
     setOverview(null)
   }
 
+  const closeDrawer = useCallback(() => {
+    setSelectedSection(null)
+    setOverview(null)
+  }, [])
+
   const handleViewStudents = () => {
     if (!selectedSection) return
     navigate(`/instructor/sections/${selectedSection.section_id ?? selectedSection.id}/students`)
@@ -427,6 +477,16 @@ export default function InstructorSections() {
   const handleViewActivities = () => {
     if (!selectedSectionId) return
     navigate(`/instructor/activities?section=${selectedSectionId}`)
+  }
+
+  const handleViewStudent = (studentId) => {
+    if (!studentId) return
+    navigate(`/instructor/students/${studentId}`)
+  }
+
+  const handleViewActivity = (activityId) => {
+    if (!activityId) return
+    navigate(`/instructor/activities/${activityId}`)
   }
 
   const handleViewSubmissions = () => {
@@ -494,7 +554,7 @@ export default function InstructorSections() {
     <div className="space-y-5">
       <PageHeader title="Sections" description="Review your assigned classes, students, activities, and submissions." />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard icon={<BookOpen />} label="Assigned Sections" value={totalSections} subtitle="Classes assigned to you" bgColor="bg-blue-50" textColor="text-blue-900" />
         <StatCard icon={<Users />} label="Students" value={totalStudents} subtitle="Across your sections" bgColor="bg-emerald-50" textColor="text-emerald-900" />
         <StatCard icon={<ClipboardCheck />} label="Activities" value={activeActivities} subtitle="Assigned to your sections" bgColor="bg-sky-50" textColor="text-sky-900" />
@@ -576,6 +636,12 @@ export default function InstructorSections() {
           </div>
         </div>
 
+        {(query || programFilter !== 'all' || yearLevelFilter !== 'all' || academicYearFilter !== 'all' || statusFilter !== 'all' || sortBy !== 'name-asc') && (
+          <div className="mb-4 flex justify-end">
+            <button type="button" onClick={() => { setQuery(''); setProgramFilter('all'); setYearLevelFilter('all'); setAcademicYearFilter('all'); setStatusFilter('all'); setSortBy('name-asc') }} className="min-h-9 rounded-lg border border-[#dbe5f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#082b53] hover:bg-[#eef4fa]">Reset filters</button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Assigned sections</h2>
@@ -601,7 +667,9 @@ export default function InstructorSections() {
           overview={overview}
           overviewLoading={overviewLoading}
           overviewError={overviewError}
-          onClose={() => { setSelectedSection(null); setOverview(null) }}
+          onClose={closeDrawer}
+          onViewStudent={handleViewStudent}
+          onViewActivity={handleViewActivity}
           onViewStudents={handleViewStudents}
           onViewActivities={handleViewActivities}
           onViewSubmissions={handleViewSubmissions}

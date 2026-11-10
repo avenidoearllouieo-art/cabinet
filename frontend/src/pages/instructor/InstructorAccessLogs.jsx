@@ -17,6 +17,11 @@ const getStatusBadge = (log) => {
   return <StatusBadge status={result.toLowerCase()} label={result} />
 }
 
+const maskNfcUid = (value) => {
+  const uid = String(value || '').trim()
+  return uid ? `••••${uid.slice(-4)}` : 'Not recorded'
+}
+
 export default function InstructorAccessLogs() {
   const location = useLocation()
   const scopedSectionId = new URLSearchParams(location.search).get('section') || ''
@@ -24,6 +29,8 @@ export default function InstructorAccessLogs() {
   const [sections, setSections] = useState([])
   const [cabinetOptions, setCabinetOptions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [statsError, setStatsError] = useState('')
   const [stats, setStats] = useState({
     total_accesses_today: 0,
     successful_accesses_today: 0,
@@ -50,12 +57,17 @@ export default function InstructorAccessLogs() {
   }, [])
 
   const fetchStats = useCallback(async () => {
+    setStatsLoading(true)
     try {
       const params = activeSectionFilter !== 'all' ? { user__section: activeSectionFilter } : undefined
       const response = await api.get('/access-logs/stats/', { params })
       setStats((current) => response.data || current)
+      setStatsError('')
     } catch (err) {
       console.error('Failed to load access log stats:', err)
+      setStatsError('Access statistics are unavailable.')
+    } finally {
+      setStatsLoading(false)
     }
   }, [activeSectionFilter])
 
@@ -142,47 +154,52 @@ export default function InstructorAccessLogs() {
         </div>
       ),
     },
-    { key: 'student_name', label: 'Student', className: 'min-w-[170px]', render: (value) => accessLogValue(value) },
+    {
+      key: 'student_name',
+      label: 'Student',
+      className: 'min-w-[140px]',
+      render: (value, row) => <div><p className="font-semibold text-[#102a4c]">{accessLogValue(value)}</p><p className="text-xs text-slate-500">{row.student_id || 'ID unavailable'}</p></div>,
+    },
     {
       key: 'section_name',
       label: 'Section',
-      className: 'min-w-[140px]',
+      className: 'min-w-[100px]',
       render: (value) => accessLogValue(value),
     },
-    { key: 'cabinet_name', label: 'Cabinet', className: 'min-w-[140px]', render: (value) => accessLogValue(value) },
+    { key: 'cabinet_name', label: 'Cabinet', className: 'min-w-[100px]', render: (value) => accessLogValue(value) },
     {
       key: 'nfc_uid',
-      label: 'NFC UID',
-      className: 'min-w-[145px]',
-      render: (value) => accessLogValue(value),
+      label: 'Card UID',
+      className: 'min-w-[95px]',
+      render: (value) => maskNfcUid(value),
     },
     {
       key: 'access_result',
       label: 'Access Result',
-      className: 'min-w-[125px]',
+      className: 'min-w-[95px]',
       render: (_value, row) => getStatusBadge(row),
     },
     {
       key: 'photo_capture_status',
       label: 'Photo',
-      className: 'min-w-[90px]',
+      className: 'min-w-[70px]',
       render: (value, row) => <AccessLogPhotoPanel eventId={row.id} captureStatus={value} allowImage compact />,
     },
     {
       key: 'reason',
       label: 'Reason',
-      className: 'min-w-[160px]',
+      className: 'min-w-[130px]',
       render: (_value, row) => accessLogResult(row) === 'Success' ? 'Not applicable' : accessLogValue(row.reason),
     },
     {
       key: 'actions',
       label: 'Action',
-      className: 'min-w-[150px]',
+      className: 'min-w-[100px]',
       render: (_value, row) => (
         <button
           type="button"
           onClick={() => handleViewDetails(row)}
-          className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[#dbe5f0] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#082b53] transition hover:border-[#ffc107] hover:bg-[#fff9e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]"
         >
           <Eye size={14} />
           View Details
@@ -198,12 +215,14 @@ export default function InstructorAccessLogs() {
         description="Monitor cabinet access activity for students assigned to your sections."
       />
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<LogIn />} label="Total Access Today" value={stats.total_accesses_today} subtitle="Cabinet attempts" bgColor="bg-amber-50" textColor="text-amber-700" />
-        <StatCard icon={<CheckCircle2 />} label="Successful Access" value={stats.successful_accesses_today} subtitle="Granted attempts" bgColor="bg-emerald-50" textColor="text-emerald-700" />
-        <StatCard icon={<AlertCircle />} label="Failed Access" value={stats.failed_accesses_today} subtitle="Denied attempts" bgColor="bg-rose-50" textColor="text-rose-700" />
-        <StatCard icon={<Users />} label="Active Students" value={stats.active_students_today} subtitle="Today" bgColor="bg-blue-50" textColor="text-blue-700" />
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
+        <StatCard icon={<LogIn />} label="Total Access Today" value={statsLoading ? '…' : statsError ? '—' : stats.total_accesses_today} subtitle="Cabinet attempts" bgColor="bg-amber-50" textColor="text-amber-700" />
+        <StatCard icon={<CheckCircle2 />} label="Successful Access" value={statsLoading ? '…' : statsError ? '—' : stats.successful_accesses_today} subtitle="Granted attempts" bgColor="bg-emerald-50" textColor="text-emerald-700" />
+        <StatCard icon={<AlertCircle />} label="Failed Access" value={statsLoading ? '…' : statsError ? '—' : stats.failed_accesses_today} subtitle="Denied attempts" bgColor="bg-rose-50" textColor="text-rose-700" />
+        <StatCard icon={<Users />} label="Active Students" value={statsLoading ? '…' : statsError ? '—' : stats.active_students_today} subtitle="Unique students today" bgColor="bg-blue-50" textColor="text-blue-700" />
       </div>
+
+      {statsError && <p role="status" className="text-sm text-amber-800">{statsError}</p>}
 
       {error && (
         <div className="rounded-[12px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -307,7 +326,31 @@ export default function InstructorAccessLogs() {
           </div>
         </div>
 
-        <DataTable columns={columns} data={logs} loading={loading} showActions={false} emptyMessage="No access records found." />
+        <DataTable
+          columns={columns}
+          data={logs}
+          loading={loading}
+          showActions={false}
+          emptyMessage="No access records found."
+          renderMobileCard={(row) => (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0"><p className="break-words font-semibold text-[#102a4c]">{accessLogValue(row.student_name)}</p><p className="text-xs text-slate-500">{row.student_id || 'ID unavailable'} · {row.section_name || 'Section unavailable'}</p></div>
+                {getStatusBadge(row)}
+              </div>
+              <dl className="grid grid-cols-2 gap-2 text-xs">
+                <div><dt className="text-slate-500">Date &amp; Time</dt><dd className="mt-0.5 font-medium text-slate-700">{formatAccessLogDate(row.access_time)} · {formatAccessLogTime(row.access_time)}</dd></div>
+                <div><dt className="text-slate-500">Cabinet</dt><dd className="mt-0.5 font-medium text-slate-700">{accessLogValue(row.cabinet_name)}</dd></div>
+                <div><dt className="text-slate-500">Card UID</dt><dd className="mt-0.5 font-medium text-slate-700">{maskNfcUid(row.nfc_uid)}</dd></div>
+                <div><dt className="text-slate-500">Reason</dt><dd className="mt-0.5 break-words font-medium text-slate-700">{accessLogResult(row) === 'Success' ? 'Not applicable' : accessLogValue(row.reason)}</dd></div>
+              </dl>
+              <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-2">
+                <AccessLogPhotoPanel eventId={row.id} captureStatus={row.photo_capture_status} allowImage compact />
+                <button type="button" onClick={() => handleViewDetails(row)} className="instructor-table-action"><Eye size={14} />View details</button>
+              </div>
+            </div>
+          )}
+        />
 
         <Pagination page={page} pageCount={pageCount} onPageChange={setPage} label="Showing page" />
       </div>

@@ -13,18 +13,43 @@ import EditActivityModal from '../../components/activities/EditActivityModal.jsx
 import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
 import AssignSectionsModal from '../../components/activities/AssignSectionsModal.jsx'
 import AddActivityModal from '../../components/activities/AddActivityModal.jsx'
-import { Search, Plus, ClipboardList, CalendarDays, CalendarCheck, XCircle } from 'lucide-react'
+import { fetchAllResults } from '../../services/paginatedResults.js'
+import Pagination from '../../components/Pagination.jsx'
+import { Search, Plus, ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal, X } from 'lucide-react'
 
 const formatDate = (value) => {
-  if (!value) return '—'
   try {
     return new Intl.DateTimeFormat('en-US', {
-      dateStyle: 'medium',
+  dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(value))
   } catch {
     return String(value)
   }
+}
+
+const getActivityStatus = (row) => {
+  const rawStatus = typeof row.status === 'string' ? row.status.trim() : ''
+  if (rawStatus) {
+    const normalized = rawStatus.toLowerCase()
+    if (['active', 'published'].includes(normalized)) return 'Active'
+    if (normalized === 'draft') return 'Draft'
+    if (normalized === 'scheduled') return 'Scheduled'
+    if (['closed', 'expired', 'completed'].includes(normalized)) return 'Closed'
+    if (normalized === 'archived') return 'Archived'
+    return rawStatus
+  }
+  if (typeof row.is_active === 'boolean') return row.is_active ? 'Active' : 'Closed'
+  return 'Active'
+}
+
+const getActivitySectionNames = (activity) => {
+  const sections = Array.isArray(activity.assigned_sections) ? activity.assigned_sections : []
+  const names = sections.map((section) => typeof section === 'object'
+    ? section.section_name || section.name || section.subject_code
+    : null).filter(Boolean)
+  if (!names.length && (activity.section_name || typeof activity.section === 'string')) names.push(activity.section_name || activity.section)
+  return names
 }
 
 export default function Activities() {
@@ -44,11 +69,15 @@ export default function Activities() {
   const [pendingAction, setPendingAction] = useState(null)
   const [pendingActivity, setPendingActivity] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
-  const activityTypeFilter = ''
+  const [activityTypeFilter, setActivityTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const assignedSectionFilter = ''
-  const assignedInstructorFilter = ''
-  const sortBy = 'newest'
+  const [assignedSectionFilter, setAssignedSectionFilter] = useState('')
+  const [assignedInstructorFilter, setAssignedInstructorFilter] = useState('')
+  const [sortBy, setSortBy] = useState('newest')
+  const [page, setPage] = useState(1)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState('')
+  const pageSize = 10
 
   useEffect(() => {
     // expose a global helper so Edit buttons rendered by DataTable can open the modal
@@ -64,9 +93,9 @@ export default function Activities() {
   const fetchActivities = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await api.get('/activities/')
-      const rawActivities = Array.isArray(response.data) ? response.data : response.data.results || []
-      setActivities(rawActivities)
+      const { results } = await fetchAllResults(api, '/activities/')
+      setActivities(results)
+      setPage(1)
       setError('')
     } catch (err) {
       console.error('Error fetching activities:', err)
@@ -89,24 +118,24 @@ export default function Activities() {
 
   const handleActivityCreated = (savedActivity) => {
     if (!savedActivity || !savedActivity.id) {
-      fetchActivities()
+      void fetchActivities()
       return
     }
 
-    setActivities((existingActivities) => [savedActivity, ...existingActivities])
+    setActivities((existingActivities) => [savedActivity, ...existingActivities.filter((activity) => activity.id !== savedActivity.id)])
+    void fetchActivities()
     showToast('Activity created successfully.')
     setIsAddActivityOpen(false)
   }
 
   const handleActivitySaved = (savedActivity) => {
     if (!savedActivity || !savedActivity.id) {
-      fetchActivities()
+      void fetchActivities()
       return
     }
 
-    setActivities((existingActivities) => {
-      return existingActivities.map((activity) => (activity.id === savedActivity.id ? savedActivity : activity))
-    })
+    setActivities((existingActivities) => existingActivities.map((activity) => activity.id === savedActivity.id ? savedActivity : activity))
+    void fetchActivities()
 
     showToast('Activity updated successfully.')
     setIsEditModalOpen(false)
@@ -148,57 +177,65 @@ export default function Activities() {
     setSelectedActivityForDrawer(null)
   }, [])
 
-  const handleDuplicateActivity = async (row) => {
-    if (!row?.id) return
-
-    try {
-      const detailResponse = await api.get(`/activities/${row.id}/`)
-      const source = detailResponse.data || {}
-      const duplicatePayload = {
-        title: `${source.title || row.title || 'Untitled Activity'} (Copy)`,
-        description: source.description || row.description || '',
-        instructions: source.instructions || '',
-        activity_type: source.activity_type || row.activity_type || row.type || 'Assignment',
-        due_date: source.due_date || row.due_date || '',
-        max_score: source.max_score ?? row.max_score ?? 100,
-        allow_resubmission: Boolean(source.allow_resubmission ?? row.allow_resubmission),
-        section: source.section ?? row.section ?? null,
-        assigned_sections: Array.isArray(source.assigned_sections) ? source.assigned_sections.map((section) => typeof section === 'object' ? section.id : section) : (Array.isArray(row.assigned_sections) ? row.assigned_sections : []),
-        assigned_instructor: source.assigned_instructor ?? row.assigned_instructor ?? null,
-        cabinet_station: source.cabinet_station || row.cabinet_station || '',
-        status: source.status || row.status || 'Published',
-      }
-
-      const response = await api.post('/activities/', duplicatePayload)
-      const createdActivity = response.data || {}
-      setActivities((existingActivities) => [createdActivity, ...existingActivities])
-      setEditingActivityId(createdActivity.id)
-      setSelectedActivity(createdActivity)
-      setIsEditModalOpen(true)
-      showToast('Activity duplicated. You can edit the copy now.')
-    } catch (err) {
-      console.error('Failed to duplicate activity', err)
-      showToast('Unable to duplicate activity right now.')
-    }
-  }
-
   const handleConfirmAction = async () => {
     if (!pendingActivity?.id || !pendingAction) return
 
+    setActionBusy(true)
+    setActionError('')
     try {
-      const nextStatus = pendingAction === 'close' ? 'Closed' : 'Archived'
-      const response = await api.patch(`/activities/${pendingActivity.id}/`, { status: nextStatus })
-      const updatedActivity = response.data || { ...pendingActivity, status: nextStatus }
-      setActivities((existingActivities) => existingActivities.map((activity) => (activity.id === pendingActivity.id ? updatedActivity : activity)))
-      showToast(`Activity ${pendingAction === 'close' ? 'closed' : 'archived'} successfully.`)
+      if (pendingAction === 'duplicate') {
+        const detailResponse = await api.get(`/activities/${pendingActivity.id}/`)
+        const source = detailResponse.data || pendingActivity
+        const baseTitle = source.title || pendingActivity.title || 'Untitled Activity'
+        const payload = {
+          title: `${baseTitle.slice(0, 193)} (Copy)`,
+          description: source.description || '',
+          instructions: source.instructions || '',
+          activity_type: source.activity_type || 'Assignment',
+          due_date: null,
+          max_score: source.max_score ?? 100,
+          allow_resubmission: Boolean(source.allow_resubmission),
+          section: source.section ?? (source.assigned_sections?.[0]?.id || source.assigned_sections?.[0] || null),
+          assigned_sections: Array.isArray(source.assigned_sections) ? source.assigned_sections.map((section) => typeof section === 'object' ? section.id : section) : [],
+          assigned_instructor: source.assigned_instructor ?? null,
+          cabinet_station: source.cabinet_station || '',
+          status: 'Draft',
+        }
+        const response = await api.post('/activities/', payload)
+        const createdActivity = response.data || {}
+        await fetchActivities()
+        setEditingActivityId(createdActivity.id)
+        setSelectedActivity(createdActivity)
+        setIsEditModalOpen(true)
+        showToast('Draft copy created. Review its sections and deadline before publishing.')
+      } else {
+        const nextStatus = pendingAction === 'close' ? 'Closed' : 'Archived'
+        const response = await api.patch(`/activities/${pendingActivity.id}/`, { status: nextStatus })
+        const updatedActivity = response.data || { ...pendingActivity, status: nextStatus }
+        setActivities((existingActivities) => existingActivities.map((activity) => (activity.id === pendingActivity.id ? updatedActivity : activity)))
+        showToast(`Activity ${pendingAction === 'close' ? 'closed' : 'archived'} successfully.`)
+      }
+      finishPendingAction()
     } catch (err) {
       console.error('Failed to update activity status', err)
-      showToast('Unable to update the activity status right now.')
+      setActionError(err.response?.data?.detail || 'The activity action failed. Try again.')
     } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const closePendingAction = () => {
+    if (actionBusy) return
+    setIsConfirmModalOpen(false)
+    setPendingAction(null)
+    setPendingActivity(null)
+    setActionError('')
+  }
+
+  const finishPendingAction = () => {
       setIsConfirmModalOpen(false)
       setPendingAction(null)
       setPendingActivity(null)
-    }
   }
 
   const handleRowAction = (action, row) => {
@@ -211,7 +248,10 @@ export default function Activities() {
         handleOpenEditModal(row.id, row)
         break
       case 'duplicate':
-        handleDuplicateActivity(row)
+        setActionError('')
+        setPendingAction('duplicate')
+        setPendingActivity(row)
+        setIsConfirmModalOpen(true)
         break
       case 'assign_sections':
         setPendingActivity(row)
@@ -221,11 +261,15 @@ export default function Activities() {
         navigate(`/admin/submissions?activity=${row.id}`)
         break
       case 'close':
+        if (!['active', 'published', 'scheduled'].includes(String(row.status || 'published').toLowerCase())) break
+        setActionError('')
         setPendingAction('close')
         setPendingActivity(row)
         setIsConfirmModalOpen(true)
         break
       case 'archive':
+        if (String(row.status || '').toLowerCase() === 'archived') break
+        setActionError('')
         setPendingAction('archive')
         setPendingActivity(row)
         setIsConfirmModalOpen(true)
@@ -241,7 +285,8 @@ export default function Activities() {
   const filteredActivities = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     const keywordFiltered = activities.filter((activity) => {
-      const searchable = [activity.title, activity.description, activity.activity_type, activity.type]
+      const assignedInstructor = activity.assigned_instructor_name || activity.instructor_name || `${activity.created_by_name || ''} ${activity.created_by_last_name || ''}`.trim()
+      const searchable = [activity.title, activity.description, activity.instructions, activity.activity_type, activity.type, assignedInstructor, ...getActivitySectionNames(activity)]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword))
       if (keyword && !searchable) return false
@@ -257,8 +302,7 @@ export default function Activities() {
       }
 
       if (assignedSectionFilter) {
-        const sectionValue = String(activity.section_name || activity.section || '').toLowerCase()
-        if (sectionValue !== assignedSectionFilter.toLowerCase()) return false
+        if (!getActivitySectionNames(activity).some((section) => section.toLowerCase() === assignedSectionFilter.toLowerCase())) return false
       }
 
       if (assignedInstructorFilter) {
@@ -287,13 +331,16 @@ export default function Activities() {
     })
   }, [activities, query, activityTypeFilter, statusFilter, assignedSectionFilter, assignedInstructorFilter, sortBy])
 
+  const activityTypes = [...new Set(activities.map((activity) => activity.activity_type || activity.type).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)))
+  const activitySections = [...new Set(activities.flatMap(getActivitySectionNames))].sort((a, b) => a.localeCompare(b))
+  const activityInstructors = [...new Set(activities.map((activity) => activity.assigned_instructor_name || activity.instructor_name || `${activity.created_by_name || ''} ${activity.created_by_last_name || ''}`.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const pageCount = Math.max(1, Math.ceil(filteredActivities.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleActivities = filteredActivities.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
   const totalActivities = activities.length
 
-  const activeActivities = activities.filter((activity) => {
-    if (typeof activity.is_active !== 'undefined') return activity.is_active
-    if (typeof activity.status !== 'undefined') return String(activity.status).toLowerCase() === 'active'
-    return true
-  }).length
+  const activeActivities = activities.filter((activity) => getActivityStatus(activity) === 'Active').length
 
   const dueTodayActivities = activities.filter((activity) => {
     const dueDate = activity.due_date ? new Date(activity.due_date) : null
@@ -306,42 +353,10 @@ export default function Activities() {
     )
   }).length
 
-  const closedActivities = activities.filter((activity) => {
-    if (typeof activity.is_active !== 'undefined' && activity.is_active === false) return true
-    if (typeof activity.status !== 'undefined') {
-      const status = String(activity.status).toLowerCase()
-      if (['closed', 'expired', 'completed'].includes(status)) return true
-    }
-
-    const dueDate = activity.due_date ? new Date(activity.due_date) : null
-    if (dueDate && !Number.isNaN(dueDate.getTime())) {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      if (dueDate < today) return true
-    }
-
-    return false
-  }).length
+  const closedActivities = activities.filter((activity) => getActivityStatus(activity) === 'Closed').length
 
   const getActivityType = (row) => {
     return row.activity_type || row.type || '—'
-  }
-
-  const getActivityStatus = (row) => {
-    const rawStatus = typeof row.status === 'string' ? row.status : ''
-    if (rawStatus) {
-      const normalized = rawStatus.trim().toLowerCase()
-      if (['active', 'published'].includes(normalized)) return 'Active'
-      if (['draft'].includes(normalized)) return 'Draft'
-      if (['scheduled'].includes(normalized)) return 'Scheduled'
-      if (['closed', 'expired', 'completed'].includes(normalized)) return 'Closed'
-      if (['archived'].includes(normalized)) return 'Archived'
-      return rawStatus
-    }
-    if (typeof row.is_active !== 'undefined') {
-      return row.is_active ? 'Active' : 'Closed'
-    }
-    return 'Active'
   }
 
   const getStatusBadge = (row) => {
@@ -366,7 +381,7 @@ export default function Activities() {
     {
       key: 'activity',
       label: 'Activity',
-      className: 'w-[20%]',
+      className: 'w-[22%]',
       render: (_value, row) => (
         <div className="flex flex-col">
           <span className="font-semibold text-[#111827]">{row.title || '—'}</span>
@@ -376,14 +391,14 @@ export default function Activities() {
     },
     {
       key: 'section',
-      label: 'Section',
-      className: 'w-[11%]',
-      render: (_value, row) => row.section_name || row.section || '—',
+      label: 'Assigned Sections',
+      className: 'w-[16%]',
+      render: (_value, row) => getActivitySectionNames(row).join(', ') || '—',
     },
     {
       key: 'created_by',
       label: 'Created By',
-      className: 'w-[14%]',
+      className: 'w-[13%]',
       render: (_value, row) => row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—',
     },
     {
@@ -401,13 +416,17 @@ export default function Activities() {
     {
       key: 'submissions',
       label: 'Submissions',
-      className: 'w-[11%]',
-      render: (_value, row) => getSubmittedStudentCount(row),
+      className: 'w-[13%]',
+      render: (_value, row) => {
+        const submitted = getSubmittedStudentCount(row)
+        const assigned = Number(row.assigned_student_count)
+        return <span className="font-medium">{submitted}{assigned > 0 ? ` / ${assigned}` : ' submitted'}</span>
+      },
     },
     {
       key: 'actions',
       label: 'Action',
-      className: 'w-[13%]',
+      className: 'w-[10%]',
       render: (_value, row) => <ActivityActionsMenu activity={row} onAction={handleRowAction} />,
     },
   ]
@@ -417,9 +436,10 @@ export default function Activities() {
       <PageHeader
         title="Activities Management"
         description="Browse and search system activities."
+        action={<button type="button" onClick={() => setIsAddActivityOpen(true)} className="tt-button tt-button-primary w-full sm:w-auto"><Plus size={16} aria-hidden="true" />Create Activity</button>}
       />
 
-      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <SummaryCard icon={ClipboardList} title="Total Activities" value={totalActivities} trendText="All recorded activities" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={CalendarDays} title="Active Activities" value={activeActivities} trendText="Currently open" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={CalendarCheck} title="Due Today" value={dueTodayActivities} trendText="Scheduled for today" iconBg="bg-amber-50" iconColor="text-amber-900" />
@@ -432,47 +452,58 @@ export default function Activities() {
         </div>
       )}
 
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <section className="min-w-0 rounded-[12px] border border-[#E5E7EB] bg-white p-3 shadow-sm sm:p-5">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Activity Directory</h2>
-            <p className="text-sm text-[#6B7280]">Browse activities, their status, and submission progress.</p>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button type="button" onClick={() => setIsAddActivityOpen(true)} className="flex items-center justify-center gap-2 rounded-[10px] bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1D4ED8]">
-              <Plus size={16} />
-              Create Activity
-            </button>
+            <h2 className="text-lg font-semibold text-[#102a4c]">Activity Directory</h2>
+            <p className="text-sm text-[#64748b]">Browse activities, assignment, deadlines, and submission progress.</p>
           </div>
         </div>
 
-        <div className="mb-4 flex w-full flex-col items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm md:flex-row">
-          <label className="relative block w-full md:max-w-md">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
-              <Search size={16} />
-            </span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search activities..."
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
+        <div className="mb-4 flex flex-col gap-3">
+          <label className="relative block w-full">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
+            <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, description, instructor, or section" aria-label="Search activities" className="tt-control w-full pl-10 pr-10" />
+            {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear activity search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
           </label>
-          <div className="flex w-full flex-wrap items-center justify-end gap-3 md:w-auto">
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 min-w-[180px] rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-              <option value="">All statuses</option>
-              <option value="Active">Active</option>
-              <option value="Draft">Draft</option>
-              <option value="Scheduled">Scheduled</option>
-              <option value="Closed">Closed</option>
-              <option value="Archived">Archived</option>
-            </select>
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="min-w-0">
+              <span className="sr-only">Filter activity status</span>
+              <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">
+                <option value="">All statuses</option>
+                <option value="Active">Active</option><option value="Draft">Draft</option><option value="Scheduled">Scheduled</option><option value="Closed">Closed</option><option value="Archived">Archived</option>
+              </select>
+            </label>
+            <label className="min-w-0">
+              <span className="sr-only">Filter activity type</span>
+              <select value={activityTypeFilter} onChange={(event) => { setActivityTypeFilter(event.target.value); setPage(1) }} className="tt-control w-full">
+                <option value="">All activity types</option>{activityTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </label>
+            <label className="min-w-0">
+              <span className="sr-only">Filter assigned section</span>
+              <select value={assignedSectionFilter} onChange={(event) => { setAssignedSectionFilter(event.target.value); setPage(1) }} className="tt-control w-full">
+                <option value="">All sections</option>{activitySections.map((section) => <option key={section} value={section}>{section}</option>)}
+              </select>
+            </label>
+            <label className="min-w-0">
+              <span className="sr-only">Filter instructor</span>
+              <select value={assignedInstructorFilter} onChange={(event) => { setAssignedInstructorFilter(event.target.value); setPage(1) }} className="tt-control w-full">
+                <option value="">All instructors</option>{activityInstructors.map((instructor) => <option key={instructor} value={instructor}>{instructor}</option>)}
+              </select>
+            </label>
+            <label className="min-w-0">
+              <span className="sr-only">Sort activities</span>
+              <select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1) }} className="tt-control w-full">
+                <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="due_date">Due date</option><option value="alphabetical">Title</option>
+              </select>
+            </label>
           </div>
         </div>
 
-        <div className="mb-4 flex items-center justify-between text-sm text-slate-500">
-          <div />
-          <div>{filteredActivities.length} result{filteredActivities.length === 1 ? '' : 's'}</div>
+        <div className="mb-3 flex items-center justify-between gap-3 text-sm text-slate-500">
+          <span className="inline-flex items-center gap-2"><SlidersHorizontal size={15} />{filteredActivities.length} result{filteredActivities.length === 1 ? '' : 's'}</span>
+          {statusFilter || activityTypeFilter || assignedSectionFilter || assignedInstructorFilter || query ? <button type="button" onClick={() => { setQuery(''); setStatusFilter(''); setActivityTypeFilter(''); setAssignedSectionFilter(''); setAssignedInstructorFilter(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button> : null}
         </div>
 
         {loading ? (
@@ -480,14 +511,42 @@ export default function Activities() {
         ) : (
           <DataTable
             columns={columns}
-            data={filteredActivities}
+            data={visibleActivities}
             showActions={false}
             expandable
             variant="admin"
+            constrainTableHeight={false}
+            renderMobileCard={(row, { expanded, toggleExpanded }) => {
+              const sections = getActivitySectionNames(row)
+              const submitted = getSubmittedStudentCount(row)
+              const assigned = Number(row.assigned_student_count)
+              const progress = assigned > 0 ? Math.min(100, Math.round((submitted / assigned) * 100)) : null
+              return (
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="break-words text-sm font-semibold text-[#102a4c]">{row.title || 'Untitled Activity'}</h3>
+                      <p className="mt-0.5 break-words text-xs text-slate-500">{getActivityType(row)}</p>
+                    </div>
+                    <ActivityActionsMenu activity={row} onAction={handleRowAction} />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">{getStatusBadge(row)}</div>
+                  <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-slate-100 pt-3 text-xs">
+                    <dt className="text-slate-500">Sections</dt><dd className="break-words text-right text-slate-700">{sections.join(', ') || row.section_name || 'Not assigned'}</dd>
+                    <dt className="text-slate-500">Instructor</dt><dd className="break-words text-right text-slate-700">{row.assigned_instructor_name || row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—'}</dd>
+                    <dt className="text-slate-500">Due date</dt><dd className="break-words text-right text-slate-700">{formatDate(row.due_date)}</dd>
+                    <dt className="text-slate-500">Submissions</dt><dd className="text-right font-medium text-slate-700">{submitted}{assigned > 0 ? ` / ${assigned}` : ''}</dd>
+                  </dl>
+                  {progress !== null && <div className="mt-2"><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[#FFC107]" style={{ width: `${progress}%` }} /></div><p className="mt-1 text-right text-[10px] text-slate-500">{progress}% submitted</p></div>}
+                  <button type="button" aria-expanded={expanded} onClick={toggleExpanded} className="mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Hide details' : 'More details'}</button>
+                  {expanded && <div className="mt-2 space-y-2 border-t border-slate-100 pt-2 text-xs"><p className="whitespace-pre-wrap break-words"><strong>Description:</strong> {row.description || '—'}</p><p className="whitespace-pre-wrap break-words"><strong>Instructions:</strong> {row.instructions || '—'}</p><p><strong>Cabinet station:</strong> {row.cabinet_station || '—'}</p></div>}
+                </div>
+              )
+            }}
             renderExpandedRow={(row) => (
               <dl className="grid gap-2 sm:grid-cols-2">
                 <div><dt className="font-semibold">Activity Type</dt><dd>{getActivityType(row)}</dd></div>
-                <div><dt className="font-semibold">Assigned Instructor</dt><dd>{row.assigned_instructor_name || row.instructor_name || '—'}</dd></div>
+                <div><dt className="font-semibold">Assigned Instructor</dt><dd>{row.assigned_instructor_name || row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—'}</dd></div>
                 <div><dt className="font-semibold">Cabinet Station</dt><dd>{row.cabinet_station || '—'}</dd></div>
                 <div className="sm:col-span-2"><dt className="font-semibold">Description</dt><dd className="whitespace-pre-wrap">{row.description || '—'}</dd></div>
               </dl>
@@ -495,7 +554,8 @@ export default function Activities() {
             emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'}
           />
         )}
-      </div>
+        {!loading && pageCount > 1 && <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} label="Page" />}
+      </section>
 
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 rounded-[14px] border border-[#D1FAE5] bg-[#ECFDF5] px-5 py-4 text-sm text-[#065F46] shadow-lg">
@@ -558,35 +618,32 @@ export default function Activities() {
         }}
       />
 
-      <Modal isOpen={isConfirmModalOpen} onClose={() => {
-        setIsConfirmModalOpen(false)
-        setPendingAction(null)
-        setPendingActivity(null)
-      }} title={pendingAction === 'close' ? 'Close Activity' : 'Archive Activity'}>
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600">
-            {pendingAction === 'close'
-              ? 'This will mark the selected activity as closed. Continue?'
-              : 'This will archive the selected activity. Continue?'}
-          </p>
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => {
-              setIsConfirmModalOpen(false)
-              setPendingAction(null)
-              setPendingActivity(null)
-            }} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200">
-              Cancel
-            </button>
-            <button type="button" onClick={handleConfirmAction} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-              Confirm
-            </button>
-          </div>
+      <Modal
+        isOpen={isConfirmModalOpen}
+        onClose={closePendingAction}
+        title={pendingAction === 'duplicate' ? 'Duplicate Activity' : pendingAction === 'close' ? 'Close Activity' : 'Archive Activity'}
+        description={pendingActivity?.title || 'Selected activity'}
+        busy={actionBusy}
+        maxWidth="520px"
+        footer={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={closePendingAction} disabled={actionBusy} className="tt-button tt-button-secondary w-full sm:w-auto">Cancel</button><button type="button" onClick={handleConfirmAction} disabled={actionBusy} className="tt-button tt-button-primary w-full sm:w-auto">{actionBusy ? 'Working…' : pendingAction === 'duplicate' ? 'Create Draft Copy' : pendingAction === 'close' ? 'Close Activity' : 'Archive Activity'}</button></div>}
+      >
+        <div className="space-y-3 text-sm leading-6 text-slate-700">
+          {actionError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>}
+          {pendingAction === 'duplicate' ? (
+            <><p>A new Draft copy will be created from <strong>{pendingActivity?.title || 'this activity'}</strong>.</p><p>The copy will not include submissions, grades, feedback, or attached files. Its due date will be cleared for review.</p></>
+          ) : pendingAction === 'close' ? (
+            <p>This marks <strong>{pendingActivity?.title || 'this activity'}</strong> as Closed. Existing submissions and grades remain unchanged.</p>
+          ) : (
+            <p>This marks <strong>{pendingActivity?.title || 'this activity'}</strong> as Archived. Existing submissions and grades remain unchanged.</p>
+          )}
         </div>
       </Modal>
 
       <ActivityDetailDrawer
         activity={selectedActivityForDrawer}
         onClose={handleCloseActivityDrawer}
+        onEdit={() => { handleOpenEditModal(selectedActivityForDrawer?.id, selectedActivityForDrawer); handleCloseActivityDrawer() }}
+        onViewSubmissions={() => { navigate(`/admin/submissions?activity=${selectedActivityForDrawer?.id}`); handleCloseActivityDrawer() }}
       />
     </div>
   )

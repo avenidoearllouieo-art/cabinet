@@ -114,7 +114,7 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-5 top-5 z-[100] flex h-10 w-10 pointer-events-auto items-center justify-center rounded-xl border-2 border-[#f7c948] bg-[#ffc107] text-[#002b5b] shadow-md transition hover:bg-[#ffca2c] focus:outline-none focus:ring-2 focus:ring-[#ffc107]/70"
+          className="absolute right-5 top-5 z-[100] flex h-10 w-10 pointer-events-auto items-center justify-center rounded-xl border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#eef4fa] hover:text-[#102a4c] focus:outline-none focus:ring-2 focus:ring-[#ffc107]/70"
           aria-label="Close activity drawer"
         >
           <X size={20} strokeWidth={2.5} />

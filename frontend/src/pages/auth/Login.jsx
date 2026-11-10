@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Eye, EyeOff, LockKeyhole, UserRound } from 'lucide-react'
+import { Eye, EyeOff, LockKeyhole, UserRound } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import TapTrackLogo from '../../components/TapTrackLogo.jsx'
@@ -20,7 +20,13 @@ export default function Login({ administratorOnly = false }) {
 
     const trimmedUsername = username.trim()
     if (!trimmedUsername || !password) {
-      setError('Invalid username or password. Please try again.')
+      setError(
+        !trimmedUsername && !password
+          ? 'Enter your username and password.'
+          : !trimmedUsername
+            ? 'Enter your username.'
+            : 'Enter your password.',
+      )
       return
     }
 
@@ -37,7 +43,7 @@ export default function Login({ administratorOnly = false }) {
       const { access, refresh, user } = response.data
 
       if (!user || !user.role) {
-        setError('Login response did not include a valid user role.')
+        setError('We could not verify your account. Please try again.')
         return
       }
 
@@ -60,18 +66,20 @@ export default function Login({ administratorOnly = false }) {
       else if (user.role === 'instructor') navigate('/instructor/dashboard')
       else navigate('/student/dashboard')
     } catch (loginError) {
-      const message =
-        loginError.response?.data?.detail ||
-        loginError.response?.data?.error ||
-        'Invalid username or password. Please try again.'
-      setError(message)
+      setError(
+        loginError.response?.status === 429
+          ? 'Too many sign-in attempts. Please wait a moment and try again.'
+          : loginError.response
+            ? 'Invalid username or password. Please try again.'
+            : 'Unable to reach TapTrack. Check your connection and try again.',
+      )
     } finally {
       setIsSubmitting(false)
     }
   }
 
   return (
-    <main className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 sm:px-6">
+    <main className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-6 sm:px-6 sm:py-8">
       <div className="login-grid absolute inset-0" aria-hidden="true" />
       <div className="login-wordmark-pattern" aria-hidden="true" />
       <div className="login-cabinet-mark absolute left-1/2 top-8 hidden -translate-x-1/2 md:block" aria-hidden="true">
@@ -80,16 +88,20 @@ export default function Login({ administratorOnly = false }) {
         <span />
       </div>
 
-      <section className="login-card relative z-10 w-full max-w-[430px] rounded-[22px] bg-white px-5 py-8 shadow-[0_22px_70px_rgba(0,43,91,0.14)] sm:px-9 sm:py-10">
-        <div className="mb-8 text-center">
-          <TapTrackLogo compact className="mx-auto mb-5 h-20 w-20" />
-          <h1 className="text-2xl font-bold tracking-tight text-[#002B5B]">Welcome back</h1>
-          <p className="mx-auto mt-3 max-w-[300px] text-sm leading-5 text-[#5C6F84]">
-            TapTrack Cabinet Activity and User Management System
+      <section className="login-card relative z-10 w-full max-w-[430px] rounded-[22px] bg-white px-5 py-6 shadow-[0_22px_70px_rgba(0,43,91,0.14)] sm:px-9 sm:py-8">
+        <div className="mb-6 text-center">
+          <TapTrackLogo compact className="login-logo mx-auto mb-4 h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]" />
+          <h1 className="text-2xl font-bold tracking-tight text-[#002B5B]">
+            {administratorOnly ? 'Administrator Portal' : 'Welcome back'}
+          </h1>
+          <p className="mx-auto mt-2 max-w-[300px] text-sm leading-5 text-[#5C6F84]">
+            {administratorOnly
+              ? 'Sign in to manage the TapTrack system'
+              : 'Sign in to access your TapTrack cabinet'}
           </p>
         </div>
 
-        <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+        <form className="space-y-4" onSubmit={handleSubmit} noValidate aria-busy={isSubmitting}>
           <FormField label="Username" required>
             {({ id }) => (
               <div className="login-field flex min-h-12 items-center gap-3 rounded-xl border border-[#dbe3ed] bg-white px-4 py-2.5 transition duration-200 ease-out focus-within:border-[#F3CA4D] focus-within:shadow-[0_0_0_3px_rgba(255,193,7,0.12)]">
@@ -98,7 +110,10 @@ export default function Login({ administratorOnly = false }) {
                   id={id}
                   type="text"
                   value={username}
-                  onChange={(event) => setUsername(event.target.value)}
+                  onChange={(event) => {
+                    setUsername(event.target.value)
+                    setError('')
+                  }}
                   className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]"
                   placeholder="Enter your assigned username"
                   autoComplete="username"
@@ -117,7 +132,10 @@ export default function Login({ administratorOnly = false }) {
                     id={id}
                     type={showPassword ? 'text' : 'password'}
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(event) => {
+                      setPassword(event.target.value)
+                      setError('')
+                    }}
                     className="min-w-0 flex-1 bg-transparent text-sm text-[#14243a] outline-none placeholder:text-[#9aa8b8]"
                     placeholder="Enter your password"
                     autoComplete="current-password"
@@ -136,7 +154,7 @@ export default function Login({ administratorOnly = false }) {
             </FormField>
 
             <div className="flex justify-end">
-              <Link to="/forgot-password" className="text-xs font-medium text-[#607087] transition hover:text-[#002B5B]">
+              <Link to="/forgot-password" className="text-xs font-medium text-[#607087] transition hover:text-[#002B5B] active:text-[#1E4D8C] focus-visible:outline-none focus-visible:underline focus-visible:underline-offset-4">
                 Forgot password?
               </Link>
             </div>
@@ -147,7 +165,7 @@ export default function Login({ administratorOnly = false }) {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-2 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20 disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-1 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] active:translate-y-px active:bg-[#D99F00] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#002B5B]/30 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isSubmitting ? (
               <>
@@ -155,31 +173,30 @@ export default function Login({ administratorOnly = false }) {
                 <span>Logging in...</span>
               </>
             ) : (
-              'Log In'
+              administratorOnly ? 'Log In as Administrator' : 'Log In'
             )}
           </button>
 
-          <div className="pt-1 text-center">
+          <div className="pt-0 text-center">
             {administratorOnly ? (
               <Link
                 to="/"
-                className="inline-flex items-center justify-center gap-1 text-sm font-semibold text-[#002B5B] transition hover:text-[#1E4D8C]"
+                className="inline-flex min-h-8 items-center justify-center text-sm font-semibold text-[#002B5B] transition hover:text-[#1E4D8C] active:text-[#163C70] focus-visible:outline-2 focus-visible:outline-[#F3CA4D] focus-visible:outline-offset-2 focus-visible:underline focus-visible:underline-offset-4"
               >
-                <span>Return to User Login</span>
+                <span>← Return to User Login</span>
               </Link>
             ) : (
               <Link
                 to="/admin/login"
-                className="inline-flex items-center justify-center gap-1 text-sm font-semibold text-[#002B5B] transition hover:text-[#1E4D8C]"
+                className="inline-flex min-h-8 items-center justify-center text-sm font-semibold text-[#002B5B] transition hover:text-[#1E4D8C] active:text-[#163C70] focus-visible:outline-2 focus-visible:outline-[#F3CA4D] focus-visible:outline-offset-2 focus-visible:underline focus-visible:underline-offset-4"
               >
-                <span>Administrator Login</span>
-                <ArrowRight size={15} />
+                <span>Administrator Login →</span>
               </Link>
             )}
           </div>
         </form>
 
-        <div className="mt-6 border-t border-[#E7EDF5] pt-4 text-center text-[11px] text-[#8A9BB0]">
+        <div className="mt-4 border-t border-[#E7EDF5] pt-3 text-center text-[11px] text-[#8A9BB0]">
           © 2026 TapTrack
         </div>
       </section>
