@@ -6,23 +6,21 @@ import SummaryCard from '../../components/SummaryCard'
 import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
-import Modal from '../../components/Modal.jsx'
 import ActivityActionsMenu from '../../components/activities/ActivityActionsMenu.jsx'
 import ActivityDetailDrawer from '../../components/activities/ActivityDetailDrawer.jsx'
-import EditActivityModal from '../../components/activities/EditActivityModal.jsx'
-import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
-import AssignSectionsModal from '../../components/activities/AssignSectionsModal.jsx'
-import AddActivityModal from '../../components/activities/AddActivityModal.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import Pagination from '../../components/Pagination.jsx'
-import { Search, Plus, ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal, X } from 'lucide-react'
+import { Search, ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal, X } from 'lucide-react'
 
 const formatDate = (value) => {
+  if (!value) return 'No deadline'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'No deadline'
   try {
     return new Intl.DateTimeFormat('en-US', {
-  dateStyle: 'medium',
+      dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value))
+    }).format(date)
   } catch {
     return String(value)
   }
@@ -57,38 +55,14 @@ export default function Activities() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
-  const [isAddActivityOpen, setIsAddActivityOpen] = useState(false)
   const [selectedActivityForDrawer, setSelectedActivityForDrawer] = useState(null)
-  const [editingActivityId, setEditingActivityId] = useState(null)
-  const [selectedActivity, setSelectedActivity] = useState(null)
-  const [deletingActivity, setDeletingActivity] = useState(null)
-  const [isAssignSectionsModalOpen, setIsAssignSectionsModalOpen] = useState(false)
-  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
-  const [pendingAction, setPendingAction] = useState(null)
-  const [pendingActivity, setPendingActivity] = useState(null)
-  const [toastMessage, setToastMessage] = useState('')
   const [activityTypeFilter, setActivityTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [assignedSectionFilter, setAssignedSectionFilter] = useState('')
   const [assignedInstructorFilter, setAssignedInstructorFilter] = useState('')
   const [sortBy, setSortBy] = useState('newest')
   const [page, setPage] = useState(1)
-  const [actionBusy, setActionBusy] = useState(false)
-  const [actionError, setActionError] = useState('')
   const pageSize = 10
-
-  useEffect(() => {
-    // expose a global helper so Edit buttons rendered by DataTable can open the modal
-    window.openEditActivityModal = (id, row) => {
-      if (!id) return
-      setEditingActivityId(id)
-      setSelectedActivity(row || null)
-      setIsEditModalOpen(true)
-    }
-    return () => { delete window.openEditActivityModal }
-  }, [])
 
   const fetchActivities = useCallback(async () => {
     try {
@@ -110,133 +84,11 @@ export default function Activities() {
     return () => window.clearTimeout(timeoutId)
   }, [fetchActivities])
 
-  const showToast = (message) => {
-    setToastMessage(message)
-    window.clearTimeout(showToast._timer)
-    showToast._timer = window.setTimeout(() => setToastMessage(''), 4000)
-  }
-
-  const handleActivityCreated = (savedActivity) => {
-    if (!savedActivity || !savedActivity.id) {
-      void fetchActivities()
-      return
-    }
-
-    setActivities((existingActivities) => [savedActivity, ...existingActivities.filter((activity) => activity.id !== savedActivity.id)])
-    void fetchActivities()
-    showToast('Activity created successfully.')
-    setIsAddActivityOpen(false)
-  }
-
-  const handleActivitySaved = (savedActivity) => {
-    if (!savedActivity || !savedActivity.id) {
-      void fetchActivities()
-      return
-    }
-
-    setActivities((existingActivities) => existingActivities.map((activity) => activity.id === savedActivity.id ? savedActivity : activity))
-    void fetchActivities()
-
-    showToast('Activity updated successfully.')
-    setIsEditModalOpen(false)
-    setEditingActivityId(null)
-    setSelectedActivity(null)
-  }
-
-  const handleActivityDeleted = async (deletedActivityId) => {
-    setActivities((existingActivities) => existingActivities.filter((activity) => activity.id !== deletedActivityId))
-    showToast('Activity deleted successfully.')
-    setIsDeleteModalOpen(false)
-    setDeletingActivity(null)
-    setIsEditModalOpen(false)
-    setEditingActivityId(null)
-    setSelectedActivity(null)
-
-    try {
-      await fetchActivities()
-    } catch (err) {
-      console.error('Failed to refresh activities after delete', err)
-    }
-  }
-
-  const handleOpenEditModal = (id, row) => {
-    if (!id) return
-    setEditingActivityId(id)
-    setSelectedActivity(row || null)
-    setIsEditModalOpen(true)
-  }
-
   const navigate = useNavigate()
-
-  const handleOpenDeleteModal = (row) => {
-    setDeletingActivity(row)
-    setIsDeleteModalOpen(true)
-  }
 
   const handleCloseActivityDrawer = useCallback(() => {
     setSelectedActivityForDrawer(null)
   }, [])
-
-  const handleConfirmAction = async () => {
-    if (!pendingActivity?.id || !pendingAction) return
-
-    setActionBusy(true)
-    setActionError('')
-    try {
-      if (pendingAction === 'duplicate') {
-        const detailResponse = await api.get(`/activities/${pendingActivity.id}/`)
-        const source = detailResponse.data || pendingActivity
-        const baseTitle = source.title || pendingActivity.title || 'Untitled Activity'
-        const payload = {
-          title: `${baseTitle.slice(0, 193)} (Copy)`,
-          description: source.description || '',
-          instructions: source.instructions || '',
-          activity_type: source.activity_type || 'Assignment',
-          due_date: null,
-          max_score: source.max_score ?? 100,
-          allow_resubmission: Boolean(source.allow_resubmission),
-          section: source.section ?? (source.assigned_sections?.[0]?.id || source.assigned_sections?.[0] || null),
-          assigned_sections: Array.isArray(source.assigned_sections) ? source.assigned_sections.map((section) => typeof section === 'object' ? section.id : section) : [],
-          assigned_instructor: source.assigned_instructor ?? null,
-          cabinet_station: source.cabinet_station || '',
-          status: 'Draft',
-        }
-        const response = await api.post('/activities/', payload)
-        const createdActivity = response.data || {}
-        await fetchActivities()
-        setEditingActivityId(createdActivity.id)
-        setSelectedActivity(createdActivity)
-        setIsEditModalOpen(true)
-        showToast('Draft copy created. Review its sections and deadline before publishing.')
-      } else {
-        const nextStatus = pendingAction === 'close' ? 'Closed' : 'Archived'
-        const response = await api.patch(`/activities/${pendingActivity.id}/`, { status: nextStatus })
-        const updatedActivity = response.data || { ...pendingActivity, status: nextStatus }
-        setActivities((existingActivities) => existingActivities.map((activity) => (activity.id === pendingActivity.id ? updatedActivity : activity)))
-        showToast(`Activity ${pendingAction === 'close' ? 'closed' : 'archived'} successfully.`)
-      }
-      finishPendingAction()
-    } catch (err) {
-      console.error('Failed to update activity status', err)
-      setActionError(err.response?.data?.detail || 'The activity action failed. Try again.')
-    } finally {
-      setActionBusy(false)
-    }
-  }
-
-  const closePendingAction = () => {
-    if (actionBusy) return
-    setIsConfirmModalOpen(false)
-    setPendingAction(null)
-    setPendingActivity(null)
-    setActionError('')
-  }
-
-  const finishPendingAction = () => {
-      setIsConfirmModalOpen(false)
-      setPendingAction(null)
-      setPendingActivity(null)
-  }
 
   const handleRowAction = (action, row) => {
     if (!row) return
@@ -244,38 +96,8 @@ export default function Activities() {
       case 'view':
         setSelectedActivityForDrawer(row)
         break
-      case 'edit':
-        handleOpenEditModal(row.id, row)
-        break
-      case 'duplicate':
-        setActionError('')
-        setPendingAction('duplicate')
-        setPendingActivity(row)
-        setIsConfirmModalOpen(true)
-        break
-      case 'assign_sections':
-        setPendingActivity(row)
-        setIsAssignSectionsModalOpen(true)
-        break
       case 'view_submissions':
         navigate(`/admin/submissions?activity=${row.id}`)
-        break
-      case 'close':
-        if (!['active', 'published', 'scheduled'].includes(String(row.status || 'published').toLowerCase())) break
-        setActionError('')
-        setPendingAction('close')
-        setPendingActivity(row)
-        setIsConfirmModalOpen(true)
-        break
-      case 'archive':
-        if (String(row.status || '').toLowerCase() === 'archived') break
-        setActionError('')
-        setPendingAction('archive')
-        setPendingActivity(row)
-        setIsConfirmModalOpen(true)
-        break
-      case 'delete':
-        handleOpenDeleteModal(row)
         break
       default:
         break
@@ -436,7 +258,6 @@ export default function Activities() {
       <PageHeader
         title="Activities Management"
         description="Browse and search system activities."
-        action={<button type="button" onClick={() => setIsAddActivityOpen(true)} className="tt-button tt-button-primary w-full sm:w-auto"><Plus size={16} aria-hidden="true" />Create Activity</button>}
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
@@ -557,93 +378,9 @@ export default function Activities() {
         {!loading && pageCount > 1 && <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} label="Page" />}
       </section>
 
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-[14px] border border-[#D1FAE5] bg-[#ECFDF5] px-5 py-4 text-sm text-[#065F46] shadow-lg">
-          {toastMessage}
-        </div>
-      )}
-
-      <AddActivityModal
-        isOpen={isAddActivityOpen}
-        onClose={() => setIsAddActivityOpen(false)}
-        onUnauthorized={() => setIsAddActivityOpen(false)}
-        onSaved={handleActivityCreated}
-      />
-
-      <EditActivityModal
-        isOpen={isEditModalOpen}
-        activityId={editingActivityId}
-        activity={selectedActivity}
-        onClose={() => {
-          setIsEditModalOpen(false)
-          setEditingActivityId(null)
-          setSelectedActivity(null)
-        }}
-        onUnauthorized={() => {
-          setIsEditModalOpen(false)
-          setEditingActivityId(null)
-          setSelectedActivity(null)
-        }}
-        onSaved={handleActivitySaved}
-      />
-
-      <DeleteActivityModal
-        isOpen={isDeleteModalOpen}
-        activity={deletingActivity}
-        onClose={() => {
-          setIsDeleteModalOpen(false)
-          setDeletingActivity(null)
-        }}
-        onUnauthorized={() => {
-          setIsDeleteModalOpen(false)
-          setDeletingActivity(null)
-        }}
-        onDeleted={handleActivityDeleted}
-      />
-
-      <AssignSectionsModal
-        isOpen={isAssignSectionsModalOpen}
-        activity={pendingActivity}
-        onClose={() => {
-          setIsAssignSectionsModalOpen(false)
-          setPendingActivity(null)
-        }}
-        onSaved={(updatedActivity) => {
-          setActivities((existingActivities) => existingActivities.map((activity) => (activity.id === updatedActivity.id ? updatedActivity : activity)))
-          showToast('Sections updated successfully.')
-        }}
-        onUnauthorized={() => {
-          setIsAssignSectionsModalOpen(false)
-          setPendingActivity(null)
-        }}
-      />
-
-      <Modal
-        isOpen={isConfirmModalOpen}
-        onClose={closePendingAction}
-        title={pendingAction === 'duplicate' ? 'Duplicate Activity' : pendingAction === 'close' ? 'Close Activity' : 'Archive Activity'}
-        description={pendingActivity?.title || 'Selected activity'}
-        busy={actionBusy}
-        maxWidth="520px"
-        footer={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={closePendingAction} disabled={actionBusy} className="tt-button tt-button-secondary w-full sm:w-auto">Cancel</button><button type="button" onClick={handleConfirmAction} disabled={actionBusy} className="tt-button tt-button-primary w-full sm:w-auto">{actionBusy ? 'Working…' : pendingAction === 'duplicate' ? 'Create Draft Copy' : pendingAction === 'close' ? 'Close Activity' : 'Archive Activity'}</button></div>}
-      >
-        <div className="space-y-3 text-sm leading-6 text-slate-700">
-          {actionError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>}
-          {pendingAction === 'duplicate' ? (
-            <><p>A new Draft copy will be created from <strong>{pendingActivity?.title || 'this activity'}</strong>.</p><p>The copy will not include submissions, grades, feedback, or attached files. Its due date will be cleared for review.</p></>
-          ) : pendingAction === 'close' ? (
-            <p>This marks <strong>{pendingActivity?.title || 'this activity'}</strong> as Closed. Existing submissions and grades remain unchanged.</p>
-          ) : (
-            <p>This marks <strong>{pendingActivity?.title || 'this activity'}</strong> as Archived. Existing submissions and grades remain unchanged.</p>
-          )}
-        </div>
-      </Modal>
-
       <ActivityDetailDrawer
         activity={selectedActivityForDrawer}
         onClose={handleCloseActivityDrawer}
-        onEdit={() => { handleOpenEditModal(selectedActivityForDrawer?.id, selectedActivityForDrawer); handleCloseActivityDrawer() }}
-        onViewSubmissions={() => { navigate(`/admin/submissions?activity=${selectedActivityForDrawer?.id}`); handleCloseActivityDrawer() }}
       />
     </div>
   )

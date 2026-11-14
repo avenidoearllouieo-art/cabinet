@@ -230,8 +230,8 @@ export default function InstructorProfile() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="My Profile"
-        description="Manage your instructor account and contact information."
+        title="Profile"
+        description="Manage your account and contact information."
         action={<button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] transition hover:bg-slate-50"><ArrowLeft size={16} />Back</button>}
       />
 

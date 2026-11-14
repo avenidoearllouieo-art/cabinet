@@ -51,6 +51,7 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
       return new Intl.DateTimeFormat('en-US', {
         dateStyle: 'medium',
         timeStyle: 'short',
+        timeZone: 'Asia/Manila',
       }).format(new Date(value))
     } catch {
       return String(value)

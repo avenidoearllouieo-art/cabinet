@@ -92,7 +92,11 @@ describe('access-log photo role views', () => {
 
     const rowThumbnail = await screen.findByRole('img', { name: `Access event ${eventId} photo thumbnail` })
     expect(rowThumbnail.getAttribute('src')).toBe('blob:role-access-photo')
-    if (role === 'Instructor') expect(screen.queryByText(log.nfc_uid)).toBeNull()
+    if (role === 'Instructor') {
+      expect(screen.queryByText(log.nfc_uid)).toBeNull()
+      expect(screen.queryByText('Card UID')).toBeNull()
+      expect(screen.queryByPlaceholderText(/NFC UID/i)).toBeNull()
+    }
 
     if (role === 'Admin') {
       await user.click(screen.getByRole('button', { name: 'Open access log actions' }))

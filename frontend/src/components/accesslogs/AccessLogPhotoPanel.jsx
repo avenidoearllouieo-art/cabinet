@@ -283,7 +283,11 @@ function AuthorizedPhotoDetails({ eventId, compact }) {
       }
     }
 
-    void loadPhoto()
+    void loadPhoto().catch((error) => {
+      if (signal.aborted) return
+      console.error('Failed to load access event photo:', error)
+      setPhoto({ state: 'error', label: 'Photo could not be loaded', imageUrl: null, capturedAt: null })
+    })
     return () => {
       controller.abort()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -327,7 +331,7 @@ function AuthorizedPhotoDetails({ eventId, compact }) {
             {['pending', 'error', 'forbidden'].includes(photo.state) && retryButton}
           </p>
           {photo.capturedAt && <time className="mt-1 block text-xs text-slate-500" dateTime={photo.capturedAt}>
-            {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(photo.capturedAt))}
+            {new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(photo.capturedAt))}
           </time>}
         </div>
         {photo.imageUrl && <button type="button" onClick={() => setViewerOpen(true)} className="inline-flex min-h-11 items-center gap-3 rounded-md border border-slate-200 bg-white p-2 text-sm font-medium text-[#102a4c]" aria-label={`Open photo for access event ${eventId}`}>

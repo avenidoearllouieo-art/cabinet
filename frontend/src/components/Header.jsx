@@ -167,14 +167,7 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
                       onClick={() => { setProfileOpen(false); navigate('/instructor/profile') }}
                       className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FFC107]"
                     >
-                      My Profile
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setProfileOpen(false); navigate('/instructor/profile/change-password') }}
-                      className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FFC107]"
-                    >
-                      Change Password
+                      Profile
                     </button>
                   </>
                 )}
@@ -185,21 +178,7 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
                       onClick={() => { setProfileOpen(false); navigate('/student/profile') }}
                       className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FFC107]"
                     >
-                      My Profile
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setProfileOpen(false); navigate('/student/profile#my-instructor') }}
-                      className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FFC107]"
-                    >
-                      My Instructor
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setProfileOpen(false); navigate('/student/profile/change-password') }}
-                      className="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FFC107]"
-                    >
-                      Change Password
+                      Profile
                     </button>
                   </>
                 )}

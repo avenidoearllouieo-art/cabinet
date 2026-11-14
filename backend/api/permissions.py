@@ -22,6 +22,22 @@ class IsInstructorRole(BasePermission):
         return request.user.is_authenticated and request.user.role == 'instructor'
 
 
+class IsInstructorOrAdminRole(BasePermission):
+    message = 'Only instructors or administrators can perform this action.'
+
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role in ('instructor', 'admin')
+
+
+class IsInstructorOrSuperuser(BasePermission):
+    message = 'Only instructors or Django superusers can perform this action.'
+
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and (
+            request.user.role == 'instructor' or request.user.is_superuser
+        )
+
+
 class IsStudentRole(BasePermission):
     message = 'Only students can perform this action.'
 

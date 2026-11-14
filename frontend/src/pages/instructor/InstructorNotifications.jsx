@@ -3,6 +3,14 @@ import { Bell, CheckCircle2, ArrowRight } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 
+const formatManilaDateTime = (value) => {
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(date)
+}
+
 export default function InstructorNotifications() {
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(true)
@@ -114,7 +122,7 @@ export default function InstructorNotifications() {
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
-                  <span>{new Date(notification.created_at).toLocaleString()}</span>
+                  <span>{formatManilaDateTime(notification.created_at)}</span>
                   {notification.link ? (
                     <a href={notification.link} className="font-medium text-sky-600 hover:text-sky-800">
                       View details

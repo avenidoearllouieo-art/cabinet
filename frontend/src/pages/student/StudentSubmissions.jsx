@@ -46,15 +46,15 @@ function getDisplayStatus(submission) {
 }
 
 function formatDate(value) {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', {
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : new Intl.DateTimeFormat('en-US', {
       dateStyle: 'short',
       timeStyle: 'short',
-    }).format(new Date(value))
-  } catch {
-    return String(value)
-  }
+      timeZone: 'Asia/Manila',
+    }).format(date)
 }
 
 function buildStats(list) {

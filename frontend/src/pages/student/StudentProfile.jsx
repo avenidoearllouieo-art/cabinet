@@ -218,8 +218,8 @@ export default function StudentProfile() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="My Profile"
-        description="Manage your student account and academic information."
+        title="Profile"
+        description="Manage your account and contact information."
         action={<button type="button" onClick={() => navigate(-1)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] transition hover:bg-slate-50"><ArrowLeft size={16} />Back</button>}
       />
 
@@ -238,6 +238,7 @@ export default function StudentProfile() {
         facts={[
           { icon: Mail, label: 'Email Address', value: profile?.email },
           { icon: Phone, label: 'Contact Number', value: profile?.contact_number },
+          { icon: BadgeCheck, label: 'Account Status', value: profile?.is_active === false ? 'Inactive' : 'Active' },
         ]}
         action={<button type="button" onClick={() => { setError(''); setImageError(''); setIsEditing(true) }} className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-[#0B2A4A]">Edit Profile</button>}
       />

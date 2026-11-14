@@ -1,31 +1,22 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useState } from 'react'
-
-const getAttachmentName = (attachment) => attachment?.filename || attachment?.file_name || attachment?.file || 'Attachment'
-const getAttachmentSize = (attachment) => attachment?.size ?? attachment?.file_size ?? null
-const getAttachmentUrl = (attachment) => attachment?.url || attachment?.download_url || attachment?.file || ''
-import { X, FileText, Users, ClipboardList, CircleCheckBig, Download } from 'lucide-react'
+import { X, FileText, Users, ClipboardList, CircleCheckBig } from 'lucide-react'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
+
 
 const formatDate = (value) => {
-  if (!value) return '—'
+  if (!value) return 'No deadline'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'No deadline'
   try {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value))
+    }).format(date)
   } catch {
     return String(value)
   }
-}
-
-const formatBytes = (bytes) => {
-  if (bytes == null) return '—'
-  const kb = 1024
-  if (bytes < kb) return `${bytes} B`
-  const mb = kb * 1024
-  if (bytes < mb) return `${(bytes / kb).toFixed(1)} KB`
-  return `${(bytes / mb).toFixed(1)} MB`
 }
 
 const StatusBadge = ({ status }) => {
@@ -153,6 +144,7 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
               <div className="grid gap-4 md:grid-cols-2">
                 <DetailCard label="Assigned Instructor" value={assignedInstructor} />
                 <DetailCard label="Due Date" value={formatDate(displayActivity.due_date)} />
+                <DetailCard label="Maximum Score" value={displayActivity.max_score ?? '—'} />
                 <DetailCard label="Assigned Sections" value={assignedSections.length ? assignedSections.join(', ') : 'Not assigned'} />
                 <DetailCard label="Cabinet Station" value={displayActivity.cabinet_station || 'Not assigned'} />
               </div>
@@ -181,27 +173,7 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
               <FileText size={16} />
               <span className="text-sm font-semibold">Attached Files</span>
             </div>
-            <div className="mt-4 space-y-3">
-              {displayActivity.attachments?.length ? (
-                displayActivity.attachments.map((attachment) => (
-                  <div key={attachment.id} className="flex flex-col gap-2 rounded-[12px] border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="font-medium text-slate-900">{getAttachmentName(attachment)}</p>
-                      <p className="text-sm text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p>
-                    </div>
-                    {getAttachmentUrl(attachment) && (
-                      <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#002B5B] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#123f73]">
-                        <Download size={16} /> Download
-                      </a>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-[12px] border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No attachments available.
-                </div>
-              )}
-            </div>
+            <div className="mt-4"><AcademicFileAttachments attachments={displayActivity.attachments || []} kind="activity" /></div>
           </div>
         </div>
       </aside>

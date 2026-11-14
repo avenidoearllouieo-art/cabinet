@@ -10,7 +10,6 @@ import StatusBadge from '../../components/StatusBadge'
 import Pagination from '../../components/Pagination.jsx'
 import SubmissionActionsMenu from '../../components/submissions/SubmissionActionsMenu.jsx'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
-import DeleteSubmissionModal from '../../components/submissions/DeleteSubmissionModal.jsx'
 
 const statusOptions = [
   { value: '', label: 'All statuses' },
@@ -80,9 +79,7 @@ export default function Submissions() {
     return params.get('activity') || ''
   })
   const [statusFilter, setStatusFilter] = useState('')
-  const [sortBy, setSortBy] = useState('-submitted_at')
-  const [submittedAfter, setSubmittedAfter] = useState('')
-  const [submittedBefore, setSubmittedBefore] = useState('')
+  const [submittedDate, setSubmittedDate] = useState('')
   const [activityOptions, setActivityOptions] = useState([])
   const [stats, setStats] = useState({ total: 0, pending: 0, graded: 0, late: 0 })
   const [totalCount, setTotalCount] = useState(0)
@@ -90,18 +87,15 @@ export default function Submissions() {
   const [pageCount, setPageCount] = useState(1)
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
-  const [deletingSubmission, setDeletingSubmission] = useState(null)
-  const [toastMessage, setToastMessage] = useState('')
 
   const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
-      const params = { page, ordering: sortBy }
+      const params = { page, ordering: '-submitted_at' }
       if (query.trim()) params.search = query.trim()
       if (activityIdFilter) params.activity = activityIdFilter
       if (statusFilter) params.status = statusFilter
-      if (submittedAfter) params.submitted_at_after = submittedAfter
-      if (submittedBefore) params.submitted_at_before = submittedBefore
+      if (submittedDate) params.submission_date = submittedDate
       const response = await api.get('/submissions/', { params })
       const rawData = Array.isArray(response.data) ? response.data : response.data.results || []
       setSubmissions(rawData)
@@ -115,7 +109,7 @@ export default function Submissions() {
     } finally {
       setLoading(false)
     }
-  }, [activityIdFilter, page, query, sortBy, statusFilter, submittedAfter, submittedBefore])
+  }, [activityIdFilter, page, query, statusFilter, submittedDate])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(fetchSubmissions, 0)
@@ -149,8 +143,6 @@ export default function Submissions() {
     if (action === 'view') {
       setSelectedSubmissionId(row.id)
       setIsViewOpen(true)
-    } else if (action === 'delete') {
-      setDeletingSubmission(row)
     }
   }
 
@@ -216,13 +208,6 @@ export default function Submissions() {
     },
   ]
 
-  const handleDeleteSuccess = () => {
-    setDeletingSubmission(null)
-    fetchSubmissions()
-    setToastMessage('Submission deleted successfully.')
-    window.setTimeout(() => setToastMessage(''), 4000)
-  }
-
   return (
     <div className="space-y-5 sm:space-y-6">
       <PageHeader
@@ -251,24 +236,20 @@ export default function Submissions() {
           </div>
         </div>
 
-        <div className="mb-4 flex flex-col gap-3">
+        <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <label className="relative block min-w-0">
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
             <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search student, ID, activity, or section" aria-label="Search submissions" className="tt-control w-full pl-10 pr-10" />
             {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear submission search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
           </label>
-          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            <label className="min-w-0"><span className="sr-only">Filter activity</span><select value={activityIdFilter} onChange={(event) => { setActivityIdFilter(event.target.value); setPage(1) }} className="tt-control w-full"><option value="">All activities</option>{activityOptions.map((activity) => <option key={activity.id} value={activity.id}>{activity.title}{activity.type ? ` · ${activity.type}` : ''}</option>)}</select></label>
-            <label className="min-w-0"><span className="sr-only">Filter submission status</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">{statusOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}</select></label>
-            <label className="min-w-0"><span className="sr-only">Submitted after</span><input type="date" aria-label="Submitted after" value={submittedAfter} onChange={(event) => { setSubmittedAfter(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
-            <label className="min-w-0"><span className="sr-only">Submitted before</span><input type="date" aria-label="Submitted before" value={submittedBefore} onChange={(event) => { setSubmittedBefore(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
-            <label className="min-w-0"><span className="sr-only">Sort submissions</span><select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1) }} className="tt-control w-full"><option value="-submitted_at">Newest first</option><option value="submitted_at">Oldest first</option><option value="activity__title">Activity title</option><option value="student__student_id">Student ID</option><option value="score">Grade</option></select></label>
-          </div>
+          <label className="min-w-0"><span className="sr-only">Filter activity</span><select value={activityIdFilter} onChange={(event) => { setActivityIdFilter(event.target.value); setPage(1) }} className="tt-control w-full"><option value="">All activities</option>{activityOptions.map((activity) => <option key={activity.id} value={activity.id}>{activity.title}{activity.type ? ` · ${activity.type}` : ''}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Filter submission status</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">{statusOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Submission date</span><input type="date" aria-label="Submission date" value={submittedDate} onChange={(event) => { setSubmittedDate(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
         </div>
 
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
           <span>{totalCount} result{totalCount === 1 ? '' : 's'}{loading ? ' · Loading…' : ''}</span>
-          {(query || activityIdFilter || statusFilter || submittedAfter || submittedBefore) && <button type="button" onClick={() => { setQuery(''); setActivityIdFilter(''); setStatusFilter(''); setSubmittedAfter(''); setSubmittedBefore(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button>}
+          {(query || activityIdFilter || statusFilter || submittedDate) && <button type="button" onClick={() => { setQuery(''); setActivityIdFilter(''); setStatusFilter(''); setSubmittedDate(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button>}
         </div>
 
         <DataTable
@@ -312,16 +293,10 @@ export default function Submissions() {
               <div className="sm:col-span-2"><dt className="font-semibold">Feedback</dt><dd className="whitespace-pre-wrap">{row.feedback || '—'}</dd></div>
             </dl>
           )}
-          emptyMessage={totalCount ? 'No submissions match your filters.' : 'No submissions available.'}
+          emptyMessage={query || activityIdFilter || statusFilter || submittedDate ? 'No submissions match your filters.' : 'No submissions available.'}
         />
         {!loading && pageCount > 1 && <Pagination page={page} pageCount={pageCount} onPageChange={setPage} label="Page" />}
       </section>
-
-      {toastMessage && (
-        <div role="status" className="fixed bottom-4 right-4 z-[var(--tt-layer-toast)] max-w-[320px] rounded-[12px] border border-[#D1FAE5] bg-[#ECFDF5] px-4 py-3 text-sm text-[#065F46] shadow-lg">
-          {toastMessage}
-        </div>
-      )}
 
       <ViewSubmissionModal
         isOpen={isViewOpen}
@@ -330,13 +305,6 @@ export default function Submissions() {
         onUnauthorized={() => navigate('/admin/login')}
       />
 
-      <DeleteSubmissionModal
-        isOpen={Boolean(deletingSubmission)}
-        submission={deletingSubmission}
-        onClose={() => setDeletingSubmission(null)}
-        onUnauthorized={() => navigate('/admin/login')}
-        onDeleted={handleDeleteSuccess}
-      />
     </div>
   )
 }

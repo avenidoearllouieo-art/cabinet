@@ -9,7 +9,7 @@ import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.j
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { formatAccessLogDuration } from '../../components/accesslogs/accessLogFormatters.js'
-import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus } from 'lucide-react'
+import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus, FileSpreadsheet } from 'lucide-react'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -49,6 +49,7 @@ export default function AccessLogs() {
   const [deletingLog, setDeletingLog] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
+  const [exporting, setExporting] = useState(false)
   const [openActionId, setOpenActionId] = useState(null)
   const [page, setPage] = useState(1)
   const pageSize = 10
@@ -174,6 +175,39 @@ export default function AccessLogs() {
     URL.revokeObjectURL(url)
     setToastMessage('Access log exported successfully.')
     window.setTimeout(() => setToastMessage(''), 4000)
+  }
+
+  const handleExportExcel = async () => {
+    const ids = selectedIds.length ? selectedIds : filteredLogs.map((log) => log.id)
+    if (!ids.length || exporting) return
+    setExporting(true)
+    try {
+      const response = await api.post('/access-logs/export-excel/', {
+        ids,
+        scope: selectedIds.length ? 'selected' : 'filtered',
+      }, { responseType: 'blob' })
+      const blob = response.data instanceof Blob
+        ? response.data
+        : new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'access-history-report.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      setToastMessage('Access history report exported successfully.')
+    } catch (exportError) {
+      if (exportError.response?.status === 401) {
+        navigate('/admin/login')
+        return
+      }
+      setToastMessage('Failed to export access logs.')
+    } finally {
+      setExporting(false)
+      window.setTimeout(() => setToastMessage(''), 4000)
+    }
   }
 
   const handleViewUserProfile = (row) => {
@@ -497,7 +531,12 @@ export default function AccessLogs() {
               </div>
             )}
           </div>
-          <div>{filteredLogs.length} result{filteredLogs.length === 1 ? '' : 's'}</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span>{filteredLogs.length} result{filteredLogs.length === 1 ? '' : 's'}</span>
+            <button type="button" onClick={handleExportExcel} disabled={!filteredLogs.length || exporting} className="inline-flex min-h-11 items-center gap-2 rounded-[8px] border border-[#D1D5DB] bg-white px-4 py-2 text-sm font-semibold text-taptrack-navy hover:bg-taptrack-gold/15 disabled:cursor-not-allowed disabled:opacity-50">
+              <FileSpreadsheet size={16} />{exporting ? 'Exporting...' : `Export Excel${selectedIds.length ? ` (${selectedIds.length} selected)` : ''}`}
+            </button>
+          </div>
         </div>
 
         <DataTable

@@ -469,6 +469,7 @@ export default function UserDrawer({ user, onClose, onAction }) {
         isOpen={accessHistoryOpen}
         userId={selectedUserId}
         fullName={displayName}
+        showNfcUid
         onClose={() => setAccessHistoryOpen(false)}
       />
       <Modal

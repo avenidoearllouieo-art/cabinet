@@ -24,6 +24,8 @@ describe('StudentProfile', () => {
       section_program: 'BSCS',
       section_year_level: '3rd Year',
       section_academic_year: '2025-2026',
+      is_active: true,
+      nfc_uid: 'STUDENT-UID-PRIVATE',
       section_instructors: [{
         id: 2,
         role: 'instructor',
@@ -36,6 +38,8 @@ describe('StudentProfile', () => {
 
     render(<MemoryRouter><StudentProfile /></MemoryRouter>)
 
+    expect(await screen.findByRole('heading', { name: 'Profile' })).toBeTruthy()
+    expect(screen.getByText('Manage your account and contact information.')).toBeTruthy()
     expect(await screen.findByText('Academic Information')).toBeTruthy()
     expect(screen.getByText('Year Level')).toBeTruthy()
     expect(screen.getByText('Academic Year')).toBeTruthy()
@@ -44,6 +48,9 @@ describe('StudentProfile', () => {
     expect(screen.getByText('rae@example.test')).toBeTruthy()
     expect(screen.getByText('555-0101')).toBeTruthy()
     expect(screen.getByText('Assigned Section')).toBeTruthy()
+    expect(screen.getByText('Account Status')).toBeTruthy()
+    expect(screen.getByText('Active')).toBeTruthy()
+    expect(screen.queryByText('STUDENT-UID-PRIVATE')).toBeNull()
     expect(screen.queryByRole('link', { name: 'Contact Instructor' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Contact Instructor' })).toBeNull()
   })

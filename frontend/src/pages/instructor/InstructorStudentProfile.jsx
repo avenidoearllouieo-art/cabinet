@@ -9,7 +9,7 @@ import { ChevronLeft, ClipboardList, AlertCircle } from 'lucide-react'
 const formatDate = (value) => {
   if (!value) return '—'
   try {
-    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value))
   } catch {
     return String(value)
   }
@@ -105,10 +105,6 @@ export default function InstructorStudentProfile() {
             <div>
               <h3 className="text-sm font-semibold text-slate-700">Academic Year</h3>
               <p className="mt-2 text-slate-900">{student?.section_academic_year || '—'}</p>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700">NFC UID</h3>
-              <p className="mt-2 text-slate-900">{student?.nfc_uid || '—'}</p>
             </div>
             <div>
               <h3 className="text-sm font-semibold text-slate-700">Status</h3>

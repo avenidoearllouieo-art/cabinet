@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MoreVertical, Eye, Trash2 } from 'lucide-react'
+import { MoreVertical, Eye } from 'lucide-react'
 import AnchoredMenu from '../users/AnchoredMenu.jsx'
 
 export default function SubmissionActionsMenu({ submission, onAction }) {
@@ -25,8 +25,6 @@ export default function SubmissionActionsMenu({ submission, onAction }) {
       )}
     >
       <button type="button" role="menuitem" onClick={() => onAction?.('view', submission)} className="flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"><Eye size={15} aria-hidden="true" />View</button>
-      <div className="my-1 border-t border-slate-100" role="separator" />
-      <button type="button" role="menuitem" onClick={() => onAction?.('delete', submission)} className="flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"><Trash2 size={15} aria-hidden="true" />Delete</button>
     </AnchoredMenu>
   )
 }

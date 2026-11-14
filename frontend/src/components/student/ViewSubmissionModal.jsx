@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import { Download, RotateCcw } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import Modal from '../Modal.jsx'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -12,15 +13,6 @@ function formatDate(value) {
   } catch {
     return String(value)
   }
-}
-
-function formatBytes(bytes) {
-  if (bytes == null) return '—'
-  const kb = 1024
-  if (bytes < kb) return `${bytes} B`
-  const mb = kb * 1024
-  if (bytes < mb) return `${(bytes / kb).toFixed(1)} KB`
-  return `${(bytes / mb).toFixed(1)} MB`
 }
 
 function statusBadge(status) {
@@ -39,14 +31,11 @@ export default function ViewSubmissionModal({ submission, isOpen, onClose, onRes
 
   const files = useMemo(
     () =>
-      submission?.files || [
-        {
-          id: 1,
-          name: submission?.file?.split('/').pop() || 'Submission File',
-          size: 1024 * 50,
-          url: submission?.file,
-        },
-      ],
+      submission?.files?.length
+        ? submission.files
+        : submission?.file
+          ? [{ id: submission.id, name: submission.file.split('/').pop() || 'Submission File', preview_kind: 'submission_file' }]
+          : [],
     [submission],
   )
 
@@ -101,25 +90,7 @@ export default function ViewSubmissionModal({ submission, isOpen, onClose, onRes
         <section className="space-y-4 rounded-[16px] border border-[#E5E7EB] bg-white p-6">
           <h3 className="text-base font-semibold text-slate-900">Submitted Files</h3>
           {files && files.length > 0 ? (
-            <div className="space-y-2">
-              {files.map((file) => (
-                <div key={file.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-slate-900">{file.name}</p>
-                    <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
-                  </div>
-                  {file.url && (
-                    <a
-                      href={file.url}
-                      download
-                      className="ml-4 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      <Download size={16} /> Download
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
+            <AcademicFileAttachments attachments={files} kind="submission" />
           ) : (
             <p className="text-sm text-slate-500">No files submitted</p>
           )}

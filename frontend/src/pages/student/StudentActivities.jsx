@@ -18,13 +18,23 @@ const filterTabs = [
   { value: 'closed', label: 'Closed' },
 ]
 
-function formatDate(value) {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-  } catch {
-    return String(value)
-  }
+function parseValidDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatDate(value, fallback = 'Not recorded') {
+  const date = parseValidDate(value)
+  return date
+    ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(date)
+    : fallback
+}
+
+function getManilaDayKey(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date)
 }
 
 function getSubmissionState(activity) {
@@ -33,7 +43,7 @@ function getSubmissionState(activity) {
 
   const status = String(activity?.student_submission_status || '').toLowerCase()
   const hasSubmission = Boolean(activity?.student_submitted_at) && !status.includes('not submitted')
-  const dueDate = activity?.due_date ? new Date(activity.due_date) : null
+  const dueDate = parseValidDate(activity?.due_date)
   const now = new Date()
   const isPastDue = dueDate && dueDate < now
 
@@ -44,7 +54,7 @@ function getSubmissionState(activity) {
   }
 
   if (isPastDue) return 'overdue'
-  if (dueDate && dueDate.toDateString() === now.toDateString()) return 'due_today'
+  if (dueDate && getManilaDayKey(dueDate) === getManilaDayKey(now)) return 'due_today'
   return 'pending'
 }
 
@@ -74,7 +84,7 @@ function getActionLabel(state, canEdit) {
 
 function getCanEdit(activity) {
   if (['closed', 'archived'].includes(String(activity?.status || '').toLowerCase())) return false
-  const dueDate = activity?.due_date ? new Date(activity.due_date) : null
+  const dueDate = parseValidDate(activity?.due_date)
   const now = new Date()
   const isPastDue = dueDate && dueDate < now
   if (!activity?.student_submitted_at) return !isPastDue || Boolean(activity?.allow_resubmission)
@@ -209,12 +219,6 @@ export default function StudentActivities() {
     setIsSubmitModalOpen(true)
   }
 
-  const handleSubmitFromDetails = (activity) => {
-    setIsViewModalOpen(false)
-    setActiveActivity(activity)
-    setIsSubmitModalOpen(true)
-  }
-
   const handleModalSuccess = () => {
     setIsSubmitModalOpen(false)
     setActiveActivity(null)
@@ -242,7 +246,9 @@ export default function StudentActivities() {
       if (leftState === 'submitted' || leftState === 'late') {
         return rightSubmittedAt - leftSubmittedAt
       }
-      return new Date(left.due_date || 0).getTime() - new Date(right.due_date || 0).getTime()
+      const leftDueDate = parseValidDate(left.due_date)?.getTime() ?? Number.MAX_SAFE_INTEGER
+      const rightDueDate = parseValidDate(right.due_date)?.getTime() ?? Number.MAX_SAFE_INTEGER
+      return leftDueDate - rightDueDate
     })
 
     if (activeFilter === 'all') return sorted
@@ -272,7 +278,7 @@ export default function StudentActivities() {
       ),
     },
     { key: 'instructor_name', label: 'Instructor', className: 'min-w-[160px]', render: (value) => value || 'Not recorded' },
-    { key: 'due_date', label: 'Due Date', className: 'min-w-[180px]', render: (value) => formatDate(value) },
+    { key: 'due_date', label: 'Due Date', className: 'min-w-[180px]', render: (value) => formatDate(value, 'No deadline') },
     {
       key: 'student_submission_status',
       label: 'Status',
@@ -310,7 +316,7 @@ export default function StudentActivities() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Student Activities" description="Review the activities assigned to your section and manage your submissions." />
+      <PageHeader title="Activities" description="View your assigned activities, deadlines, and submission progress." />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard icon={<ClipboardList size={18} />} label="Total Activities" value={stats.totalActivities} subtitle="Activities assigned to your section" />
@@ -357,8 +363,6 @@ export default function StudentActivities() {
       <ActivityViewModal
         activity={activeActivity}
         isOpen={isViewModalOpen}
-        submissionAction={activeActivity ? getActionLabel(getSubmissionState(activeActivity), getCanEdit(activeActivity)) : ''}
-        onSubmit={handleSubmitFromDetails}
         onClose={() => { setIsViewModalOpen(false); setActiveActivity(null) }}
       />
 

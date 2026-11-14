@@ -36,6 +36,11 @@ describe('StudentDashboard', () => {
               section_name: 'BIO-101',
               due_date: new Date(Date.now() + 86400000).toISOString(),
               status: 'Pending',
+            }, {
+              id: 2,
+              title: 'Malformed deadline item',
+              due_date: 'not-a-date',
+              status: 'Pending',
             }],
             recent_submissions: [],
             recent_access_logs: [],
@@ -62,5 +67,7 @@ describe('StudentDashboard', () => {
     expect(statsGrid.textContent).toContain('Pending')
     expect(statsGrid.textContent).toContain('Cabinet Access Today')
     expect(screen.getByRole('region', { name: 'Upcoming activities table' })).toBeTruthy()
+    expect((await screen.findAllByText('Date unavailable')).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Jan 1, 1970/)).toBeNull()
   })
 })

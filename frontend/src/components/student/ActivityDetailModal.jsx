@@ -1,7 +1,9 @@
 import { useMemo, useEffect, useState, useRef } from 'react'
-import { Download, Upload, X, FileText, Image } from 'lucide-react'
+import { Upload, X, FileText, Image } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
+import { SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -22,18 +24,6 @@ function formatBytes(bytes) {
   const mb = kb * 1024
   if (bytes < mb) return `${(bytes / kb).toFixed(1)} KB`
   return `${(bytes / mb).toFixed(1)} MB`
-}
-
-function getAttachmentName(attachment) {
-  return attachment?.filename || attachment?.file_name || attachment?.file || 'Attachment'
-}
-
-function getAttachmentSize(attachment) {
-  return attachment?.size ?? attachment?.file_size ?? null
-}
-
-function getAttachmentUrl(attachment) {
-  return attachment?.url || attachment?.download_url || attachment?.file || ''
 }
 
 function humanRemaining(due) {
@@ -110,16 +100,17 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
     const selectedFiles = Array.from(e.target.files || [])
     if (selectedFiles.length === 0) return
 
-    const newErrors = []
-    const validFiles = []
-    selectedFiles.forEach((file) => {
-      validFiles.push(file)
+    const newErrors = validateUploadFiles(selectedFiles, {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
     })
     if (newErrors.length) {
       setErrors(newErrors)
+      if (e.target) e.target.value = ''
       return
     }
 
+    const validFiles = selectedFiles
     setErrors([])
     setUploadProgress(0)
     setLoading(true)
@@ -146,8 +137,8 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
       } catch (callbackError) {
         console.error('Submission refresh callback failed:', callbackError)
       }
-    } catch {
-      setErrors(['Failed to upload files. Please try again.'])
+    } catch (error) {
+      setErrors(uploadErrorMessages(error, 'Failed to upload files. Please try again.'))
     } finally {
       setLoading(false)
       setUploadProgress(0)
@@ -183,6 +174,14 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
   const handleSubmit = async (e) => {
     e?.preventDefault()
     setErrors([])
+    const uploadErrors = validateUploadFiles([], {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
+    })
+    if (uploadErrors.length) {
+      setErrors(uploadErrors)
+      return
+    }
     if (!uploadedFiles || uploadedFiles.length === 0) {
       setErrors(['Please upload at least one file draft before submitting.'])
       return
@@ -211,8 +210,8 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
         console.error('Submission refresh callback failed:', callbackError)
       }
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
-    } catch {
-      setErrors(['Failed to submit activity. Please try again.'])
+    } catch (error) {
+      setErrors(uploadErrorMessages(error, 'Failed to submit activity. Please try again.'))
     } finally {
       setLoading(false)
       setUploadProgress(0)
@@ -285,30 +284,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
               </div>
               <div className="text-sm text-slate-500">Supported: PDF, DOCX, PPTX, Images, ZIP</div>
             </div>
-            {attachmentRows.length === 0 ? (
-              <div className="rounded-[12px] border border-dashed border-[#E5E7EB] bg-[#F8FAFC] p-8 text-center text-sm text-slate-600">
-                No attachments available.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {attachmentRows.map((attachment) => (
-                  <div key={attachment.id} className="flex flex-col gap-2 rounded-[12px] border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="font-medium text-slate-900">{getAttachmentName(attachment)}</p>
-                      <p className="text-sm text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p>
-                    </div>
-                    <a
-                      href={getAttachmentUrl(attachment)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-                    >
-                      <Download size={16} /> Download
-                    </a>
-                  </div>
-                ))}
-              </div>
-            )}
+            <AcademicFileAttachments attachments={attachmentRows} kind="activity" emptyMessage="No attachments available." />
           </section>
 
           <section className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
@@ -357,17 +333,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      {(submission.attachments || (submission.file ? [{ id: 'f', file: submission.file, file_name: submission.file.split('/').pop(), download_url: submission.file }] : [])).map((att) => (
-                        <div key={att.id || att.file_name} className="flex items-center justify-between rounded-md bg-white p-3">
-                          <div>
-                            <p className="font-medium text-slate-900">{att.file_name || att.file?.split('/').pop()}</p>
-                            <p className="text-xs text-slate-500">{formatBytes(att.file_size) || ''} • Uploaded {formatDate(att.uploaded_at || submission.submitted_at || submission.created_at)}</p>
-                          </div>
-                          <a href={att.download_url || att.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white"> <Download size={14} /> Download</a>
-                        </div>
-                      ))}
-                    </div>
+                    <AcademicFileAttachments attachments={submission.files || submission.attachments || (submission.file ? [{ id: submission.id, file_name: submission.file.split('/').pop(), preview_kind: 'submission_file' }] : [])} kind="submission" />
 
                     {canResubmit && (
                       <div className="mt-3">
@@ -382,6 +348,7 @@ export default function ActivityDetailModal({ activity, isOpen, onClose, onSubmi
                         ref={fileInputRef}
                         type="file"
                         multiple
+                        accept={SUPPORTED_UPLOAD_ACCEPT}
                         onChange={handleFileSelect}
                         disabled={loading || !canSubmit}
                         className="hidden"

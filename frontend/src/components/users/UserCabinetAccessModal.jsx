@@ -9,6 +9,7 @@ function formatDate(value) {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)
@@ -28,7 +29,7 @@ function statusClass(status) {
       : 'text-slate-700'
 }
 
-export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClose }) {
+export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClose, showNfcUid = false }) {
   const [logs, setLogs] = useState([])
   const [page, setPage] = useState(1)
   const [hasNext, setHasNext] = useState(false)
@@ -138,7 +139,7 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
                     <tr>
                       <th className="w-[10%] px-3 py-3">Action</th>
                       <th className="w-[10%] px-3 py-3">Status</th>
-                      <th className="w-[13%] px-3 py-3">NFC UID</th>
+                      {showNfcUid && <th className="w-[13%] px-3 py-3">NFC UID</th>}
                       <th className="w-[12%] px-3 py-3">Station</th>
                       <th className="w-[15%] px-3 py-3">Cabinet Name</th>
                       <th className="w-[22%] px-3 py-3">Reason</th>
@@ -150,7 +151,7 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
                       <tr key={log.id} className="align-top border-b border-slate-100 last:border-0">
                         <td className="break-words px-3 py-3 text-slate-700">{actionLabel(log.action)}</td>
                         <td className={`break-words px-3 py-3 font-medium ${statusClass(log.status)}`}>{String(log.status || '').toLowerCase() === 'success' ? 'Success' : 'Failed'}</td>
-                        <td className="break-all px-3 py-3 text-slate-700">{log.nfc_uid || '—'}</td>
+                        {showNfcUid && <td className="break-all px-3 py-3 text-slate-700">{log.nfc_uid || '—'}</td>}
                         <td className="break-words px-3 py-3 text-slate-700">{log.station || '—'}</td>
                         <td className="break-words px-3 py-3 text-slate-700">{log.cabinet_name || '—'}</td>
                         <td className="break-words px-3 py-3 text-slate-700">{log.reason || '—'}</td>
@@ -168,7 +169,7 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
                       <span className={`shrink-0 text-xs font-semibold ${statusClass(log.status)}`}>{String(log.status || '').toLowerCase() === 'success' ? 'Success' : 'Failed'}</span>
                     </div>
                     <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
-                      <dt className="font-medium text-slate-500">NFC UID</dt><dd className="break-all text-slate-700">{log.nfc_uid || '—'}</dd>
+                      {showNfcUid && <><dt className="font-medium text-slate-500">NFC UID</dt><dd className="break-all text-slate-700">{log.nfc_uid || '—'}</dd></>}
                       <dt className="font-medium text-slate-500">Station</dt><dd className="break-words text-slate-700">{log.station || '—'}</dd>
                       <dt className="font-medium text-slate-500">Cabinet Name</dt><dd className="break-words text-slate-700">{log.cabinet_name || '—'}</dd>
                       <dt className="font-medium text-slate-500">Reason</dt><dd className="break-words text-slate-700">{log.reason || '—'}</dd>

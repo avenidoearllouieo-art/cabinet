@@ -1,9 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
-import { Download, Upload, X, FileText, Image } from 'lucide-react'
+import { Upload, X, FileText, Image } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
 import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
 import ActivityDiscussion from '../ActivityDiscussion.jsx'
+import { SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -74,6 +76,15 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
   const handleFileSelect = async (e) => {
     const selectedFiles = Array.from(e.target.files || [])
     if (!selectedFiles.length) return
+    const uploadErrors = validateUploadFiles(selectedFiles, {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
+    })
+    if (uploadErrors.length) {
+      setErrors(uploadErrors)
+      if (e.target) e.target.value = ''
+      return
+    }
     setErrors([])
     setUploadProgress(0)
     setLoading(true)
@@ -89,8 +100,8 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       const ups = res.data.uploads || []
       setUploadedFiles((prev) => [...prev, ...ups])
       setFiles((prev) => [...prev, ...selectedFiles])
-    } catch {
-      setErrors(['Failed to upload files.'])
+    } catch (error) {
+      setErrors(uploadErrorMessages(error, 'Failed to upload files.'))
     } finally {
       setLoading(false)
       setUploadProgress(0)
@@ -113,6 +124,11 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
   }
 
   const handleSubmit = async () => {
+    const uploadErrors = validateUploadFiles([], {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
+    })
+    if (uploadErrors.length) { setErrors(uploadErrors); return }
     if (!uploadedFiles.length) { setErrors(['Upload at least one file draft.']); return }
     if (!confirm('Submit your files?')) return
     setLoading(true)
@@ -132,8 +148,8 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
       window.alert('Submission created successfully.')
       onSuccess && onSuccess()
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
-    } catch {
-      setErrors(['Failed to submit.'])
+    } catch (error) {
+      setErrors(uploadErrorMessages(error, 'Failed to submit.'))
     } finally {
       setLoading(false)
     }
@@ -158,21 +174,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
 
           <div className="rounded-[12px] border bg-white p-4">
             <h4 className="font-semibold">Attachments</h4>
-            {activity.attachments?.length ? (
-              <div className="space-y-2 mt-3">
-                {activity.attachments.map((att) => (
-                  <div key={att.id} className="flex items-center justify-between rounded bg-slate-50 p-2">
-                    <div>
-                      <div className="font-medium">{att.filename || att.file_name}</div>
-                      <div className="text-xs text-slate-500">{formatBytes(att.size)}</div>
-                    </div>
-                    <a href={att.url} target="_blank" rel="noreferrer" className="rounded-full bg-slate-900 px-3 py-1 text-white text-sm"> <Download size={14} /> Download</a>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-slate-500 mt-2">No attachments.</div>
-            )}
+            <div className="mt-3"><AcademicFileAttachments attachments={activity.attachments || []} kind="activity" emptyMessage="No attachments." /></div>
           </div>
 
           <ActivityAnnouncements activityId={activity?.id} />
@@ -185,15 +187,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
               <h5 className="font-semibold">Your Work</h5>
               {submission ? (
                 <div className="mt-2 space-y-2">
-                  {(submission.attachments || []).map((att) => (
-                    <div key={att.id} className="flex items-center justify-between rounded bg-white p-2">
-                      <div>
-                        <div className="font-medium">{att.file_name}</div>
-                        <div className="text-xs text-slate-500">{formatBytes(att.file_size)}</div>
-                      </div>
-                      <a href={att.download_url} target="_blank" rel="noreferrer" className="rounded-full bg-slate-900 px-3 py-1 text-white text-sm"><Download size={14} /> Download</a>
-                    </div>
-                  ))}
+                  <AcademicFileAttachments attachments={submission.files || submission.attachments || []} kind="submission" emptyMessage="No submission files." />
                   <div className="mt-2 text-sm text-slate-600">
                     <div><strong>Submitted At:</strong> {formatDate(submission.submitted_at)}</div>
                     {submission.remarks ? <div className="mt-1"><strong>Submission Note:</strong> <span className="text-slate-700">{submission.remarks}</span></div> : null}
@@ -202,7 +196,7 @@ export default function ActivityDetailInlineModal({ activity: initialActivity, i
               ) : (
                 <div className="mt-3">
                   <div onDrop={handleDrop} onDragOver={handleDragOver} className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-[#F5B700]">
-                    <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
+                    <input ref={fileInputRef} type="file" multiple accept={SUPPORTED_UPLOAD_ACCEPT} onChange={handleFileSelect} className="hidden" />
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-5 py-2 font-bold text-[#0B1F3A] hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900"> <Upload size={16} /> Choose Files</button>
                     <div className="text-xs text-slate-500 mt-2">Supported: PDF, images, ZIP. Max 20 MB per file</div>
                   </div>

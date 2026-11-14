@@ -8,15 +8,17 @@ import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
 import AssignInstructorModal from '../../components/sections/AssignInstructorModal.jsx'
-import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, Layers3, X } from 'lucide-react'
+import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
+import { fetchAllResults } from '../../services/paginatedResults.js'
+import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, X, ChevronDown, ChevronRight } from 'lucide-react'
 
 export default function Sections() {
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const programFilter = 'all'
-  const yearLevelFilter = 'all'
+  const [programFilter, setProgramFilter] = useState('all')
+  const [yearLevelFilter, setYearLevelFilter] = useState('all')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -26,6 +28,7 @@ export default function Sections() {
   const [toastMessage, setToastMessage] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
   const [openActionId, setOpenActionId] = useState(null)
+  const [openActionLayout, setOpenActionLayout] = useState(null)
   const [selectedSectionForDrawer, setSelectedSectionForDrawer] = useState(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isAssignInstructorOpen, setIsAssignInstructorOpen] = useState(false)
@@ -33,15 +36,18 @@ export default function Sections() {
   const [instructorFilter, setInstructorFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortBy, setSortBy] = useState('name')
+  const [expandedSections, setExpandedSections] = useState(new Set())
+  const [sectionStudents, setSectionStudents] = useState(new Map())
+  const [loadingStudentSections, setLoadingStudentSections] = useState(new Set())
+  const [studentErrors, setStudentErrors] = useState(new Map())
   const drawerRef = useRef(null)
   const drawerCloseButtonRef = useRef(null)
 
   const fetchSections = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/sections/')
-      const rawSections = Array.isArray(response.data) ? response.data : response.data.results || []
-      setSections(rawSections)
+      const { results } = await fetchAllResults(api, '/sections/')
+      setSections(results)
       setError('')
     } catch (err) {
       console.error('Error fetching sections:', err)
@@ -56,15 +62,6 @@ export default function Sections() {
       await fetchSections()
     }
     load()
-  }, [])
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (!event.target?.closest?.('[data-section-action-menu]')) setOpenActionId(null)
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   useEffect(() => {
@@ -114,6 +111,7 @@ export default function Sections() {
     }
 
     setSections((prev) => [newSection, ...prev])
+    void fetchSections()
     setToastMessage('Section created successfully.')
     setIsAddModalOpen(false)
     window.setTimeout(() => setToastMessage(''), 4000)
@@ -128,6 +126,7 @@ export default function Sections() {
     setSections((existingSections) => {
       return existingSections.map((section) => (section.id === savedSection.id ? savedSection : section))
     })
+    void fetchSections()
 
     setToastMessage('Section updated successfully.')
     setIsEditModalOpen(false)
@@ -169,7 +168,7 @@ export default function Sections() {
     if (query.trim()) {
       const keyword = query.trim().toLowerCase()
       result = result.filter((section) =>
-        [section.subject_code, section.section_name, section.year_level, section.program, section.instructor_name]
+        [section.subject_code, section.section_name, section.year_level, section.academic_year, section.program, section.instructor_name]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
@@ -210,39 +209,21 @@ export default function Sections() {
 
   const totalSections = sections.length
   const totalStudents = sections.reduce((sum, section) => sum + (parseInt(section.student_count) || 0), 0)
-  const totalInstructors = new Set(sections.map((section) => section.instructor_name || '').filter(Boolean)).size
-  const averageStudentsPerSection = totalSections ? Math.round(totalStudents / totalSections) : 0
+  const totalInstructors = new Set(sections.map((section) => section.instructor ?? section.instructor_name).filter(Boolean)).size
+
+  const programOptions = useMemo(() => Array.from(new Set(sections.map((section) => section.program).filter(Boolean))).sort(), [sections])
+  const yearLevelOptions = useMemo(() => Array.from(new Set(sections.map((section) => section.year_level).filter(Boolean))).sort(), [sections])
 
   const instructorOptions = useMemo(() => {
     const options = Array.from(new Set(sections.map((section) => String(section.instructor_name || '').trim()).filter(Boolean)))
     return [{ value: 'all', label: 'All instructors' }, { value: 'unassigned', label: 'No instructor assigned' }, ...options.map((name) => ({ value: name, label: name }))]
   }, [sections])
 
-  const getStatusBadge = (status, row) => {
+  const getStatusBadge = (status) => {
     const normalized = String(status || '').toLowerCase()
-    let key = normalized
-    if (normalized === 'active' && !row?.instructor_name) key = 'pending'
-    if (normalized !== 'active' && !row?.student_count) key = 'empty'
-    const label = key === 'pending' ? 'Pending Instructor' : key === 'empty' ? 'Empty' : key === 'archived' ? 'Archived' : 'Active'
-    return <StatusBadge status={key} label={label} />
+    const label = normalized === 'active' ? 'Active' : normalized === 'inactive' ? 'Inactive' : status || 'Unknown'
+    return <StatusBadge status={normalized} label={label} />
   }
-
-  const getInstructorBadge = (row) => {
-    const name = String(row.instructor_name || '').trim()
-    if (!name) {
-      return <StatusBadge label="No Instructor Assigned" tone="warning" />
-    }
-    return <StatusBadge label={name} tone="info" />
-  }
-
-  const getSectionSummary = (row) => {
-    const label = row.subject_code ? `${row.subject_code} • ${row.section_name}` : row.section_name || 'Unnamed section'
-    return <div className="space-y-1"><div className="font-medium text-[#111827]">{label}</div><div className="text-xs text-[#6B7280]">{row.program || '—'} • {row.year_level || '—'}</div></div>
-  }
-
-  const getActivityCount = (row) => `${Number(row.activity_count || row.activities_count || 0) || 0} Activities`
-
-  const getStudentCountLabel = (row) => `${Number(row.student_count || 0) || 0} Students`
 
   const getAssignedCabinet = (row) => row.assigned_cabinet || row.cabinet_station || row.cabinet_name || '—'
 
@@ -269,11 +250,42 @@ export default function Sections() {
     setSelectedSectionForDrawer(null)
   }
 
-  const openAssignInstructor = () => {
-    const selected = sections.filter((section) => selectedIds.includes(section.id))
+  const openAssignInstructor = (section) => {
+    const selected = section ? [section] : sections.filter((item) => selectedIds.includes(item.id))
     if (!selected.length) return
     setAssignmentSections(selected)
     setIsAssignInstructorOpen(true)
+  }
+
+  const toggleStudentList = async (section) => {
+    const sectionId = section.id
+    if (expandedSections.has(sectionId)) {
+      setExpandedSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionId)
+        return next
+      })
+      return
+    }
+
+    setExpandedSections((current) => new Set(current).add(sectionId))
+    if (sectionStudents.has(sectionId) || loadingStudentSections.has(sectionId)) return
+
+    setLoadingStudentSections((current) => new Set(current).add(sectionId))
+    setStudentErrors((current) => new Map(current).set(sectionId, ''))
+    try {
+      const { results } = await fetchAllResults(api, '/users/', { role: 'student', section: sectionId })
+      setSectionStudents((current) => new Map(current).set(sectionId, results))
+    } catch (requestError) {
+      console.error('Error fetching students for section:', requestError)
+      setStudentErrors((current) => new Map(current).set(sectionId, 'Students could not be loaded.'))
+    } finally {
+      setLoadingStudentSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionId)
+        return next
+      })
+    }
   }
 
   const handleInstructorAssigned = (updatedSections) => {
@@ -288,31 +300,48 @@ export default function Sections() {
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 
-  const renderSectionActions = (section) => (
-    <div className="relative" data-section-action-menu>
-      <button
-        type="button"
-        onClick={() => setOpenActionId((current) => (current === section.id ? null : section.id))}
-        className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#D1D5DB] bg-white text-[#374151] transition hover:bg-[#F9FAFB] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] sm:h-9 sm:w-9"
-        aria-label={`Open actions for ${section.section_name || 'section'}`}
-        aria-expanded={openActionId === section.id}
-      >
-        <MoreHorizontal size={16} />
-      </button>
-      {openActionId === section.id && (
-        <div className="absolute right-0 z-30 mt-2 w-48 rounded-[10px] border border-[#E5E7EB] bg-white p-2 shadow-lg">
-          <button type="button" onClick={() => { setOpenActionId(null); openSectionDrawer(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
-            <Eye size={14} />View Details
-          </button>
-          <button type="button" onClick={() => { setOpenActionId(null); handleOpenEditModal(section.id, section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#111827] transition hover:bg-[#F3F4F6] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
-            <Edit2 size={14} />Edit Section
-          </button>
-          <button type="button" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 py-2 text-sm text-[#DC2626] transition hover:bg-[#FEF2F2] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[#FFC107]">
-            <Trash2 size={14} />Delete
-          </button>
-        </div>
-      )}
-    </div>
+  const renderStudentRoster = (section) => {
+    const students = sectionStudents.get(section.id)
+    if (loadingStudentSections.has(section.id)) return <p className="p-4 text-sm text-slate-500">Loading students…</p>
+    if (studentErrors.get(section.id)) return <p role="alert" className="p-4 text-sm text-red-700">{studentErrors.get(section.id)}</p>
+    if (!students?.length) return <p className="p-4 text-sm text-slate-500">No students enrolled.</p>
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs sm:text-sm">
+          <thead className="bg-[#eaf2fb] text-[#526780]">
+            <tr><th className="px-3 py-2 font-semibold">Student Name</th><th className="px-3 py-2 font-semibold">Student ID</th><th className="px-3 py-2 font-semibold">Year Level</th><th className="px-3 py-2 font-semibold">Status</th></tr>
+          </thead>
+          <tbody className="divide-y divide-[#dbe5f0] bg-white">
+            {students.map((student) => (
+              <tr key={student.id}>
+                <td className="px-3 py-2 font-medium text-[#102a4c]">{`${student.first_name || ''} ${student.last_name || ''}`.trim() || student.username || 'Unnamed student'}</td>
+                <td className="px-3 py-2 text-slate-600">{student.student_id || '—'}</td>
+                <td className="px-3 py-2 text-slate-600">{student.section_year_level || section.year_level || '—'}</td>
+                <td className="px-3 py-2"><StatusBadge status={student.is_active ? 'active' : 'inactive'} label={student.is_active ? 'Active' : 'Inactive'} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  const renderSectionActions = (section, layout) => (
+    <AnchoredMenu
+      open={openActionId === section.id && openActionLayout === layout}
+      onOpenChange={(open) => {
+        setOpenActionId(open ? section.id : null)
+        setOpenActionLayout(open ? layout : null)
+      }}
+      ariaLabel={`${section.section_name || 'Section'} actions`}
+      renderTrigger={(props) => <button {...props} type="button" className="flex h-9 w-9 items-center justify-center rounded-md border border-[#dbe5f0] bg-white text-[#374151] hover:bg-[#f3f6fa]" aria-label={`Open actions for ${section.section_name || 'section'}`}><MoreHorizontal size={16} /></button>}
+    >
+      <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openSectionDrawer(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-[#111827] hover:bg-[#f3f6fa]"><Eye size={14} />View Details</button>
+      <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); handleOpenEditModal(section.id, section) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-[#111827] hover:bg-[#f3f6fa]"><Edit2 size={14} />Edit Section</button>
+      <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openAssignInstructor(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-[#111827] hover:bg-[#f3f6fa]"><UserCog size={14} />Assign Instructor</button>
+      <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); handleOpenDeleteModal(section) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"><Trash2 size={14} />Delete</button>
+    </AnchoredMenu>
   )
 
   return (
@@ -324,7 +353,7 @@ export default function Sections() {
           <button
             type="button"
             onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2 rounded-[10px] bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1D4ED8]"
+            className="tt-button tt-button-primary"
           >
             <Plus size={16} />
             Add Section
@@ -332,11 +361,10 @@ export default function Sections() {
         }
       />
 
-      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
+      <div className="dashboard-stat-grid grid grid-cols-1 gap-2.5 sm:grid-cols-3 lg:gap-4">
         <SummaryCard icon={BookOpen} title="Total Sections" value={totalSections} trendText="All sections" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={Users} title="Students Enrolled" value={totalStudents} trendText="Across all sections" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={UserCog} title="Assigned Instructors" value={totalInstructors} trendText="Sections with instructors" iconBg="bg-violet-50" iconColor="text-violet-900" />
-        <SummaryCard icon={Layers3} title="Average Students per Section" value={averageStudentsPerSection} trendText="Enrolled per section" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={UserCog} title="Assigned Instructors" value={totalInstructors} trendText="Unique assigned instructors" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -353,47 +381,25 @@ export default function Sections() {
           </div>
         </div>
 
-        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <label className="relative block w-full lg:max-w-[360px]">
+        <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
+          <label className="relative block min-w-0">
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
               <Search size={16} />
             </span>
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections..." className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900" />
+            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections" aria-label="Search sections" className="tt-control w-full pl-10" />
           </label>
-
-          <div className="flex flex-wrap gap-3 lg:justify-end">
-            <label className="min-w-[160px] flex-1 lg:max-w-[180px]">
-              <span className="sr-only">Filter instructor</span>
-              <select value={instructorFilter} onChange={(e) => setInstructorFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-                {instructorOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label className="min-w-[160px] flex-1 lg:max-w-[180px]">
-              <span className="sr-only">Filter status</span>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-                <option value="all">All statuses</option>
-                <option value="active">Active</option>
-                <option value="pending">Pending Instructor</option>
-                <option value="empty">Empty</option>
-                <option value="archived">Archived</option>
-              </select>
-            </label>
-            <label className="min-w-[160px] flex-1 lg:max-w-[180px]">
-              <span className="sr-only">Sort by</span>
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15">
-                <option value="name">Name</option>
-                <option value="students">Students</option>
-                <option value="instructors">Instructor</option>
-              </select>
-            </label>
-          </div>
+          <label className="min-w-0"><span className="sr-only">Filter program</span><select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="tt-control w-full"><option value="all">All programs</option>{programOptions.map((program) => <option key={program} value={program}>{program}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Filter year level</span><select value={yearLevelFilter} onChange={(event) => setYearLevelFilter(event.target.value)} className="tt-control w-full"><option value="all">All year levels</option>{yearLevelOptions.map((yearLevel) => <option key={yearLevel} value={yearLevel}>{yearLevel}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Filter instructor</span><select value={instructorFilter} onChange={(event) => setInstructorFilter(event.target.value)} className="tt-control w-full">{instructorOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Filter status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="tt-control w-full"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+          <label className="min-w-0"><span className="sr-only">Sort by</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="tt-control w-full"><option value="name">Section name</option><option value="students">Students</option><option value="instructors">Instructor</option></select></label>
         </div>
 
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {selectedIds.length > 0 && (
               <>
-                <button type="button" onClick={openAssignInstructor} className="tt-button tt-button-primary min-h-10">Assign Instructor ({selectedIds.length})</button>
+                <button type="button" onClick={() => openAssignInstructor()} className="tt-button tt-button-primary min-h-10">Assign Instructor ({selectedIds.length})</button>
                 <button type="button" onClick={() => setSelectedIds([])} className="tt-button tt-button-secondary min-h-10">Clear selection</button>
               </>
             )}
@@ -401,12 +407,15 @@ export default function Sections() {
           <div className="text-sm text-slate-500">{filteredSections.length} result{filteredSections.length === 1 ? '' : 's'}</div>
         </div>
 
-        <div className="space-y-2 min-[600px]:hidden" aria-label="Section records">
+        <div className="space-y-2 lg:hidden" aria-label="Section records">
           {loading && <p className="rounded-lg bg-[#F9FAFB] px-3 py-5 text-center text-sm text-[#6B7280]">Loading sections…</p>}
           {!loading && !filteredSections.length && <p className="rounded-lg bg-[#F9FAFB] px-3 py-5 text-center text-sm text-[#6B7280]">No sections available.</p>}
           {!loading && filteredSections.map((section) => (
-            <article key={section.id} className="min-w-0 rounded-lg border border-[#E5E7EB] bg-white p-3 shadow-sm">
+            <article key={section.id} className="min-w-0 rounded-lg border border-[#dbe5f0] bg-white p-3 shadow-sm">
               <div className="flex items-start gap-2">
+                <button type="button" onClick={() => toggleStudentList(section)} aria-expanded={expandedSections.has(section.id)} aria-label={`${expandedSections.has(section.id) ? 'Hide' : 'Show'} students for ${section.section_name}`} className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#082b53] hover:bg-[#eaf2fb]">
+                  {expandedSections.has(section.id) ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+                </button>
                 <input
                   type="checkbox"
                   checked={selectedIds.includes(section.id)}
@@ -415,55 +424,67 @@ export default function Sections() {
                   className="mt-1 h-5 w-5 shrink-0 rounded border-[#D1D5DB]"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="min-w-0 break-words text-sm font-semibold text-[#111827]">{getSectionSummary(section)}</div>
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs">{getInstructorBadge(section)}{getStatusBadge(section.status, section)}</div>
+                  <p className="break-words text-sm font-semibold text-[#102a4c]">{section.section_name || 'Unnamed section'}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{section.subject_code || 'No section code'}</p>
                 </div>
-                {renderSectionActions(section)}
+                {renderSectionActions(section, 'mobile')}
               </div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#E5E7EB] pt-3 text-xs">
-                <div><dt className="text-[#6B7280]">Students</dt><dd className="mt-0.5 font-medium text-[#374151]">{getStudentCountLabel(section)}</dd></div>
-                <div><dt className="text-[#6B7280]">Activities</dt><dd className="mt-0.5 font-medium text-[#374151]">{getActivityCount(section)}</dd></div>
-                <div className="col-span-2 min-w-0"><dt className="text-[#6B7280]">Assigned Cabinet</dt><dd className="mt-0.5 break-words font-medium text-[#374151]">{getAssignedCabinet(section)}</dd></div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#dbe5f0] pt-3 text-xs">
+                <div><dt className="text-slate-500">Program</dt><dd className="mt-0.5 font-medium text-slate-800">{section.program || '—'}</dd></div>
+                <div><dt className="text-slate-500">Year Level</dt><dd className="mt-0.5 font-medium text-slate-800">{section.year_level || '—'}</dd></div>
+                <div><dt className="text-slate-500">Academic Year</dt><dd className="mt-0.5 font-medium text-slate-800">{section.academic_year || '—'}</dd></div>
+                <div><dt className="text-slate-500">Instructor</dt><dd className="mt-0.5 break-words font-medium text-slate-800">{section.instructor_name || 'Unassigned'}</dd></div>
+                <div><dt className="text-slate-500">Students</dt><dd className="mt-0.5 font-medium text-slate-800">{section.student_count ?? 0}</dd></div>
+                <div><dt className="text-slate-500">Activities</dt><dd className="mt-0.5 font-medium text-slate-800">{section.activity_count ?? 0}</dd></div>
+                <div><dt className="text-slate-500">Status</dt><dd className="mt-1">{getStatusBadge(section.status)}</dd></div>
               </dl>
+              {expandedSections.has(section.id) && <div className="mt-3 overflow-hidden rounded-md border border-[#dbe5f0] bg-[#f3f6fa]">{renderStudentRoster(section)}</div>}
             </article>
           ))}
         </div>
 
-        <div className="hidden overflow-x-auto rounded-[12px] border border-[#E5E7EB] min-[600px]:block">
-          <table className="w-full min-w-[760px] table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm">
+        <div className="hidden overflow-x-auto rounded-lg border border-[#dbe5f0] lg:block">
+          <table className="w-full min-w-[720px] table-fixed border-collapse text-xs lg:min-w-0">
             <thead className="bg-[#F9FAFB]">
               <tr>
-                <th className="w-[4%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left">
-                  <input type="checkbox" checked={filteredSections.length > 0 && filteredSections.every((section) => selectedIds.includes(section.id))} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-[#D1D5DB]" />
-                </th>
-                <th className="w-[16%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Section</th>
-                <th className="w-[17%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Instructor</th>
-                <th className="w-[8%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Students</th>
-                <th className="w-[8%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Activities</th>
-                <th className="w-[16%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Assigned Cabinet</th>
-                <th className="w-[14%] border-b border-r border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Status</th>
-                <th className="w-[14%] border-b border-[#E5E7EB] px-1.5 py-2 text-left text-[9px] font-semibold uppercase text-[#6B7280] sm:px-2 sm:text-[10px] lg:px-3 lg:py-3 lg:text-xs">Actions</th>
+                <th className="w-[24%] border-b border-r border-[#dbe5f0] px-3 py-3 text-left font-semibold uppercase text-slate-500"><div className="flex items-center gap-2"><input type="checkbox" aria-label="Select all visible sections" checked={filteredSections.length > 0 && filteredSections.every((section) => selectedIds.includes(section.id))} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-slate-300" />Section</div></th>
+                <th className="w-[10%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Program</th>
+                <th className="w-[9%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Year Level</th>
+                <th className="w-[11%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Academic Year</th>
+                <th className="w-[15%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Instructor</th>
+                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Students</th>
+                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Activities</th>
+                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Status</th>
+                <th className="w-[7%] border-b border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E5E7EB] bg-white">
               {loading && (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-[#6B7280]">Loading sections…</td></tr>
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-[#6B7280]">Loading sections…</td></tr>
               )}
               {!loading && !filteredSections.length && (
-                <tr><td colSpan={8} className="px-4 py-16 text-center text-[#6B7280]">No sections available.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-16 text-center text-[#6B7280]">No sections available.</td></tr>
               )}
-              {!loading && filteredSections.map((section) => (
-                <tr key={section.id} className="transition hover:bg-[#F9FAFB]">
-                  <td className="border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3"><input type="checkbox" checked={selectedIds.includes(section.id)} onChange={() => toggleSelection(section.id)} className="h-4 w-4 rounded border-[#D1D5DB]" /></td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getSectionSummary(section)}</td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getInstructorBadge(section)}</td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getStudentCountLabel(section)}</td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getActivityCount(section)}</td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 text-[#374151] sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getAssignedCabinet(section)}</td>
-                  <td className="break-words border-r border-[#E5E7EB] px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{getStatusBadge(section.status, section)}</td>
-                  <td className="px-1.5 py-2 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{renderSectionActions(section)}</td>
-                </tr>
-              ))}
+              {!loading && filteredSections.map((section) => [
+                <tr key={`section-${section.id}`} className="transition hover:bg-[#f8fbff]">
+                  <td className="border-r border-[#dbe5f0] px-2 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <button type="button" onClick={() => toggleStudentList(section)} aria-expanded={expandedSections.has(section.id)} aria-label={`${expandedSections.has(section.id) ? 'Hide' : 'Show'} students for ${section.section_name}`} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#082b53] hover:bg-[#eaf2fb]">{expandedSections.has(section.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+                      <input type="checkbox" checked={selectedIds.includes(section.id)} onChange={() => toggleSelection(section.id)} aria-label={`Select ${section.section_name || 'section'}`} className="h-4 w-4 shrink-0 rounded border-slate-300" />
+                      <div className="min-w-0"><p className="truncate font-semibold text-[#102a4c]">{section.section_name || 'Unnamed section'}</p><p className="truncate text-xs text-slate-500">{section.subject_code || 'No code'}</p></div>
+                    </div>
+                  </td>
+                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.program || '—'}</td>
+                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.year_level || '—'}</td>
+                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.academic_year || '—'}</td>
+                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.instructor_name || 'Unassigned'}</td>
+                  <td className="border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.student_count ?? 0}</td>
+                  <td className="border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.activity_count ?? 0}</td>
+                  <td className="border-r border-[#dbe5f0] px-2 py-2.5">{getStatusBadge(section.status)}</td>
+                  <td className="px-2 py-2.5">{renderSectionActions(section, 'desktop')}</td>
+                </tr>,
+                expandedSections.has(section.id) && <tr key={`students-${section.id}`} className="bg-[#eef4fa]"><td colSpan={9} className="border-b border-[#dbe5f0] p-3"><div className="overflow-hidden rounded-md border border-[#dbe5f0] bg-white"><div className="border-b border-[#dbe5f0] bg-[#eaf2fb] px-3 py-2 text-xs font-semibold uppercase text-[#526780]">Enrolled Students · {section.section_name}</div>{renderStudentRoster(section)}</div></td></tr>,
+              ])}
             </tbody>
           </table>
         </div>
@@ -485,7 +506,7 @@ export default function Sections() {
                   <p className="text-xs font-bold uppercase tracking-wide text-[#526780]">Section Details</p>
                   <h2 id="section-details-title" className="mt-1 break-words text-xl font-bold text-[#102a4c]">{selectedSectionForDrawer.section_name || 'Section Details'}</h2>
                   <p className="mt-1 text-sm text-[#526780]">{selectedSectionForDrawer.subject_code || 'Subject code not recorded'}</p>
-                  <div className="mt-2">{getStatusBadge(selectedSectionForDrawer.status, selectedSectionForDrawer)}</div>
+                  <div className="mt-2">{getStatusBadge(selectedSectionForDrawer.status)}</div>
                 </div>
                 <button ref={drawerCloseButtonRef} type="button" onClick={closeSectionDrawer} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close section details"><X size={18} /></button>
               </header>
@@ -497,6 +518,7 @@ export default function Sections() {
                   <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#082b53]">{selectedSectionForDrawer.subject_code || 'No code'}</span>
                   <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">{selectedSectionForDrawer.program || 'No program'}</span>
                   <span className="rounded-full bg-[#fff5d6] px-3 py-1 text-xs font-semibold text-[#8a5900]">{selectedSectionForDrawer.year_level || 'No year level'}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#526780]">{selectedSectionForDrawer.academic_year || 'No academic year'}</span>
                 </div>
               </div>
               <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">

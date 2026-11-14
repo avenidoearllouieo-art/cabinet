@@ -123,7 +123,10 @@ class User(AbstractUser):
 
     def clean(self):
         # Students may await NFC enrollment; staff cabinet roles require a UID.
-        if self.role in (self.RoleChoices.ADMIN, self.RoleChoices.INSTRUCTOR):
+        if self.role == self.RoleChoices.ADMIN or (
+            self.role == self.RoleChoices.INSTRUCTOR
+            and not getattr(self, '_allow_unassigned_nfc_for_import', False)
+        ):
             if not self.nfc_uid:
                 raise ValidationError({'nfc_uid': 'NFC UID is required for users with this role.'})
 
@@ -232,6 +235,26 @@ class ActivityDiscussion(models.Model):
 
     def __str__(self):
         return f"Msg {self.id} on {self.activity_id} by {self.sender_id}"
+
+
+class ActivityDiscussionAttachment(models.Model):
+    id = models.AutoField(primary_key=True)
+    discussion = models.ForeignKey(
+        ActivityDiscussion,
+        on_delete=models.CASCADE,
+        related_name='attachments',
+    )
+    file = models.FileField(upload_to='discussion_attachments/')
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.PositiveIntegerField(default=0)
+    content_type = models.CharField(max_length=255, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.original_filename or self.file.name.split('/')[-1]
+
+    class Meta:
+        ordering = ['uploaded_at']
 
 
 class ActivityAnnouncement(models.Model):

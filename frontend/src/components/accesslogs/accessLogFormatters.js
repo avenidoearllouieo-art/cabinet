@@ -12,14 +12,14 @@ const parseAccessTime = (value) => {
 export const formatAccessLogDate = (value) => {
   const date = parseAccessTime(value)
   return date
-    ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+    ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(date)
     : 'Not recorded'
 }
 
 export const formatAccessLogTime = (value) => {
   const date = parseAccessTime(value)
   return date
-    ? new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+    ? new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(date)
     : 'Not recorded'
 }
 

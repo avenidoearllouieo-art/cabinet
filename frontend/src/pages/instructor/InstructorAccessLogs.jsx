@@ -17,11 +17,6 @@ const getStatusBadge = (log) => {
   return <StatusBadge status={result.toLowerCase()} label={result} />
 }
 
-const maskNfcUid = (value) => {
-  const uid = String(value || '').trim()
-  return uid ? `••••${uid.slice(-4)}` : 'Not recorded'
-}
-
 export default function InstructorAccessLogs() {
   const location = useLocation()
   const scopedSectionId = new URLSearchParams(location.search).get('section') || ''
@@ -168,12 +163,6 @@ export default function InstructorAccessLogs() {
     },
     { key: 'cabinet_name', label: 'Cabinet', className: 'min-w-[100px]', render: (value) => accessLogValue(value) },
     {
-      key: 'nfc_uid',
-      label: 'Card UID',
-      className: 'min-w-[95px]',
-      render: (value) => maskNfcUid(value),
-    },
-    {
       key: 'access_result',
       label: 'Access Result',
       className: 'min-w-[95px]',
@@ -211,8 +200,8 @@ export default function InstructorAccessLogs() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Instructor Cabinet Access Logs"
-        description="Monitor cabinet access activity for students assigned to your sections."
+        title="Access History"
+        description="Monitor cabinet access activity for students in your assigned sections."
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
@@ -253,7 +242,7 @@ export default function InstructorAccessLogs() {
                 setQuery(event.target.value)
                 setPage(1)
               }}
-              placeholder="Search student ID, name, NFC UID, or cabinet"
+              placeholder="Search student ID, name, or cabinet"
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>
@@ -341,7 +330,6 @@ export default function InstructorAccessLogs() {
               <dl className="grid grid-cols-2 gap-2 text-xs">
                 <div><dt className="text-slate-500">Date &amp; Time</dt><dd className="mt-0.5 font-medium text-slate-700">{formatAccessLogDate(row.access_time)} · {formatAccessLogTime(row.access_time)}</dd></div>
                 <div><dt className="text-slate-500">Cabinet</dt><dd className="mt-0.5 font-medium text-slate-700">{accessLogValue(row.cabinet_name)}</dd></div>
-                <div><dt className="text-slate-500">Card UID</dt><dd className="mt-0.5 font-medium text-slate-700">{maskNfcUid(row.nfc_uid)}</dd></div>
                 <div><dt className="text-slate-500">Reason</dt><dd className="mt-0.5 break-words font-medium text-slate-700">{accessLogResult(row) === 'Success' ? 'Not applicable' : accessLogValue(row.reason)}</dd></div>
               </dl>
               <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-2">

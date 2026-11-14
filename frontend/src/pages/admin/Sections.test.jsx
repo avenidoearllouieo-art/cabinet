@@ -22,8 +22,9 @@ const instructor = { id: 12, role: 'instructor', first_name: 'Rae', last_name: '
 
 describe('Admin Sections', () => {
   beforeEach(() => {
-    api.get.mockImplementation((path) => {
+    api.get.mockImplementation((path, { params } = {}) => {
       if (path === '/sections/') return Promise.resolve({ data: [section] })
+      if (path === '/users/' && params?.role === 'student') return Promise.resolve({ data: [{ id: 21, first_name: 'Mika', last_name: 'Reyes', student_id: 'ST-21', section_year_level: '2nd Year', is_active: true, nfc_uid: 'SHOULD_NOT_DISPLAY' }] })
       if (path === '/users/') return Promise.resolve({ data: { count: 1, next: null, results: [instructor] } })
       throw new Error(`Unexpected GET ${path}`)
     })
@@ -39,7 +40,7 @@ describe('Admin Sections', () => {
     const user = userEvent.setup()
     render(<Sections />)
     await user.click((await screen.findAllByRole('button', { name: 'Open actions for Section A' }))[0])
-    await user.click((await screen.findAllByRole('button', { name: 'View Details' }))[0])
+    await user.click((await screen.findAllByRole('menuitem', { name: 'View Details' }))[0])
 
     const drawer = await screen.findByRole('dialog', { name: 'Section A' })
     expect(within(drawer).getByText('Section Details')).toBeTruthy()
@@ -52,7 +53,7 @@ describe('Admin Sections', () => {
   it('opens assignment, loads registered instructors, and refreshes the assigned section', async () => {
     const user = userEvent.setup()
     render(<Sections />)
-    await user.click(await screen.findByRole('checkbox', { name: 'Select Section A' }))
+    await user.click((await screen.findAllByRole('checkbox', { name: 'Select Section A' }))[0])
     await user.click(screen.getByRole('button', { name: 'Assign Instructor (1)' }))
 
     expect(await screen.findByText('CS-101 · Section A')).toBeTruthy()
@@ -66,5 +67,31 @@ describe('Admin Sections', () => {
     }))
     expect(await screen.findByText('Instructor assigned to 1 section.')).toBeTruthy()
     expect(screen.getAllByText('Rae Santos').length).toBeGreaterThan(0)
+  })
+
+  it('loads only the selected section roster and omits NFC identifiers', async () => {
+    const user = userEvent.setup()
+    render(<Sections />)
+
+    await user.click((await screen.findAllByRole('button', { name: 'Show students for Section A' }))[0])
+
+    expect(await screen.findAllByText('Mika Reyes')).toHaveLength(2)
+    expect(api.get).toHaveBeenCalledWith('/users/', { params: { role: 'student', section: 4, page: 1 } })
+    expect(screen.queryByText('SHOULD_NOT_DISPLAY')).toBeNull()
+  })
+
+  it('loads every paginated section before calculating summary counts', async () => {
+    api.get.mockImplementation((path, { params } = {}) => {
+      if (path === '/sections/' && params?.page === 1) return Promise.resolve({ data: { count: 2, next: 'http://localhost/api/sections/?page=2', results: [section] } })
+      if (path === '/sections/' && params?.page === 2) return Promise.resolve({ data: { count: 2, next: null, results: [{ ...section, id: 5, section_name: 'Section B', subject_code: 'CS-202' }] } })
+      if (path === '/users/') return Promise.resolve({ data: { count: 1, next: null, results: [instructor] } })
+      throw new Error(`Unexpected GET ${path}`)
+    })
+
+    render(<Sections />)
+
+    expect(await screen.findAllByText('Section B')).toHaveLength(2)
+    expect(screen.getByText('2', { selector: 'p' })).toBeTruthy()
+    expect(api.get).toHaveBeenCalledWith('/sections/', { params: { page: 2 } })
   })
 })

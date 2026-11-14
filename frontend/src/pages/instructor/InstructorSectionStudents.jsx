@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import { Search, ChevronLeft } from 'lucide-react'
 
 export default function InstructorSectionStudents() {
@@ -20,12 +21,12 @@ export default function InstructorSectionStudents() {
   const fetchSectionStudents = useCallback(async () => {
     try {
       setLoading(true)
-      const [sectionResponse, studentResponse] = await Promise.all([
+      const [sectionResponse, studentPage] = await Promise.all([
         api.get(`/sections/${sectionId}/`),
-        api.get(`/users/?section=${sectionId}&role=student`),
+        fetchAllResults(api, '/users/', { section: sectionId, role: 'student' }),
       ])
       setSection(sectionResponse.data)
-      setStudents(Array.isArray(studentResponse.data) ? studentResponse.data : studentResponse.data.results || [])
+      setStudents(studentPage.results)
       setError('')
     } catch (err) {
       console.error('Error fetching section students:', err)
@@ -52,7 +53,6 @@ export default function InstructorSectionStudents() {
           student.student_id,
           `${student.first_name} ${student.last_name}`,
           student.email,
-          student.nfc_uid,
           student.section_name,
         ]
           .filter(Boolean)
@@ -97,12 +97,6 @@ export default function InstructorSectionStudents() {
       render: (_value, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—',
     },
     { key: 'student_id', label: 'Student ID', className: 'min-w-[160px]' },
-    {
-      key: 'nfc_uid',
-      label: 'NFC UID',
-      className: 'min-w-[160px]',
-      render: (value) => value || '—',
-    },
     { key: 'email', label: 'Email', className: 'min-w-[220px]' },
     {
       key: 'section_name',

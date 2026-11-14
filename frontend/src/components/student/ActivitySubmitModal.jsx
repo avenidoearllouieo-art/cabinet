@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Upload, X, FileText, Image, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
+import { SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
 
 function formatBytes(bytes) {
   if (bytes == null) return '—'
@@ -13,12 +14,11 @@ function formatBytes(bytes) {
 }
 
 function formatDate(value) {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-  } catch {
-    return String(value)
-  }
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(date)
 }
 
 export default function ActivitySubmitModal({ activity, isOpen, onClose, onSuccess }) {
@@ -30,7 +30,9 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   const [submission, setSubmission] = useState(null)
   const [remarks, setRemarks] = useState('')
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState([])
+  const [removePrimaryFile, setRemovePrimaryFile] = useState(false)
   const fileInputRef = useRef(null)
+  const submissionGuardRef = useRef(false)
 
   const resetState = () => {
     setUploadedFiles([])
@@ -40,6 +42,8 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     setSubmission(null)
     setRemarks('')
     setRemovedAttachmentIds([])
+    setRemovePrimaryFile(false)
+    submissionGuardRef.current = false
   }
 
   useEffect(() => {
@@ -70,11 +74,21 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   }, [activity?.id, isOpen])
 
   const isDeadlinePassed = Boolean(activity?.due_date && new Date(activity.due_date) < new Date())
-  const canEditSubmission = !submission || (!isDeadlinePassed || Boolean(activity?.allow_resubmission))
+  const isActivityClosed = ['closed', 'archived'].includes(String(activity?.status || '').toLowerCase())
+  const canEditSubmission = !isActivityClosed && (!submission || !isDeadlinePassed || Boolean(activity?.allow_resubmission))
 
   const handleFileSelect = async (event) => {
     const selectedFiles = Array.from(event.target.files || [])
     if (!selectedFiles.length) return
+    const uploadErrors = validateUploadFiles(selectedFiles, {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
+    })
+    if (uploadErrors.length) {
+      setErrors(uploadErrors)
+      if (event.target) event.target.value = ''
+      return
+    }
     setErrors([])
     setUploadProgress(0)
     setLoading(true)
@@ -82,6 +96,8 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       const formData = new FormData()
       selectedFiles.forEach((file) => formData.append('files', file))
       formData.append('activity', activity.id)
+      removedAttachmentIds.forEach((id) => formData.append('removed_attachment_ids', id))
+      if (removePrimaryFile) formData.append('remove_primary_file', 'true')
       const res = await api.post('/student/submissions/upload', formData, {
         onUploadProgress: (event) => {
           if (event.total) setUploadProgress(Math.round((event.loaded * 100) / event.total))
@@ -93,7 +109,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       setSuccessMessage('Files uploaded as draft.')
     } catch (err) {
       console.error(err)
-      setErrors(['Failed to upload files.'])
+      setErrors(uploadErrorMessages(err, 'Failed to upload files.'))
     } finally {
       setLoading(false)
       setUploadProgress(0)
@@ -113,13 +129,26 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     setUploadedFiles(nextFiles)
 
     if (removed?.source === 'existing' && removed?.attachmentId) {
-      setRemovedAttachmentIds((prev) => (prev.includes(removed.attachmentId) ? prev : [...prev, removed.attachmentId]))
+      if (removed.preview_kind === 'submission_file') {
+        setRemovePrimaryFile(true)
+      } else {
+        setRemovedAttachmentIds((prev) => (prev.includes(removed.attachmentId) ? prev : [...prev, removed.attachmentId]))
+      }
     } else if (removed?.source === 'temp' && removed?.tempUploadId) {
       api.delete(`/temp-uploads/${removed.tempUploadId}/`).catch(() => {})
     }
   }
 
   const handleSubmit = async () => {
+    if (loading || submissionGuardRef.current) return
+    const uploadErrors = validateUploadFiles([], {
+      existingFiles: uploadedFiles,
+      studentSubmission: true,
+    })
+    if (uploadErrors.length) {
+      setErrors(uploadErrors)
+      return
+    }
     if (!uploadedFiles.length) {
       setErrors(['Upload at least one file to submit.'])
       return
@@ -128,10 +157,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       setErrors(['The deadline has passed and late submissions are not allowed.'])
       return
     }
-    if (!confirm(submission?.id ? 'Update your submission?' : 'Submit your files?')) return
+    if (!window.confirm(submission?.id ? 'Update your submission?' : 'Submit your files?')) return
 
+    submissionGuardRef.current = true
     setLoading(true)
     setErrors([])
+    setSuccessMessage('')
     try {
       const formData = new FormData()
       formData.append('activity', activity.id)
@@ -142,6 +173,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       })
 
       removedAttachmentIds.forEach((id) => formData.append('removed_attachment_ids', id))
+      if (removePrimaryFile) formData.append('remove_primary_file', 'true')
 
       if (submission?.id) {
         await api.patch(`/submissions/${submission.id}/`, formData)
@@ -154,18 +186,20 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       setUploadedFiles([])
       setRemarks('')
       setRemovedAttachmentIds([])
+      setRemovePrimaryFile(false)
       onSuccess && onSuccess()
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
     } catch (err) {
       console.error(err)
-      setErrors(['Failed to save submission.'])
+      setErrors(uploadErrorMessages(err, 'Failed to save submission.'))
     } finally {
+      submissionGuardRef.current = false
       setLoading(false)
     }
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length)} busy={loading} containerClassName="border-0 bg-white">
+    <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length || removePrimaryFile)} busy={loading} containerClassName="border-0 bg-white">
       {!activity ? (
         <p className="text-sm text-slate-600">Activity is unavailable.</p>
       ) : (
@@ -208,7 +242,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
             />
 
             <div onDrop={handleDrop} onDragOver={(event) => event.preventDefault()} className="mt-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-[#F5B700]">
-              <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
+              <input ref={fileInputRef} type="file" multiple accept={SUPPORTED_UPLOAD_ACCEPT} onChange={handleFileSelect} className="hidden" />
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={loading} className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
                 <Upload size={18} /> Choose Files
               </button>

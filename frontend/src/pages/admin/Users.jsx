@@ -12,7 +12,8 @@ import ActionsMenu from '../../components/users/ActionsMenu.jsx'
 import UserDrawer from '../../components/users/UserDrawer.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import UserActionDialog from '../../components/users/UserActionDialog.jsx'
-import { Search, Plus, CheckCircle2, CircleOff, FileText, FileSpreadsheet, ShieldCheck, Activity, UserCheck, X, ChevronLeft, ChevronRight, ChevronDown, Trash2, UserRoundCheck, UserRoundX } from 'lucide-react'
+import { Search, Plus, Upload, CheckCircle2, CircleOff, FileText, FileSpreadsheet, ShieldCheck, Activity, UserCheck, X, ChevronLeft, ChevronRight, ChevronDown, Trash2, UserRoundCheck, UserRoundX } from 'lucide-react'
+import UserImportWizard from '../../components/users/UserImportWizard.jsx'
 
 export default function Users() {
   const navigate = useNavigate()
@@ -21,8 +22,8 @@ export default function Users() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [isAddUserOpen, setIsAddUserOpen] = useState(false)
+  const [isImportOpen, setIsImportOpen] = useState(false)
   const [selectedRole, setSelectedRole] = useState('student')
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [editingUserId, setEditingUserId] = useState(null)
@@ -305,18 +306,10 @@ export default function Users() {
               {roleTab('instructor', 'Instructors')}
               {roleTab('admin', 'Administrators')}
             </div>
-            <AnchoredMenu
-              open={addMenuOpen}
-              onOpenChange={setAddMenuOpen}
-              ariaLabel="Add user"
-              renderTrigger={(props) => <button {...props} type="button" className="tt-button tt-button-primary w-full sm:w-auto"><Plus size={16} aria-hidden="true" />Add user</button>}
-            >
-              <>
-                <button type="button" role="menuitem" className="flex min-h-10 w-full items-center rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50" onClick={() => handleOpenAddForRole('student')}>Add Student</button>
-                <button type="button" role="menuitem" className="flex min-h-10 w-full items-center rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50" onClick={() => handleOpenAddForRole('instructor')}>Add Instructor</button>
-                <button type="button" role="menuitem" className="flex min-h-10 w-full items-center rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50" onClick={() => handleOpenAddForRole('admin')}>Add Administrator</button>
-              </>
-            </AnchoredMenu>
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+              <button type="button" onClick={() => setIsImportOpen(true)} className="tt-button tt-button-secondary w-full sm:w-auto"><Upload size={16} aria-hidden="true" />Import Users</button>
+              <button type="button" onClick={() => handleOpenAddForRole('student')} className="tt-button tt-button-primary w-full sm:w-auto"><Plus size={16} aria-hidden="true" />Add user</button>
+            </div>
           </div>
         }
       />
@@ -475,6 +468,15 @@ export default function Users() {
         initialRole={selectedRole}
       />
 
+      <UserImportWizard
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onImported={() => {
+          setSelectedIds([])
+          void fetchUsers()
+        }}
+      />
+
       <EditUserModal
         isOpen={isEditModalOpen}
         userId={editingUserId}
@@ -609,17 +611,27 @@ export default function Users() {
     a.remove()
   }
 
-  function handleExportExcel() {
-    const rows = users.filter(u => selectedIds.includes(u.id))
-    if (!rows.length) return
-    const csv = rows.map((row) => Object.values(row).map((value) => String(value || '')).join('\t')).join('\n')
-    const blob = new Blob([csv], { type: 'application/vnd.ms-excel' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'users_export.xls'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+  async function handleExportExcel() {
+    if (!selectedUsers.length) return
+    try {
+      const response = await api.post('/users/export-excel/', { ids: selectedIds }, { responseType: 'blob' })
+      const blob = response.data instanceof Blob
+        ? response.data
+        : new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'users-management-report.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (exportError) {
+      if (exportError.response?.status === 401) {
+        navigate('/admin/login')
+        return
+      }
+      showToast('Failed to export selected users.', 'error')
+    }
   }
 }

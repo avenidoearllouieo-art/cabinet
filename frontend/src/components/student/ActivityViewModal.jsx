@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { BookOpen, CheckCircle2, Download, Eye, FileText, Send, Star, Users } from 'lucide-react'
+import { BookOpen, CheckCircle2, FileText, Send, Star, Users } from 'lucide-react'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
 import ActivityAnnouncements from '../ActivityAnnouncements.jsx'
 import ActivityDiscussion from '../ActivityDiscussion.jsx'
 import StatusBadge from '../StatusBadge.jsx'
@@ -9,36 +10,15 @@ import { FormActions, FormDialog, FormSection, FormStepper, InlineFeedback } fro
 const detailSteps = ['Activity details', 'Attachments', 'Your submission', 'Discussion']
 
 function formatDate(value) {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Not recorded'
+    : new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value))
-  } catch {
-    return String(value)
-  }
-}
-
-function formatBytes(bytes) {
-  if (bytes == null) return '—'
-  const kb = 1024
-  if (bytes < kb) return `${bytes} B`
-  const mb = kb * 1024
-  if (bytes < mb) return `${(bytes / kb).toFixed(1)} KB`
-  return `${(bytes / mb).toFixed(1)} MB`
-}
-
-function getAttachmentName(attachment) {
-  return attachment?.filename || attachment?.file_name || attachment?.file || 'Attachment'
-}
-
-function getAttachmentSize(attachment) {
-  return attachment?.size ?? attachment?.file_size ?? null
-}
-
-function getAttachmentUrl(attachment) {
-  return attachment?.url || attachment?.download_url || attachment?.file || ''
+      timeZone: 'Asia/Manila',
+    }).format(date)
 }
 
 function statusBadge(status) {
@@ -49,7 +29,7 @@ function statusBadge(status) {
   return <StatusBadge status="pending" label={value} />
 }
 
-export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose, onSubmit, submissionAction = '' }) {
+export default function ActivityViewModal({ activity: initialActivity, isOpen, onClose }) {
   const [activity, setActivity] = useState(initialActivity || null)
   const [submission, setSubmission] = useState(null)
   const [step, setStep] = useState(0)
@@ -94,7 +74,6 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
   }, [initialActivity, isOpen])
 
   const submissionStatus = activity?.student_submission_status || (submission ? (submission.score != null ? 'Graded' : 'Submitted') : 'Not Submitted')
-  const canEditSubmission = submissionAction === 'Submit Activity' || submissionAction === 'Edit Submission'
   const visibleSubmissionStatus = submission?.score != null || submission?.graded_at ? 'Graded' : submissionStatus
   const latestSubmittedAt = submission?.submitted_at || submission?.created_at || activity?.student_submitted_at
 
@@ -133,7 +112,7 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
               <FormSection icon={Users} title={activity.title || 'Activity'} description={activity.activity_type || 'Activity details'}>
                 <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <DetailFact label="Instructor" value={activity.instructor_name || 'Not recorded'} />
-                  <DetailFact label="Due date" value={formatDate(activity.due_date)} />
+                  <DetailFact label="Due date" value={formatDate(activity.due_date || null) === 'Not recorded' ? 'No deadline' : formatDate(activity.due_date)} />
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><dt className="text-xs font-semibold text-slate-500">Current status</dt><dd className="mt-2">{statusBadge(visibleSubmissionStatus)}</dd></div>
                   <DetailFact label="Maximum score" value={activity.max_score != null ? `${activity.max_score} pts` : 'Not recorded'} icon={<Star size={15} />} />
                 </dl>
@@ -151,16 +130,7 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
 
           {step === 1 && (
             <FormSection icon={FileText} title="Attachments" description="Files shared by your instructor.">
-              {activity.attachments?.length ? (
-                <ul className="space-y-2">
-                  {activity.attachments.map((attachment) => (
-                    <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="min-w-0"><p className="break-words text-sm font-semibold text-slate-800">{getAttachmentName(attachment)}</p><p className="mt-0.5 text-xs text-slate-500">{formatBytes(getAttachmentSize(attachment))}</p></div>
-                      <a href={getAttachmentUrl(attachment)} target="_blank" rel="noreferrer" className="student-table-action student-table-action-primary"><Download size={14} />Download</a>
-                    </li>
-                  ))}
-                </ul>
-              ) : <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No attachments for this activity.</p>}
+              <AcademicFileAttachments attachments={activity.attachments || []} kind="activity" emptyMessage="No attachments for this activity." />
             </FormSection>
           )}
 
@@ -186,11 +156,7 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
 
               <div className="mt-4">
                 <h4 className="mb-2 text-sm font-semibold text-[#102a4c]">Submitted files</h4>
-                {submission?.files?.length ? (
-                  <ul className="space-y-2">
-                    {submission.files.map((file) => <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"><span className="break-words text-sm font-medium text-slate-700">{file.name || file.filename || 'Attachment'} <span className="text-xs text-slate-500">· {formatBytes(getAttachmentSize(file))}</span></span><a href={getAttachmentUrl(file)} target="_blank" rel="noreferrer" className="student-table-action"><Download size={14} />Download</a></li>)}
-                  </ul>
-                ) : <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No files attached to the latest submission.</p>}
+                <AcademicFileAttachments attachments={submission?.files || []} kind="submission" emptyMessage="No files attached to the latest submission." />
               </div>
 
               {submission?.previous_attempts?.length > 0 && (
@@ -202,13 +168,6 @@ export default function ActivityViewModal({ activity: initialActivity, isOpen, o
                 </div>
               )}
 
-              {submissionAction && (
-                <div className="mt-4 flex justify-end">
-                  <button type="button" onClick={() => onSubmit?.(activity)} disabled={loading} className={canEditSubmission ? 'student-table-action student-table-action-primary min-h-11 px-4' : 'student-table-action min-h-11 px-4'}>
-                    {canEditSubmission ? <Send size={15} /> : <Eye size={15} />}{submissionAction}
-                  </button>
-                </div>
-              )}
             </FormSection>
           )}
 

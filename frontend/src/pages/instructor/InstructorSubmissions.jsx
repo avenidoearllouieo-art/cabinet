@@ -24,6 +24,7 @@ const formatDate = (value) => {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)

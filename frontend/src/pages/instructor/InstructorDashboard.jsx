@@ -96,6 +96,7 @@ export default function InstructorDashboard() {
       return new Intl.DateTimeFormat('en-US', {
         dateStyle: 'short',
         timeStyle: 'short',
+        timeZone: 'Asia/Manila',
       }).format(new Date(value))
     } catch {
       return String(value)
@@ -107,6 +108,7 @@ export default function InstructorDashboard() {
     try {
       return new Intl.DateTimeFormat('en-US', {
         dateStyle: 'short',
+        timeZone: 'Asia/Manila',
       }).format(new Date(value))
     } catch {
       return String(value)
@@ -127,12 +129,17 @@ export default function InstructorDashboard() {
     const due = new Date(dueDate)
     if (Number.isNaN(due.getTime())) return { label: 'Date unavailable', tone: 'neutral' }
     const now = new Date()
-    if (due < now) return { label: `Overdue by ${Math.max(1, Math.ceil((now - due) / 86400000))}d`, tone: 'danger' }
-    if (due.toDateString() === now.toDateString()) return { label: 'Due today', tone: 'warning' }
-    const tomorrow = new Date(now)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    if (due.toDateString() === tomorrow.toDateString()) return { label: 'Due tomorrow', tone: 'warning' }
-    const days = Math.ceil((due - now) / 86400000)
+    const dayNumber = (date) => {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(date)
+      const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+      return Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day)) / 86400000
+    }
+    const days = dayNumber(due) - dayNumber(now)
+    if (due < now) return { label: `Overdue by ${Math.max(1, Math.abs(days))}d`, tone: 'danger' }
+    if (days === 0) return { label: 'Due today', tone: 'warning' }
+    if (days === 1) return { label: 'Due tomorrow', tone: 'warning' }
     return { label: `Due in ${days}d`, tone: days <= 3 ? 'warning' : 'info' }
   }
 

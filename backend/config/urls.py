@@ -28,6 +28,11 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('media/access-log-photos/<path:path>', private_access_log_photo_not_found),
+    path('media/activity_attachments/<path:path>', private_access_log_photo_not_found),
+    path('media/submission_attachments/<path:path>', private_access_log_photo_not_found),
+    path('media/submissions/<path:path>', private_access_log_photo_not_found),
+    path('media/discussion_attachments/<path:path>', private_access_log_photo_not_found),
+    path('media/temp_uploads/<path:path>', private_access_log_photo_not_found),
 ]
 
 if settings.DEBUG:

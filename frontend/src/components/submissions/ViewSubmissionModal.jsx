@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import StatusBadge from '../StatusBadge.jsx'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -10,6 +10,7 @@ const formatDate = (value) => {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)
@@ -107,15 +108,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
             <div className="rounded-[12px] border-2 border-[#002B5B]/15 bg-white p-5 leading-6">
               <h4 className="font-semibold text-[#002B5B]">Activity Attachments</h4>
               <div className="mt-4 space-y-3">
-                {(details.activity?.attachments || details.activity_attachments || []).map((att) => (
-                  <div key={att.id || att.file} className="flex items-center justify-between rounded border border-[#002B5B]/15 bg-slate-50 p-3">
-                    <div>
-                      <div className="font-medium">{att.filename || att.file_name || att.name}</div>
-                      <div className="text-xs text-slate-500">{att.file_size ? `${(att.file_size/1024).toFixed(1)} KB` : ''}</div>
-                    </div>
-                    <a href={att.url || att.download_url || att.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full !bg-[#002B5B] px-3 py-2 text-sm font-semibold !text-white transition hover:!bg-[#001F42]"><Download size={14} />Download</a>
-                  </div>
-                ))}
+                <AcademicFileAttachments attachments={details.activity?.attachments || details.activity_attachments || []} kind="activity" />
               </div>
             </div>
           ) : null}
@@ -138,17 +131,7 @@ export default function ViewSubmissionModal({ isOpen, submissionId, submission, 
                 <div>
                   <p className="text-sm font-medium text-slate-700">Files</p>
                   { (details.files && details.files.length) ? (
-                    <div className="mt-3 space-y-3">
-                      {details.files.map((f) => (
-                        <div key={f.id || f.url} className="flex items-center justify-between rounded-md border border-[#002B5B]/15 bg-white p-4">
-                          <div>
-                            <div className="font-medium text-slate-900">{f.name || f.file_name}</div>
-                            <div className="text-xs text-slate-500">{f.size ? `${(f.size/1024).toFixed(1)} KB` : ''} • Uploaded {formatDate(f.uploaded_at || details.submitted_at)}</div>
-                          </div>
-                          <a href={f.url || f.download_url || f.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full !bg-[#002B5B] px-3 py-2 text-sm font-semibold !text-white transition hover:!bg-[#001F42]"><Download size={14} />Download</a>
-                        </div>
-                      ))}
-                    </div>
+                    <AcademicFileAttachments attachments={details.files} kind="submission" />
                   ) : (
                     <p className="mt-2 text-sm text-[#334155]">No submitted files available.</p>
                   )}

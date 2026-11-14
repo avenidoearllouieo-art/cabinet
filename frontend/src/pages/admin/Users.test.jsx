@@ -23,6 +23,7 @@ describe('Users directory', () => {
   afterEach(() => {
     cleanup()
     vi.resetAllMocks()
+    vi.unstubAllGlobals()
     localStorage.clear()
   })
 
@@ -53,5 +54,39 @@ describe('Users directory', () => {
     fireEvent.change(search, { target: { value: 'student.21' } })
     expect(screen.getByText('Student Record 21')).toBeTruthy()
     expect(screen.queryByText('Student Record 3')).toBeNull()
+  })
+
+  it('opens the shared Add User form directly from the button', async () => {
+    api.get.mockImplementation((url) => Promise.resolve({ data: url === '/sections/' ? [] : [] }))
+
+    render(<MemoryRouter><Users /></MemoryRouter>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add user' }))
+
+    expect(await screen.findByText('Add New User')).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /Add Student|Add Instructor|Add Administrator/ })).toBeNull()
+  })
+
+  it('downloads a real Excel workbook for the selected user IDs', async () => {
+    const user = directoryUser(42, 'student')
+    api.get.mockResolvedValue({ data: { count: 1, next: null, results: [user] } })
+    api.post.mockResolvedValue({ data: new Blob(['xlsx']) })
+    const nativeUrl = globalThis.URL
+    vi.stubGlobal('URL', Object.assign(class extends nativeUrl {}, {
+      createObjectURL: vi.fn(() => 'blob:users-report'),
+      revokeObjectURL: vi.fn(),
+    }))
+    localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
+    render(<MemoryRouter><Users /></MemoryRouter>)
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select student.42' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Bulk Actions (1)' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export Excel' }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      '/users/export-excel/',
+      { ids: [42] },
+      { responseType: 'blob' },
+    ))
   })
 })

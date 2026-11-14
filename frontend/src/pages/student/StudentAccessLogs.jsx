@@ -15,22 +15,16 @@ const getStatusBadge = (status) => {
   return <StatusBadge status={label} label={label} />
 }
 
-const maskNfcId = (value) => {
-  const raw = String(value || '').trim()
-  if (!raw) return '—'
-  return `••••${raw.slice(-4)}`
-}
-
 const formatDate = (value) => {
-  if (!value) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', {
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value))
-  } catch {
-    return String(value)
-  }
+      timeZone: 'Asia/Manila',
+    }).format(date)
 }
 
 export default function StudentAccessLogs() {
@@ -112,11 +106,6 @@ export default function StudentAccessLogs() {
       render: (value) => value || 'Not recorded',
     },
     {
-      key: 'nfc_uid',
-      label: 'Card',
-      render: (value) => maskNfcId(value),
-    },
-    {
       key: 'status',
       label: 'Status',
       render: (value) => getStatusBadge(value),
@@ -145,8 +134,8 @@ export default function StudentAccessLogs() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="My Access Logs"
-        description="Review your cabinet access history, attempt results, and recent activity."
+        title="Access History"
+        description="View your cabinet access activity and previous access results."
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
@@ -159,7 +148,7 @@ export default function StudentAccessLogs() {
       <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Your Access History</h2>
+            <h2 className="text-lg font-semibold text-[#111827]">Access History</h2>
             <p className="text-sm text-[#6B7280]">Search your records and open details for any cabinet activity.</p>
           </div>
           <div className="text-sm text-slate-500">Showing {logs.length} recent entries</div>
@@ -176,7 +165,7 @@ export default function StudentAccessLogs() {
                 setPage(1)
                 setQuery(event.target.value)
               }}
-              placeholder="Search cabinet or NFC"
+              placeholder="Search access history..."
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
             />
           </label>

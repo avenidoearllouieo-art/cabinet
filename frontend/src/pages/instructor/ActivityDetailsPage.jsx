@@ -22,6 +22,7 @@ import api from '../../services/api.js'
 import ActivityAnnouncements from '../../components/ActivityAnnouncements.jsx'
 import ActivityDiscussion from '../../components/ActivityDiscussion.jsx'
 import StatusBadge from '../../components/StatusBadge.jsx'
+import AcademicFileAttachments from '../../components/files/AcademicFileAttachments.jsx'
 
 const formatDateTime = (value) => {
   if (!value) return '—'
@@ -29,6 +30,7 @@ const formatDateTime = (value) => {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)
@@ -40,29 +42,11 @@ const formatDate = (value) => {
   try {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)
   }
-}
-
-const formatBytes = (bytes) => {
-  if (bytes == null) return '—'
-  const kb = 1024
-  if (bytes < kb) return `${bytes} B`
-  const mb = kb * 1024
-  if (bytes < mb) return `${(bytes / kb).toFixed(1)} KB`
-  return `${(bytes / mb).toFixed(1)} MB`
-}
-
-const getFileIcon = (name = '') => {
-  const lower = String(name).toLowerCase()
-  if (lower.endsWith('.pdf')) return 'PDF'
-  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'DOC'
-  if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) return 'PPT'
-  if (lower.match(/\.(png|jpg|jpeg|gif|webp)$/)) return 'IMG'
-  if (lower.endsWith('.zip')) return 'ZIP'
-  return 'FILE'
 }
 
 const getStatusBadge = (activity, dueDate) => {
@@ -77,10 +61,17 @@ const getStatusBadge = (activity, dueDate) => {
 
   const due = new Date(dueDate)
   const now = new Date()
-  const diffMs = due.getTime() - now.getTime()
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+  if (Number.isNaN(due.getTime())) return { label: 'Date unavailable' }
+  const dayNumber = (date) => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(date)
+    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+    return Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day)) / 86400000
+  }
+  const diffDays = dayNumber(due) - dayNumber(now)
 
-  if (diffDays < 0) {
+  if (due < now) {
     return { label: 'Overdue' }
   }
   if (diffDays === 0) {
@@ -470,44 +461,8 @@ export default function ActivityDetailsPage() {
                 <Paperclip size={18} className="text-blue-600" />
                 <h3 className="text-lg font-semibold">Attachments</h3>
               </div>
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                {attachments.length ? attachments.map((attachment, index) => {
-                  const fileName = attachment.filename || attachment.file_name || attachment.file || 'Attachment'
-                  const fileUrl = attachment.url || attachment.download_url || attachment.file || '#'
-                  const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(fileName) || /\.(png|jpg|jpeg|gif|webp)$/i.test(String(fileUrl))
-                  const isPreviewable = isImage || fileName.toLowerCase().endsWith('.pdf')
-
-                  return (
-                    <div key={`${fileName}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition hover:-translate-y-0.5 hover:shadow-sm">
-                      {isImage && fileUrl ? (
-                        <img src={fileUrl} alt={fileName} className="mb-3 h-24 w-full rounded-md object-cover" />
-                      ) : (
-                        <div className="mb-3 flex h-24 items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-2xl font-semibold text-slate-500">
-                          {getFileIcon(fileName)}
-                        </div>
-                      )}
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-slate-900">{fileName}</p>
-                          <p className="mt-1 text-sm text-slate-500">{formatBytes(attachment.size || attachment.file_size)} • {formatDate(attachment.uploaded_at || attachment.created_at)}</p>
-                        </div>
-                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{getFileIcon(fileName)}</span>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <a href={fileUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">
-                          <Download size={15} /> Download
-                        </a>
-                        {isPreviewable && (
-                          <button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-                            <Eye size={15} /> Preview
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                }) : (
-                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500 md:col-span-2">No attachments available yet.</div>
-                )}
+              <div className="mt-5">
+                <AcademicFileAttachments attachments={attachments} kind="activity" emptyMessage="No attachments available yet." />
               </div>
             </section>
 

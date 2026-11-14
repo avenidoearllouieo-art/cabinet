@@ -1,12 +1,14 @@
 from django.db import models
 from django.db import IntegrityError, transaction
 from django.db.models import Q
-from datetime import timedelta
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from rest_framework import mixins, viewsets, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import (
-    IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole,
+    IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole, IsInstructorOrAdminRole,
+    IsInstructorOrSuperuser,
     IsStudentRole, HasDeviceAPIKey, PasswordResetRateThrottle,
     PasswordResetStatusRateThrottle, NFCEnrollmentRateThrottle,
     CanReadAccessLogPhoto,
@@ -14,6 +16,7 @@ from .permissions import (
 )
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 from rest_framework.decorators import action
@@ -23,19 +26,34 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse, Http404, StreamingHttpResponse
 from django.urls import reverse
 from django.utils.cache import patch_cache_control
+from django.utils.http import content_disposition_header
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
 from PIL import Image, UnidentifiedImageError
 from urllib.parse import quote
 import hashlib
+import mimetypes
+import os
+import re
 
-from .models import Section, User, Activity, ActivityAttachment, Submission, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityDiscussion, ActivityAnnouncement
-from .models import SubmissionAttachment
+from .models import Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, ActivityDiscussion, ActivityDiscussionAttachment, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityAnnouncement
 from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession
+from .student_import import (
+    MAX_IMPORT_FILE_BYTES,
+    MAX_IMPORT_ROWS,
+    build_custom_import_preview,
+    build_custom_import_template,
+    build_instructor,
+    build_student,
+    read_custom_instructor_import,
+    read_custom_student_import,
+    validate_instructor_rows,
+    validate_student_rows,
+)
 from .serializers import (
     SectionSerializer,
     InstructorSectionSerializer,
@@ -61,6 +79,9 @@ from .serializers import (
     NFCEnrollmentRegistrationSerializer,
     AccessLogPhotoReadSerializer,
 )
+from .discussion_serializers import ActivityDiscussionSerializer
+from .file_uploads import validate_student_submission_files, validate_uploaded_files
+from .excel_exports import branded_excel_response, format_duration
 from django.contrib.auth.password_validation import validate_password
 import secrets
 import logging
@@ -68,6 +89,105 @@ import logging
 logger = logging.getLogger(__name__)
 MAX_ACCESS_LOG_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ACCESS_LOG_PHOTO_PIXELS = 20_000_000
+
+
+def requested_export_ids(request):
+    raw_ids = request.data.get('ids')
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return None
+    try:
+        return list(dict.fromkeys(int(value) for value in raw_ids))
+    except (TypeError, ValueError):
+        return None
+
+
+def create_temporary_uploads(user, activity, uploaded_files):
+    created = []
+    try:
+        with transaction.atomic():
+            for uploaded_file in uploaded_files:
+                upload = TemporaryUpload(user=user, activity=activity, file=uploaded_file)
+                try:
+                    upload.save()
+                except Exception:
+                    stored_name = upload.file.name
+                    if stored_name.startswith('temp_uploads/'):
+                        upload.file.storage.delete(stored_name)
+                    raise
+                created.append(upload)
+    except Exception:
+        for upload in created:
+            stored_name = upload.file.name
+            if stored_name:
+                upload.file.storage.delete(stored_name)
+            upload.delete()
+        raise
+    return created
+
+def get_existing_submission_files_for_upload(user, activity, request_data):
+    raw_removed_ids = (
+        request_data.getlist('removed_attachment_ids')
+        if hasattr(request_data, 'getlist')
+        else request_data.get('removed_attachment_ids', [])
+    )
+    if raw_removed_ids in (None, ''):
+        raw_removed_ids = []
+    elif not isinstance(raw_removed_ids, (list, tuple, set)):
+        raw_removed_ids = [raw_removed_ids]
+    try:
+        removed_ids = {int(value) for value in raw_removed_ids if str(value).strip()}
+    except (TypeError, ValueError):
+        return [], {'removed_attachment_ids': ['File identifiers must be integers.']}
+    raw_remove_primary = request_data.get('remove_primary_file', False)
+    if isinstance(raw_remove_primary, bool):
+        remove_primary_file = raw_remove_primary
+    elif str(raw_remove_primary).strip().lower() in ('true', '1', 'yes', 'on'):
+        remove_primary_file = True
+    elif str(raw_remove_primary).strip().lower() in ('false', '0', 'no', 'off', ''):
+        remove_primary_file = False
+    else:
+        return [], {'remove_primary_file': ['Choose whether to remove the existing primary file.']}
+
+    submission = Submission.objects.filter(
+        student=user,
+        activity=activity,
+    ).order_by('-submitted_at', '-pk').first()
+    if not submission:
+        if removed_ids or remove_primary_file:
+            return [], {'removed_attachment_ids': ['The submission to update was not found.']}
+        return [], {}
+
+    attachments = list(submission.attachments.all())
+    attachment_ids = {attachment.pk for attachment in attachments}
+    attachment_names = {attachment.file.name for attachment in attachments if attachment.file}
+    has_unattached_primary_file = bool(
+        submission.file and submission.file.name not in attachment_names
+    )
+    allowed_removed_ids = attachment_ids
+    if not removed_ids.issubset(allowed_removed_ids):
+        return [], {'removed_attachment_ids': ['One or more files are not part of this submission.']}
+    if remove_primary_file and not has_unattached_primary_file:
+        return [], {'remove_primary_file': ['This submission has no separate primary file to remove.']}
+
+    existing_files = [
+        attachment.file
+        for attachment in attachments
+        if attachment.pk not in removed_ids
+    ]
+    if has_unattached_primary_file and not remove_primary_file:
+        existing_files.append(submission.file)
+    return existing_files, {}
+
+def omit_response_fields(data, field_names):
+    if isinstance(data, dict):
+        for field_name in field_names:
+            data.pop(field_name, None)
+        for value in data.values():
+            omit_response_fields(value, field_names)
+    elif isinstance(data, list):
+        for value in data:
+            omit_response_fields(value, field_names)
+    return data
 
 
 def record_password_recovery_event(reset_request, event_type, outcome, reason_code='', actor_type='django', correlation_id=''):
@@ -302,11 +422,41 @@ class SectionViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminRole()]
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.user.is_authenticated and request.user.role != User.RoleChoices.ADMIN:
+            omit_response_fields(response.data, {'nfc_uid'})
+        return response
+
     def get_serializer_class(self):
         user = getattr(self.request, 'user', None)
         if getattr(user, 'role', None) == 'instructor':
             return InstructorSectionSerializer
         return SectionSerializer
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        sections = response.data.get('results', []) if isinstance(response.data, dict) else response.data
+        section_ids = [section.get('section_id') for section in sections]
+        legacy_instructors = {}
+        for section_id, instructor_id, first_name, last_name, username in User.objects.filter(
+            role=User.RoleChoices.INSTRUCTOR,
+            assigned_sections__section_id__in=section_ids,
+        ).order_by('pk').values_list(
+            'assigned_sections__section_id', 'pk', 'first_name', 'last_name', 'username',
+        ):
+            legacy_instructors.setdefault(section_id, (
+                instructor_id,
+                f'{first_name} {last_name}'.strip() or username,
+            ))
+        for section in sections:
+            section_id = section.get('section_id')
+            if not section.get('instructor') and section_id in legacy_instructors:
+                section['instructor'], section['instructor_name'] = legacy_instructors[section_id]
+            section['activity_count'] = Activity.objects.filter(
+                Q(section_id=section_id) | Q(assigned_sections__section_id=section_id)
+            ).distinct().count()
+        return response
 
     def _instructor_section_filter(self):
         user = self.request.user
@@ -432,6 +582,422 @@ class SectionViewSet(viewsets.ModelViewSet):
         })
 
 
+ACADEMIC_FILE_PREVIEW_MAX_AGE = 600
+ACADEMIC_FILE_PREVIEW_SALT = 'taptrack.academic-file-preview'
+
+
+def instructor_can_access_activity(user, activity):
+    return bool(
+        user.role == User.RoleChoices.INSTRUCTOR
+        and (
+            activity.created_by_id == user.pk
+            or activity.assigned_instructor_id == user.pk
+            or (activity.section_id and (
+                activity.section.instructor_id == user.pk
+                or activity.section.assigned_instructors.filter(pk=user.pk).exists()
+            ))
+            or activity.assigned_sections.filter(
+                Q(instructor_id=user.pk) | Q(assigned_instructors__pk=user.pk),
+            ).exists()
+        )
+    )
+
+
+def get_academic_attachment(kind, attachment_id):
+    if kind == 'activity':
+        attachment = get_object_or_404(
+            ActivityAttachment.objects.select_related('activity', 'activity__section', 'activity__created_by', 'activity__assigned_instructor'),
+            pk=attachment_id,
+        )
+        return attachment, attachment.file, attachment.activity, None
+    if kind == 'submission':
+        attachment = get_object_or_404(
+            SubmissionAttachment.objects.select_related(
+                'submission', 'submission__student', 'submission__student__section',
+                'submission__activity', 'submission__activity__section',
+                'submission__activity__created_by', 'submission__activity__assigned_instructor',
+            ),
+            pk=attachment_id,
+        )
+        return attachment, attachment.file, attachment.submission.activity, attachment.submission
+    if kind == 'submission_file':
+        submission = get_object_or_404(
+            Submission.objects.select_related(
+                'student', 'student__section', 'activity', 'activity__section',
+                'activity__created_by', 'activity__assigned_instructor',
+            ),
+            pk=attachment_id,
+        )
+        if not submission.file:
+            raise Http404
+        return submission, submission.file, submission.activity, submission
+    if kind == 'discussion':
+        attachment = get_object_or_404(
+            ActivityDiscussionAttachment.objects.select_related(
+                'discussion', 'discussion__activity', 'discussion__activity__section',
+                'discussion__activity__created_by', 'discussion__activity__assigned_instructor',
+            ),
+            pk=attachment_id,
+        )
+        return attachment, attachment.file, attachment.discussion.activity, None
+    raise Http404
+
+
+def academic_file_is_authorized(user, kind, activity, submission):
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+    if user.role == User.RoleChoices.ADMIN:
+        return True
+    if user.role == User.RoleChoices.STUDENT:
+        if submission and submission.student_id != user.pk:
+            return False
+        return student_can_access_activity(user, activity)
+    if user.role == User.RoleChoices.INSTRUCTOR:
+        if kind in ('submission', 'submission_file') and submission and submission.student and submission.student.section:
+            section = submission.student.section
+            if section.instructor_id == user.pk or section.assigned_instructors.filter(pk=user.pk).exists():
+                return True
+        return instructor_can_access_activity(user, activity)
+    return False
+
+
+def academic_file_metadata(record, file_field):
+    original_name = getattr(record, 'original_filename', '') or os.path.basename(file_field.name or '')
+    filename = os.path.basename(str(original_name).replace('\\', '/')) or 'Attachment'
+    suffix = os.path.splitext(filename)[1].lower()
+    type_by_extension = {
+        '.jpg': ('image/jpeg', 'image'), '.jpeg': ('image/jpeg', 'image'),
+        '.png': ('image/png', 'image'), '.webp': ('image/webp', 'image'),
+        '.gif': ('image/gif', 'image'), '.pdf': ('application/pdf', 'pdf'),
+        '.mp4': ('video/mp4', 'video'), '.webm': ('video/webm', 'video'),
+        '.mp3': ('audio/mpeg', 'audio'), '.wav': ('audio/wav', 'audio'),
+        '.txt': ('text/plain', 'text'), '.csv': ('text/plain', 'text'),
+    }
+    content_type, preview_type = type_by_extension.get(suffix, ('application/octet-stream', 'unsupported'))
+    try:
+        size = file_field.size
+    except (OSError, ValueError):
+        size = getattr(record, 'file_size', 0) or 0
+    return filename, size, content_type, preview_type
+
+
+def academic_file_cookie_name(kind, attachment_id):
+    return f'taptrack_file_preview_{kind}_{attachment_id}'
+
+
+class AcademicFilePreviewAuthorizeView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, kind, attachment_id, *args, **kwargs):
+        record, file_field, activity, submission = get_academic_attachment(kind, attachment_id)
+        if not academic_file_is_authorized(request.user, kind, activity, submission):
+            raise Http404
+        if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
+            raise Http404
+        filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
+        content_url = reverse('academic_file_preview_content', args=[kind, attachment_id])
+        cookie_name = academic_file_cookie_name(kind, attachment_id)
+        token = signing.dumps({
+            'user_id': request.user.pk,
+            'kind': kind,
+            'attachment_id': attachment_id,
+        }, salt=ACADEMIC_FILE_PREVIEW_SALT)
+        response = Response({
+            'filename': filename,
+            'size': size,
+            'content_type': content_type,
+            'preview_type': preview_type,
+            'preview_supported': preview_type != 'unsupported',
+            'content_url': content_url,
+            'download_url': f'{content_url}?download=1',
+        })
+        response.set_cookie(
+            cookie_name,
+            token,
+            max_age=ACADEMIC_FILE_PREVIEW_MAX_AGE,
+            httponly=True,
+            secure=request.is_secure(),
+            samesite='Lax',
+            path=content_url.rsplit('/', 1)[0] + '/',
+        )
+        patch_cache_control(response, private=True, no_store=True)
+        return response
+
+    def delete(self, request, kind, attachment_id, *args, **kwargs):
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        content_url = reverse('academic_file_preview_content', args=[kind, attachment_id])
+        response.delete_cookie(
+            academic_file_cookie_name(kind, attachment_id),
+            path=content_url.rsplit('/', 1)[0] + '/',
+            samesite='Lax',
+        )
+        return response
+
+
+def stream_file_range(file_field, start, length):
+    file_handle = file_field.open('rb')
+    file_handle.seek(start)
+
+    def iterator():
+        remaining = length
+        try:
+            while remaining > 0:
+                chunk = file_handle.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            file_handle.close()
+
+    return iterator()
+
+
+class AcademicFilePreviewContentView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, kind, attachment_id, *args, **kwargs):
+        cookie = request.COOKIES.get(academic_file_cookie_name(kind, attachment_id))
+        try:
+            token = signing.loads(cookie or '', salt=ACADEMIC_FILE_PREVIEW_SALT, max_age=ACADEMIC_FILE_PREVIEW_MAX_AGE)
+        except signing.BadSignature:
+            raise Http404
+        if token.get('kind') != kind or int(token.get('attachment_id', -1)) != attachment_id:
+            raise Http404
+        user = User.objects.filter(pk=token.get('user_id'), is_active=True).first()
+        record, file_field, activity, submission = get_academic_attachment(kind, attachment_id)
+        if not academic_file_is_authorized(user, kind, activity, submission):
+            raise Http404
+        if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
+            raise Http404
+
+        filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
+        requested_download = request.query_params.get('download') == '1'
+        as_attachment = requested_download or preview_type == 'unsupported'
+        range_header = request.headers.get('Range', '')
+        response = None
+        if range_header:
+            match = re.fullmatch(r'bytes=(\d*)-(\d*)', range_header.strip())
+            if not match or size <= 0:
+                response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                response['Content-Range'] = f'bytes */{size}'
+                return response
+            start_text, end_text = match.groups()
+            if not start_text:
+                suffix_length = int(end_text or '0')
+                start = max(0, size - suffix_length)
+                end = size - 1
+            else:
+                start = int(start_text)
+                end = min(int(end_text), size - 1) if end_text else size - 1
+            if start >= size or end < start:
+                response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                response['Content-Range'] = f'bytes */{size}'
+                return response
+            length = end - start + 1
+            response = StreamingHttpResponse(stream_file_range(file_field, start, length), status=status.HTTP_206_PARTIAL_CONTENT, content_type=content_type)
+            response['Content-Range'] = f'bytes {start}-{end}/{size}'
+            response['Content-Length'] = str(length)
+        else:
+            response = FileResponse(file_field.open('rb'), content_type=content_type)
+            response['Content-Length'] = str(size)
+
+        response['Content-Disposition'] = content_disposition_header(as_attachment, filename)
+        response['Accept-Ranges'] = 'bytes'
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['X-Frame-Options'] = 'SAMEORIGIN'
+        response['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'self'; sandbox"
+        patch_cache_control(response, private=True, no_store=True)
+        return response
+
+
+def get_custom_user_import(role, uploaded_file):
+    if role == User.RoleChoices.STUDENT:
+        rows, file_errors = read_custom_student_import(uploaded_file)
+        prepared, validation_errors = validate_student_rows(rows) if rows else ([], [])
+    elif role == User.RoleChoices.INSTRUCTOR:
+        rows, file_errors = read_custom_instructor_import(uploaded_file)
+        prepared, validation_errors = validate_instructor_rows(rows) if rows else ([], [])
+    else:
+        raise serializers.ValidationError({'role': 'Choose Student or Instructor.'})
+    errors = file_errors + validation_errors
+    return prepared, errors, build_custom_import_preview(prepared, errors, role)
+
+
+def get_custom_user_import_batch(role, uploaded_files):
+    reader = {
+        User.RoleChoices.STUDENT: read_custom_student_import,
+        User.RoleChoices.INSTRUCTOR: read_custom_instructor_import,
+    }.get(role)
+    if reader is None:
+        raise serializers.ValidationError({'role': 'Choose Student or Instructor.'})
+
+    rows = []
+    file_errors = []
+    row_sources = {}
+    for uploaded_file in uploaded_files:
+        filename = os.path.basename(str(getattr(uploaded_file, 'name', '') or 'uploaded file'))
+        file_rows, errors = reader(uploaded_file)
+        for error in errors:
+            file_errors.append({
+                **error,
+                'row': '-',
+                'source_row': error.get('row'),
+                'file': filename,
+            })
+
+        for row in file_rows:
+            if len(rows) >= MAX_IMPORT_ROWS:
+                file_errors.append({
+                    'row': '-',
+                    'column': 'file',
+                    'file': filename,
+                    'message': f'An import batch can contain at most {MAX_IMPORT_ROWS} total rows.',
+                })
+                break
+            source_row = row.get('row_number')
+            row_number = len(rows) + 2
+            row['source_file'] = filename
+            row['source_row_number'] = source_row
+            row['row_number'] = row_number
+            row_sources[row_number] = (filename, source_row)
+            rows.append(row)
+        if len(rows) >= MAX_IMPORT_ROWS:
+            break
+
+    if role == User.RoleChoices.STUDENT:
+        prepared, validation_errors = validate_student_rows(rows) if rows else ([], [])
+    else:
+        prepared, validation_errors = validate_instructor_rows(rows) if rows else ([], [])
+    for error in validation_errors:
+        source = row_sources.get(error.get('row'))
+        if source:
+            error['file'], error['source_row'] = source
+
+    errors = file_errors + validation_errors
+    return prepared, errors, build_custom_import_preview(prepared, errors, role)
+
+
+def create_custom_import_users(role, rows):
+    created = []
+    with transaction.atomic():
+        for row in rows:
+            user = build_student(row) if role == User.RoleChoices.STUDENT else build_instructor(row)
+            user.full_clean()
+            user.save()
+            if role == User.RoleChoices.INSTRUCTOR:
+                section_ids = getattr(user, '_pending_section_ids', [])
+                user.assigned_sections.set(section_ids)
+            created.append(user.pk)
+    return created
+
+
+class AdminUserImportTemplateView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def get(self, request, *args, **kwargs):
+        role = str(request.query_params.get('role') or '').strip().lower()
+        file_format = str(request.query_params.get('file_format') or 'xlsx').strip().lower()
+        if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR):
+            return Response({'role': 'Choose Student or Instructor.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file_format not in ('xlsx', 'csv'):
+            return Response({'format': 'Choose xlsx or csv.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        content, content_type, filename = build_custom_import_template(role, file_format)
+        response = HttpResponse(content, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
+
+
+class AdminUserImportPreviewView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, *args, **kwargs):
+        role = str(request.data.get('role') or '').strip().lower()
+        if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR):
+            return Response({'role': ['Choose Student or Instructor.']}, status=status.HTTP_400_BAD_REQUEST)
+        uploaded_files = request.FILES.getlist('files') or request.FILES.getlist('file')
+        if not uploaded_files:
+            return Response({'file': ['Choose one or more .xlsx or .csv files.']}, status=status.HTTP_400_BAD_REQUEST)
+        if any(uploaded_file.size > MAX_IMPORT_FILE_BYTES for uploaded_file in uploaded_files):
+            return Response({'file': ['The file must be 10 MB or smaller.']}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+
+        prepared, errors, report = get_custom_user_import_batch(role, uploaded_files)
+        return Response({'role': role, **report}, status=status.HTTP_200_OK)
+
+
+class AdminUserImportConfirmView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, *args, **kwargs):
+        role = str(request.data.get('role') or '').strip().lower()
+        if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR):
+            return Response({'role': ['Choose Student or Instructor.']}, status=status.HTTP_400_BAD_REQUEST)
+        uploaded_files = request.FILES.getlist('files') or request.FILES.getlist('file')
+        if not uploaded_files:
+            return Response({'file': ['Re-upload the original files to confirm the import.']}, status=status.HTTP_400_BAD_REQUEST)
+        if any(uploaded_file.size > MAX_IMPORT_FILE_BYTES for uploaded_file in uploaded_files):
+            return Response({'file': ['The file must be 10 MB or smaller.']}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+
+        prepared, errors, report = get_custom_user_import_batch(role, uploaded_files)
+        errors_by_row = {}
+        global_errors = []
+        for error in errors:
+            row_number = error.get('row')
+            if isinstance(row_number, int) or str(row_number).isdigit():
+                errors_by_row.setdefault(int(row_number), []).append(error)
+            else:
+                global_errors.append(error)
+
+        if global_errors:
+            return Response({
+                **report,
+                'successfully_imported': 0,
+                'skipped': report['total_rows'],
+                'failed': 0,
+                'errors': errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        valid_rows = [row for row in prepared if not errors_by_row.get(int(row.get('row_number') or 0))]
+        skipped = report['invalid_rows'] + report['duplicate_rows']
+        if not valid_rows:
+            return Response({
+                **report,
+                'successfully_imported': 0,
+                'skipped': skipped,
+                'failed': 0,
+                'errors': errors,
+            }, status=status.HTTP_200_OK)
+
+        try:
+            created_ids = create_custom_import_users(role, valid_rows)
+        except (DjangoValidationError, IntegrityError) as error:
+            logger.warning('User import confirmation failed; transaction rolled back: %s', error)
+            return Response({
+                **report,
+                'successfully_imported': 0,
+                'skipped': skipped,
+                'failed': len(valid_rows),
+                'errors': [*errors, {'row': '-', 'column': 'database', 'message': 'The import conflicted with current data. No records were imported.'}],
+            }, status=status.HTTP_409_CONFLICT)
+
+        return Response({
+            **report,
+            'successfully_imported': len(created_ids),
+            'skipped': skipped,
+            'failed': 0,
+            'errors': errors,
+        }, status=status.HTTP_201_CREATED)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing Users.
@@ -442,9 +1008,17 @@ class UserViewSet(viewsets.ModelViewSet):
     authentication_classes = [JWTAuthentication]
 
     def get_permissions(self):
+        if self.action in ['profile_details', 'user_activities', 'user_submissions']:
+            return [IsAuthenticated(), IsInstructorOrAdminRole()]
         if self.action in ['list', 'retrieve', 'profile', 'access_logs', 'update', 'partial_update', 'update_profile', 'change_password', 'upload_profile_image', 'remove_profile_image']:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminRole()]
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.user.is_authenticated and request.user.role != User.RoleChoices.ADMIN:
+            omit_response_fields(response.data, {'nfc_uid'})
+        return response
 
     def _instructor_student_filter(self):
         user = self.request.user
@@ -463,6 +1037,46 @@ class UserViewSet(viewsets.ModelViewSet):
         if user.role == 'student':
             return User.objects.filter(pk=user.pk)
         return User.objects.none()
+
+    @action(detail=False, methods=['post'], url_path='export-excel')
+    def export_excel(self, request):
+        selected_ids = requested_export_ids(request)
+        if selected_ids is None:
+            return Response({'ids': ['Select one or more users to export.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        users = self.get_queryset().filter(pk__in=selected_ids).select_related('section').prefetch_related(
+            'assigned_sections',
+        ).order_by('pk')
+        record_count = users.count()
+        if not record_count:
+            return Response({'ids': ['No selected users are available to export.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        def export_rows():
+            for user in users.iterator(chunk_size=500):
+                full_name = f'{user.first_name} {user.last_name}'.strip()
+                if user.role == User.RoleChoices.INSTRUCTOR:
+                    sections = '; '.join(section.section_name for section in user.assigned_sections.all())
+                else:
+                    sections = user.section.section_name if user.section else ''
+                yield (
+                    full_name,
+                    user.username,
+                    user.student_id or '',
+                    user.instructor_id or '',
+                    user.email,
+                    user.role,
+                    sections,
+                    'Active' if user.is_active else 'Inactive',
+                )
+
+        return branded_excel_response(
+            report_name='Users Management Report',
+            filename='users-management-report.xlsx',
+            headers=('Full Name', 'Username', 'Student ID', 'Instructor ID', 'Email', 'Role', 'Section(s)', 'Account Status'),
+            rows=export_rows(),
+            record_count=record_count,
+            scope='Selected users',
+        )
 
     @action(detail=False, methods=['get'])
     def profile(self, request):
@@ -701,6 +1315,15 @@ def get_activity_students(activity):
     return User.objects.filter(role=User.RoleChoices.STUDENT, section_id__in=section_ids).distinct()
 
 
+def student_can_access_activity(student, activity):
+    if student.role != User.RoleChoices.STUDENT or not student.section_id:
+        return False
+    return (
+        activity.section_id == student.section_id
+        or activity.assigned_sections.filter(pk=student.section_id).exists()
+    )
+
+
 def create_submission_notifications(submission):
     activity = submission.activity
     student = submission.student
@@ -846,8 +1469,9 @@ class ActivityFilter(filters.FilterSet):
 class ActivityViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing Activities.
-    - Admins can view/manage all activities
+    - Admins can view all activities
     - Instructors can create activities and manage only their own
+    - Django superusers retain maintenance access
     - Students can view activities
     """
     authentication_classes = [JWTAuthentication]
@@ -859,6 +1483,29 @@ class ActivityViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     serializer_class = ActivitySerializer
     pagination_class = PageNumberPagination
+
+    def _attach_assigned_instructor_names(self, response):
+        data = response.data
+        activities = data['results'] if isinstance(data, dict) and isinstance(data.get('results'), list) else [data]
+        instructor_ids = {
+            activity.get('assigned_instructor')
+            for activity in activities
+            if activity.get('assigned_instructor')
+        }
+        instructor_names = {
+            instructor.pk: instructor.get_full_name().strip() or instructor.username
+            for instructor in User.objects.filter(pk__in=instructor_ids, role=User.RoleChoices.INSTRUCTOR)
+        }
+        for activity in activities:
+            instructor_id = activity.get('assigned_instructor')
+            activity['assigned_instructor_name'] = instructor_names.get(instructor_id)
+        return response
+
+    def list(self, request, *args, **kwargs):
+        return self._attach_assigned_instructor_names(super().list(request, *args, **kwargs))
+
+    def retrieve(self, request, *args, **kwargs):
+        return self._attach_assigned_instructor_names(super().retrieve(request, *args, **kwargs))
 
     def get_queryset(self):
         user = self.request.user
@@ -889,7 +1536,9 @@ class ActivityViewSet(viewsets.ModelViewSet):
             # an empty queryset.
             if not user.section:
                 return Activity.objects.none()
-            return annotated_qs.filter(section=user.section)
+            return annotated_qs.filter(
+                Q(section=user.section) | Q(assigned_sections=user.section),
+            ).distinct()
         return Activity.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -898,7 +1547,9 @@ class ActivityViewSet(viewsets.ModelViewSet):
         if user.role != 'student':
             return Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
-        assigned_qs = Activity.objects.filter(section=user.section) if user.section else Activity.objects.none()
+        assigned_qs = Activity.objects.filter(
+            Q(section=user.section) | Q(assigned_sections=user.section),
+        ).distinct() if user.section else Activity.objects.none()
         submission_qs = Submission.objects.filter(student=user)
         submitted_activity_ids = submission_qs.values_list('activity_id', flat=True).distinct()
         now = timezone.now()
@@ -921,11 +1572,12 @@ class ActivityViewSet(viewsets.ModelViewSet):
         if self.action == 'list' or self.action == 'retrieve' or self.action == 'stats':
             return [IsAuthenticated()]
         elif self.action in ['create', 'update', 'partial_update', 'destroy', 'delete_attachment']:
-            return [IsAuthenticated(), IsInstructorRole()]
+            return [IsAuthenticated(), IsInstructorOrSuperuser()]
         else:
             return [IsAuthenticated(), IsAdminRole()]
 
     def perform_create(self, serializer):
+        self._validate_instructor_activity_sections(serializer)
         activity = serializer.save(created_by=self.request.user)
         for student in get_activity_students(activity):
             create_student_notification(
@@ -938,6 +1590,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
             )
 
     def perform_update(self, serializer):
+        self._validate_instructor_activity_sections(serializer)
         activity = serializer.save()
         for student in get_activity_students(activity):
             create_student_notification(
@@ -948,6 +1601,30 @@ class ActivityViewSet(viewsets.ModelViewSet):
                 f'activity-update-{activity.id}-{student.id}-{activity.updated_at.isoformat()}',
                 '/student/activities',
             )
+
+    def _validate_instructor_activity_sections(self, serializer):
+        user = self.request.user
+        if user.role != User.RoleChoices.INSTRUCTOR:
+            return
+
+        requested_sections = set()
+        section = serializer.validated_data.get('section')
+        if section:
+            requested_sections.add(section.pk)
+        assigned_sections = serializer.validated_data.get('assigned_sections', [])
+        requested_sections.update(item.pk for item in assigned_sections)
+        if not requested_sections:
+            return
+
+        allowed_sections = set(Section.objects.filter(
+            pk__in=requested_sections,
+        ).filter(
+            Q(instructor=user) | Q(assigned_instructors=user),
+        ).values_list('pk', flat=True))
+        if allowed_sections != requested_sections:
+            raise serializers.ValidationError({
+                'assigned_sections': 'You can only assign activities to your assigned sections.'
+            })
 
     @action(
         detail=True,
@@ -1020,32 +1697,44 @@ class ActivityDiscussionViewSet(viewsets.ModelViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated, IsDiscussionAuthorOrInstructor]
     serializer_class = ActivityDiscussionSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
     filterset_fields = ['activity']
-    ordering_fields = ['created_at']
-    ordering = ['created_at']
+    ordering_fields = ['created_at', 'id']
+    ordering = ['created_at', 'id']
+
+    def _authorized_activities(self, user):
+        if user.role == User.RoleChoices.ADMIN:
+            return Activity.objects.all()
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            return Activity.objects.filter(
+                Q(created_by=user)
+                | Q(section__instructor=user)
+                | Q(section__assigned_instructors=user)
+                | Q(assigned_sections__instructor=user)
+                | Q(assigned_sections__assigned_instructors=user)
+            ).distinct()
+        if user.role == User.RoleChoices.STUDENT and user.section_id:
+            return Activity.objects.filter(
+                Q(section_id=user.section_id) | Q(assigned_sections__section_id=user.section_id),
+            ).distinct()
+        return Activity.objects.none()
 
     def get_queryset(self):
         user = self.request.user
         if not user or not user.is_authenticated:
             return ActivityDiscussion.objects.none()
-        # Students and instructors can see discussions for activities in their section
-        if user.role == 'admin':
-            queryset = ActivityDiscussion.objects.select_related('sender', 'activity')
-        elif user.role == 'instructor':
-            queryset = ActivityDiscussion.objects.filter(activity__section__instructor=user).select_related('sender', 'activity')
-        elif user.role == 'student':
-            if not user.section:
-                return ActivityDiscussion.objects.none()
-            queryset = ActivityDiscussion.objects.filter(activity__section=user.section).select_related('sender', 'activity')
-        else:
-            return ActivityDiscussion.objects.none()
-        return queryset.order_by('created_at')
+        return ActivityDiscussion.objects.filter(
+            activity__in=self._authorized_activities(user),
+        ).select_related('sender', 'activity').prefetch_related('attachments').order_by('created_at', 'pk')
 
     def perform_create(self, serializer):
         user = self.request.user
+        activity = serializer.validated_data.get('activity')
+        if not activity or not self._authorized_activities(user).filter(pk=activity.pk).exists():
+            raise PermissionDenied('You cannot discuss an activity you are not authorized to view.')
         role = getattr(user, 'role', '')
-        discussion = serializer.save(sender=user, sender_role=role)
+        discussion = serializer.save(sender=user, sender_role=role, activity=activity)
         if user.role == User.RoleChoices.INSTRUCTOR:
             for student in get_activity_students(discussion.activity):
                 create_student_notification(
@@ -1058,7 +1747,17 @@ class ActivityDiscussionViewSet(viewsets.ModelViewSet):
                 )
 
     def perform_update(self, serializer):
+        instance = serializer.instance
+        next_activity = serializer.validated_data.get('activity', instance.activity)
+        if next_activity.pk != instance.activity_id:
+            raise PermissionDenied('Discussion messages cannot be moved to another activity.')
         serializer.save()
+
+    def perform_destroy(self, instance):
+        for attachment in instance.attachments.all():
+            if attachment.file:
+                attachment.file.delete(save=False)
+        instance.delete()
 
 
 class ActivityAnnouncementViewSet(viewsets.ModelViewSet):
@@ -1082,7 +1781,9 @@ class ActivityAnnouncementViewSet(viewsets.ModelViewSet):
         if user.role == 'student':
             if not user.section:
                 return ActivityAnnouncement.objects.none()
-            return queryset.filter(activity__section=user.section)
+            return queryset.filter(
+                Q(activity__section=user.section) | Q(activity__assigned_sections=user.section),
+            ).distinct()
         return ActivityAnnouncement.objects.none()
 
     def get_permissions(self):
@@ -1141,6 +1842,7 @@ class SubmissionFilter(filters.FilterSet):
     student__section = filters.ModelChoiceFilter(field_name='student__section', queryset=Section.objects.all())
     activity__created_by = filters.ModelChoiceFilter(field_name='activity__created_by', queryset=User.objects.filter(role=User.RoleChoices.INSTRUCTOR))
     submitted_at = filters.DateFromToRangeFilter(field_name='submitted_at')
+    submission_date = filters.DateFilter(method='filter_submission_date')
 
     class Meta:
         model = Submission
@@ -1158,13 +1860,17 @@ class SubmissionFilter(filters.FilterSet):
             return queryset.filter(score__isnull=True, activity__due_date__lt=timezone.now(), submitted_at__isnull=True)
         return queryset
 
+    def filter_submission_date(self, queryset, name, value):
+        start = datetime.combine(value, time.min, tzinfo=ZoneInfo('Asia/Manila'))
+        return queryset.filter(submitted_at__gte=start, submitted_at__lt=start + timedelta(days=1))
+
 
 class SubmissionViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing Submissions.
     - Students can create submissions
     - Instructors can view submissions for their activities and grade them
-    - Admins can view/manage all submissions
+    - Admins can view all submissions
     """
     serializer_class = SubmissionSerializer
     authentication_classes = [JWTAuthentication]
@@ -1227,20 +1933,82 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             return [IsAuthenticated(), IsStudentRole()]
-        elif self.action in ['update', 'partial_update', 'grade', 'stats']:
+        elif self.action in ['update', 'partial_update']:
+            return [IsAuthenticated()]
+        elif self.action in ['destroy', 'grade']:
+            return [IsAuthenticated(), IsInstructorOrSuperuser()]
+        elif self.action == 'stats':
             return [IsAuthenticated()]
         else:
             return [IsAuthenticated()]
 
     def perform_create(self, serializer):
         student = self.request.user
+        if any(field in self.request.data for field in ('score', 'feedback')):
+            raise serializers.ValidationError('Students cannot set grades or instructor feedback.')
         activity = serializer.validated_data.get('activity')
         if activity is None:
             raise serializers.ValidationError({'activity': 'Activity is required.'})
+        self._validate_student_submission_activity(activity, student)
+        self._validate_student_temporary_uploads(activity, student)
 
         last_attempt = Submission.objects.filter(activity=activity, student=student).order_by('-attempt').first()
         submission = serializer.save(student=student, attempt=(last_attempt.attempt + 1 if last_attempt else 1))
         create_submission_notifications(submission)
+
+    def perform_update(self, serializer):
+        user = self.request.user
+        submission = serializer.instance
+        if user.role == User.RoleChoices.STUDENT:
+            if any(field in self.request.data for field in ('score', 'feedback')):
+                raise serializers.ValidationError('Students cannot set grades or instructor feedback.')
+            if submission.student_id != user.pk:
+                raise PermissionDenied('You can only edit your own submission.')
+            if serializer.validated_data.get('activity', submission.activity) != submission.activity:
+                raise PermissionDenied('A submission cannot be moved to another activity.')
+            self._validate_student_submission_activity(submission.activity, user)
+            self._validate_student_temporary_uploads(submission.activity, user)
+        elif user.role == User.RoleChoices.INSTRUCTOR:
+            if not self._is_instructor_authorized_for_submission(submission):
+                raise PermissionDenied('You cannot edit a submission outside your assigned activities or sections.')
+        elif not user.is_superuser:
+            raise PermissionDenied('Only the student owner, authorized instructor, or Django superuser can edit this submission.')
+        serializer.save()
+
+    @staticmethod
+    def _validate_student_submission_activity(activity, student):
+        if not student_can_access_activity(student, activity):
+            raise PermissionDenied('You can only submit to activities assigned to your section.')
+        if str(activity.status or '').lower() in ('closed', 'archived'):
+            raise PermissionDenied('This activity is closed for submissions.')
+        if activity.due_date and activity.due_date < timezone.now() and not activity.allow_resubmission:
+            raise PermissionDenied('The deadline has passed and late submissions are not allowed.')
+
+    def _validate_student_temporary_uploads(self, activity, student):
+        request_data = self.request.data
+        if hasattr(request_data, 'getlist'):
+            raw_ids = request_data.getlist('temp_upload_ids')
+        else:
+            raw_ids = request_data.get('temp_upload_ids', [])
+        if raw_ids in (None, ''):
+            return
+        if not isinstance(raw_ids, (list, tuple, set)):
+            raw_ids = [raw_ids]
+        try:
+            upload_ids = {int(upload_id) for upload_id in raw_ids if str(upload_id).strip()}
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({'temp_upload_ids': 'Uploaded file identifiers must be integers.'})
+        if not upload_ids:
+            return
+
+        uploads = list(TemporaryUpload.objects.filter(pk__in=upload_ids, user=student))
+        if len(uploads) != len(upload_ids) or any(
+            upload.activity_id not in (None, activity.pk)
+            for upload in uploads
+        ):
+            raise serializers.ValidationError({
+                'temp_upload_ids': 'One or more uploaded files do not belong to this activity.'
+            })
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -1276,9 +2044,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
                 {'detail': 'Permission denied. You can only grade submissions for your activities or assigned sections.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        if request.user.role not in ['instructor', 'admin']:
+        if request.user.role != 'instructor' and not request.user.is_superuser:
             return Response(
-                {'detail': 'Only instructors and admins can grade submissions.'},
+            {'detail': 'Only instructors and Django superusers can grade submissions.'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -1365,7 +2133,7 @@ class TemporaryUploadViewSet(viewsets.ModelViewSet):
                 'name': up.file.name.split('/')[-1],
                 'size': up.file.size if hasattr(up.file, 'size') else None,
                 'uploaded_at': up.uploaded_at,
-                'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
+                'url': None,
             }
             for up in uploads
         ]
@@ -1382,13 +2150,27 @@ class TemporaryUploadViewSet(viewsets.ModelViewSet):
                 activity = None
         if not file:
             return Response({'detail': 'File is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        up = TemporaryUpload.objects.create(user=request.user, file=file, activity=activity)
+        existing_files = []
+        if activity:
+            existing_files, removal_errors = get_existing_submission_files_for_upload(
+                request.user, activity, request.data,
+            )
+            if removal_errors:
+                return Response(removal_errors, status=status.HTTP_400_BAD_REQUEST)
+            existing_files.extend(
+                upload.file
+                for upload in self.get_queryset().filter(activity=activity)
+            )
+        upload_errors = validate_student_submission_files([file], existing_files)
+        if upload_errors:
+            return Response({'file': upload_errors}, status=status.HTTP_400_BAD_REQUEST)
+        up = create_temporary_uploads(request.user, activity, [file])[0]
         data = {
             'id': up.id,
             'name': up.file.name.split('/')[-1],
             'size': up.file.size if hasattr(up.file, 'size') else None,
             'uploaded_at': up.uploaded_at,
-            'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
+            'url': None,
         }
         return Response(data, status=status.HTTP_201_CREATED)
 
@@ -1410,12 +2192,14 @@ class StudentSubmissionUpload(APIView):
     def post(self, request, *args, **kwargs):
         files = request.FILES.getlist('files') or []
         activity_id = request.data.get('activity')
-        activity = None
-        if activity_id:
-            try:
-                activity = Activity.objects.get(pk=activity_id)
-            except Activity.DoesNotExist:
-                activity = None
+        if not activity_id:
+            return Response({'activity': 'Activity is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            activity = Activity.objects.get(pk=activity_id)
+        except (Activity.DoesNotExist, ValueError, TypeError):
+            return Response({'activity': 'Activity was not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not student_can_access_activity(request.user, activity):
+            return Response({'detail': 'You cannot upload files for an activity outside your section.'}, status=status.HTTP_404_NOT_FOUND)
 
         if not files:
             # also allow single file field 'file'
@@ -1426,16 +2210,30 @@ class StudentSubmissionUpload(APIView):
         if not files:
             return Response({'detail': 'No files uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        results = []
-        for f in files:
-            up = TemporaryUpload.objects.create(user=request.user, file=f, activity=activity)
-            results.append({
+        existing_files, removal_errors = get_existing_submission_files_for_upload(
+            request.user, activity, request.data,
+        )
+        if removal_errors:
+            return Response(removal_errors, status=status.HTTP_400_BAD_REQUEST)
+        existing_files.extend(
+            upload.file
+            for upload in TemporaryUpload.objects.filter(user=request.user, activity=activity)
+        )
+        upload_errors = validate_student_submission_files(files, existing_files)
+        if upload_errors:
+            return Response({'files': upload_errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        uploads = create_temporary_uploads(request.user, activity, files)
+        results = [
+            {
                 'id': up.id,
                 'name': up.file.name.split('/')[-1],
                 'size': up.file.size if hasattr(up.file, 'size') else None,
                 'uploaded_at': up.uploaded_at,
-                'url': request.build_absolute_uri(up.file.url) if request else up.file.url,
-            })
+                'url': None,
+            }
+            for up in uploads
+        ]
 
         return Response({'uploads': results}, status=status.HTTP_201_CREATED)
 
@@ -1446,7 +2244,7 @@ class AccessLogFilter(filters.FilterSet):
     student_id = filters.CharFilter(field_name='user__student_id', lookup_expr='iexact')
     user__section = filters.ModelChoiceFilter(field_name='user__section', queryset=Section.objects.all())
     station = filters.CharFilter(field_name='station', lookup_expr='iexact')
-    nfc_uid = filters.CharFilter(field_name='nfc_uid', lookup_expr='icontains')
+    nfc_uid = filters.CharFilter(method='filter_nfc_uid')
     cabinet_name = filters.CharFilter(field_name='cabinet_name', lookup_expr='iexact')
     photo_capture_status = filters.CharFilter(field_name='photo__capture_status', lookup_expr='iexact')
     access_time = filters.DateFromToRangeFilter(field_name='access_time')
@@ -1469,6 +2267,12 @@ class AccessLogFilter(filters.FilterSet):
             return queryset.exclude(status=AccessLog.AccessStatusChoices.SUCCESS)
         return queryset.filter(status__iexact=value)
 
+    def filter_nfc_uid(self, queryset, name, value):
+        request_user = getattr(getattr(self, 'request', None), 'user', None)
+        if getattr(request_user, 'role', None) != User.RoleChoices.ADMIN:
+            return queryset
+        return queryset.filter(nfc_uid__icontains=value)
+
 
 class AccessLogPagination(PageNumberPagination):
     page_size = 25
@@ -1480,7 +2284,10 @@ class AccessLogSearchFilter(SearchFilter):
     def get_search_fields(self, view, request):
         fields = super().get_search_fields(view, request)
         if request.user.role == User.RoleChoices.INSTRUCTOR:
+            fields = [field for field in fields if 'nfc_uid' not in field]
             return [*fields, 'cabinet_name']
+        if request.user.role == User.RoleChoices.STUDENT:
+            return ['cabinet_name', 'reason', 'status']
         return fields
 
 
@@ -1635,6 +2442,12 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-opened_at']
     pagination_class = AccessLogPagination
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.user.is_authenticated and request.user.role != User.RoleChoices.ADMIN:
+            omit_response_fields(response.data, {'uid', 'nfc_uid'})
+        return response
+
     @action(detail=False, methods=['get'], url_path='station-status')
     def station_status(self, request):
         station_names = list(dict.fromkeys(settings.TAPTRACK_CABINET_STATIONS))
@@ -1671,7 +2484,14 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
         if user.role == 'admin':
             return CabinetSession.objects.all()
         if user.role == 'instructor':
-            return CabinetSession.objects.filter(station__isnull=False) if user.is_authenticated else CabinetSession.objects.none()
+            assigned_student = Q(role=User.RoleChoices.STUDENT) & (
+                Q(section__instructor=user) | Q(section__assigned_instructors=user)
+            )
+            return CabinetSession.objects.filter(
+                Q(opened_by__in=User.objects.filter(assigned_student))
+                | Q(closed_by__in=User.objects.filter(assigned_student))
+                | Q(access_logs__user__in=User.objects.filter(assigned_student))
+            ).distinct()
         if user.role == 'student':
             return CabinetSession.objects.filter(access_logs__user=user).distinct()
         return CabinetSession.objects.none()
@@ -1691,6 +2511,12 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['access_time', 'user__student_id', 'user__last_name', 'station', 'cabinet_name']
     ordering = ['-access_time']
     pagination_class = AccessLogPagination
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.user.is_authenticated and request.user.role != User.RoleChoices.ADMIN:
+            omit_response_fields(response.data, {'nfc_uid'})
+        return response
 
     def paginate_queryset(self, queryset):
         if self.request.user.role == User.RoleChoices.INSTRUCTOR:
@@ -1717,6 +2543,60 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
                 'user', 'cabinet_session', 'user__section', 'photo',
             ).distinct()
         return AccessLog.objects.none()
+
+    @action(detail=False, methods=['post'], url_path='export-excel')
+    def export_excel(self, request):
+        selected_ids = requested_export_ids(request)
+        if selected_ids is None:
+            return Response({'ids': ['Select one or more access logs to export.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        logs = self.filter_queryset(self.get_queryset()).filter(pk__in=selected_ids).select_related(
+            'user', 'user__section', 'cabinet_session', 'photo',
+        ).prefetch_related('user__assigned_sections').order_by('-access_time', '-pk')
+        record_count = logs.count()
+        if not record_count:
+            return Response({'ids': ['No selected access logs are available to export.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = AccessLogSerializer()
+
+        def export_rows():
+            for log in logs.iterator(chunk_size=500):
+                user = log.user
+                if user and user.role == User.RoleChoices.INSTRUCTOR:
+                    section_names = '; '.join(section.section_name for section in user.assigned_sections.all())
+                else:
+                    section_names = user.section.section_name if user and user.section else ''
+                full_name = f'{user.first_name} {user.last_name}'.strip() if user else ''
+                if not full_name and user:
+                    full_name = user.username
+                try:
+                    photo_status = log.photo.capture_status
+                except AccessLogPhoto.DoesNotExist:
+                    photo_status = None
+                yield (
+                    timezone.localtime(log.access_time, ZoneInfo('Asia/Manila')) if log.access_time else None,
+                    full_name,
+                    user.role if user else '',
+                    section_names,
+                    serializer.get_station(log),
+                    log.cabinet_name,
+                    serializer.get_access_type(log),
+                    log.get_action_display(),
+                    log.get_status_display(),
+                    photo_status,
+                    format_duration(serializer.get_duration_seconds(log)),
+                )
+
+        scope = 'Current filtered results' if request.data.get('scope') == 'filtered' else 'Selected records'
+        return branded_excel_response(
+            report_name='Access History Report',
+            filename='access-history-report.xlsx',
+            headers=('Date and Time', 'User', 'Role', 'Section', 'Station', 'Cabinet', 'Access Type', 'Action', 'Result', 'Photo Status', 'Duration'),
+            rows=export_rows(),
+            record_count=record_count,
+            scope=scope,
+            result_header='Result',
+        )
 
     @action(detail=False, methods=['get'], url_path='filter-options')
     def filter_options(self, request):
@@ -2940,7 +3820,9 @@ class DashboardStatisticsView(APIView):
                 })
 
         elif user.role == 'student':
-            assigned_qs = Activity.objects.filter(section=user.section)
+            assigned_qs = Activity.objects.filter(
+                Q(section=user.section) | Q(assigned_sections=user.section),
+            ).distinct() if user.section else Activity.objects.none()
             submission_qs = Submission.objects.filter(student=user)
             total_activities = assigned_qs.count()
             submitted_activities = submission_qs.values_list('activity_id', flat=True).distinct().count()
@@ -2951,7 +3833,9 @@ class DashboardStatisticsView(APIView):
             total_users = 0
             total_students = 0
 
-            upcoming_qs = assigned_qs.filter(due_date__gte=now).order_by('due_date')[:5]
+            upcoming_qs = assigned_qs.filter(
+                Q(due_date__gte=now) | Q(due_date__isnull=True),
+            ).select_related('section', 'created_by', 'assigned_instructor').order_by('due_date')[:5]
             for activity in upcoming_qs:
                 latest_submission = Submission.objects.filter(activity=activity, student=user).order_by('-submitted_at').first()
                 if latest_submission:
@@ -2969,8 +3853,8 @@ class DashboardStatisticsView(APIView):
                     'title': activity.title,
                     'due_date': activity.due_date,
                     'status': submission_status,
-                    'instructor_name': f'{activity.created_by.first_name if activity.created_by else ""} {activity.created_by.last_name if activity.created_by else ""}'.strip(),
-                    'section_name': activity.section.section_name if activity.section else None,
+                    'instructor_name': f'{(activity.assigned_instructor or activity.created_by).first_name} {(activity.assigned_instructor or activity.created_by).last_name}'.strip() if (activity.assigned_instructor or activity.created_by) else None,
+                    'section_name': activity.section.section_name if activity.section else user.section.section_name if user.section else None,
                 })
 
             submission_qs = submission_qs.select_related('activity').order_by('-submitted_at')[:5]

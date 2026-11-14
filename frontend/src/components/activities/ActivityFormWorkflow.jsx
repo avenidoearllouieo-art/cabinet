@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BookOpen, CalendarClock, ClipboardCheck, Download, FileText, PencilLine, Users } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BookOpen, CalendarClock, ClipboardCheck, PencilLine, Users } from 'lucide-react'
 import api from '../../services/api.js'
+import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
+import { SUPPORTED_UPLOAD_ACCEPT, validateUploadFiles } from '../files/uploadPolicy.js'
 import ActivityDiscussion from '../ActivityDiscussion.jsx'
 import StatusBadge from '../StatusBadge.jsx'
 import {
@@ -14,9 +16,9 @@ import {
 } from '../forms/FormPrimitives.jsx'
 import { controlClass } from '../forms/formStyles.js'
 
-const editSteps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Review & publish']
-const viewSteps = ['Activity details', 'Assigned sections', 'Deadline & files', 'Activity status / review', 'Discussion']
-const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', cabinet_station: '', status: 'Published', files: [] })
+const editSteps = ['Activity Details', 'Assigned Sections', 'Deadline & Files', 'Review & Publish']
+const viewSteps = ['Activity Details', 'Assigned Sections', 'Deadline & Files', 'Activity Status / Review', 'Discussion']
+const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', status: 'Published', files: [] })
 const getSectionId = (section) => section?.id ?? section?.section_id ?? section?.subject_code
 const getSectionName = (section) => section?.section_name || section?.name || section?.title || section?.subject_code || 'Unnamed section'
 const displayValue = (value) => value === null || value === undefined || String(value).trim() === '' ? 'Not recorded' : String(value)
@@ -25,13 +27,13 @@ const snapshot = (form) => JSON.stringify({ ...form, files: form.files.map((file
 const formatActivityDate = (value) => {
   if (!value) return 'Not recorded'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(date)
 }
 
 const formatActivityTime = (value) => {
   if (!value) return 'Not recorded'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(date)
 }
 
 function ReadOnlyActivityStep({ step, activity, sections, attachments, activityId }) {
@@ -42,7 +44,6 @@ function ReadOnlyActivityStep({ step, activity, sections, attachments, activityI
           <ReviewItem label="Activity title" value={displayValue(activity?.title)} />
           <ReviewItem label="Maximum score" value={displayValue(activity?.max_score)} />
           <ReviewItem label="Description" value={displayValue(activity?.description)} />
-          <ReviewItem label="Cabinet station" value={displayValue(activity?.cabinet_station)} />
           <div className="sm:col-span-2"><ReviewItem label="Instructions" value={displayValue(activity?.instructions)} /></div>
         </dl>
       </FormSection>
@@ -81,20 +82,7 @@ function ReadOnlyActivityStep({ step, activity, sections, attachments, activityI
         </dl>
         <div className="mt-5">
           <h4 className="mb-3 text-sm font-semibold text-[#0B1F3A]">Attached files</h4>
-          {attachments.length ? (
-            <ul className="space-y-2">
-              {attachments.map((attachment) => {
-                const name = attachment.filename || attachment.file_name || 'Attachment'
-                const url = attachment.download_url || attachment.url
-                return (
-                  <li key={attachment.id ?? name} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-                    <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-700"><FileText size={16} className="shrink-0 text-[#28415f]" /><span className="truncate">{name}</span></span>
-                    {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-[#0B1F3A] hover:bg-slate-50"><Download size={14} />Open file</a>}
-                  </li>
-                )
-              })}
-            </ul>
-          ) : <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No activity files are attached.</p>}
+          <AcademicFileAttachments attachments={attachments} kind="activity" emptyMessage="No activity files are attached." />
         </div>
       </FormSection>
     )
@@ -144,6 +132,8 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   const [existingAttachments, setExistingAttachments] = useState([])
   const [activityRecord, setActivityRecord] = useState(activity || null)
   const [deletedAttachmentIds, setDeletedAttachmentIds] = useState([])
+  const submissionGuardRef = useRef(false)
+  const publishSucceededRef = useRef(false)
 
   const loadSections = useCallback(async () => {
     setLoadingSections(true)
@@ -168,7 +158,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       const loaded = {
         title: data.title || '', description: data.description || '', instructions: data.instructions || '',
         sections: readAssignedSections(data), due_date: date, due_time: time ? time.slice(0, 5) : '',
-        max_score: data.max_score !== undefined ? String(data.max_score) : '100', cabinet_station: data.cabinet_station || '',
+        max_score: data.max_score !== undefined ? String(data.max_score) : '100',
         status: data.status || 'Published', files: [],
       }
       setForm(loaded)
@@ -192,6 +182,8 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       setErrors({})
       setFormError('')
       setSuccessMessage('')
+      submissionGuardRef.current = false
+      publishSucceededRef.current = false
       setExistingAttachments([])
       setActivityRecord(null)
       setDeletedAttachmentIds([])
@@ -228,7 +220,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     return Object.keys(nextErrors).length === 0
   }
 
-  const goNext = () => {
+  const handleNextStep = () => {
     if (viewing) {
       setStep((current) => Math.min(current + 1, currentSteps.length - 1))
       return
@@ -236,8 +228,31 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     if (validateStep(step)) setStep((current) => Math.min(current + 1, currentSteps.length - 1))
   }
 
+  const handlePreviousStep = () => setStep((current) => Math.max(0, current - 1))
+
   const handleFiles = (event) => {
-    setForm((current) => ({ ...current, files: Array.from(event.target.files || []) }))
+    const selectedFiles = Array.from(event.target.files || [])
+    const uploadErrors = validateUploadFiles(selectedFiles)
+    if (uploadErrors.length) {
+      setErrors((current) => ({ ...current, attachments: uploadErrors }))
+      event.target.value = ''
+      return
+    }
+    setForm((current) => {
+      const seen = new Set(current.files.map((file) => `${file.name}:${file.size}:${file.type}:${file.lastModified}`))
+      const nextFiles = [...current.files]
+
+      selectedFiles.forEach((file) => {
+        const key = `${file.name}:${file.size}:${file.type}:${file.lastModified}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          nextFiles.push(file)
+        }
+      })
+
+      return { ...current, files: nextFiles }
+    })
+    setErrors((current) => ({ ...current, attachments: undefined }))
     event.target.value = ''
   }
 
@@ -247,14 +262,11 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     if (attachment.id !== undefined) setDeletedAttachmentIds((current) => [...current, attachment.id])
   }
 
-  const handleSubmit = async (event) => {
-    event.preventDefault()
-    if (viewing) {
-      onClose?.()
-      return
-    }
-    if (step !== currentSteps.length - 1) return goNext()
-    if (saving) return
+  const preventImplicitSubmit = (event) => event.preventDefault()
+
+  const handlePublishActivity = async () => {
+    if (step !== currentSteps.length - 1) return
+    if (saving || submissionGuardRef.current || publishSucceededRef.current) return
     const validationResults = [0, 1, 2].map((stepIndex) => validateStep(stepIndex))
     const firstInvalidStep = validationResults.indexOf(false)
     if (firstInvalidStep !== -1) {
@@ -263,6 +275,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     }
     if (editing && !resolvedId) return setFormError('Missing activity id.')
 
+    submissionGuardRef.current = true
     setSaving(true)
     setErrors({})
     setFormError('')
@@ -271,7 +284,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     const payload = {
       title: form.title, description: form.description, instructions: form.instructions,
       section: form.sections[0] || null, assigned_sections: form.sections, due_date: dueDateTime,
-      max_score: form.max_score ? Number(form.max_score) : 100, cabinet_station: form.cabinet_station || '', status: form.status,
+      max_score: form.max_score ? Number(form.max_score) : 100, status: form.status,
     }
 
     try {
@@ -283,6 +296,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       form.files.forEach((file) => body.append('attachments', file))
       deletedAttachmentIds.forEach((id) => body.append('deleted_attachments', id))
       const response = editing ? await api.patch(`/activities/${resolvedId}/`, body) : await api.post('/activities/', body)
+      publishSucceededRef.current = true
       onSaved?.(response.data)
       const updated = editing ? { ...form, files: [] } : blankForm()
       setForm(updated)
@@ -301,6 +315,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
         if (firstField) setStep(fieldToStep[firstField])
       } else setFormError(`Failed to ${editing ? 'update' : 'create'} activity. Please try again.`)
     } finally {
+      submissionGuardRef.current = false
       setSaving(false)
     }
   }
@@ -313,16 +328,20 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       isOpen={isOpen && ((!editing && !viewing) || Boolean(resolvedId))}
       title={viewing ? 'View Activity' : editing ? 'Edit Activity' : 'Create New Activity'}
       description={viewing ? 'Read-only activity record and discussion.' : editing ? 'Update the activity while preserving its submissions and history.' : 'Build an activity in four clear steps.'}
-      onClose={onClose} onSubmit={handleSubmit}
+      onClose={onClose} onSubmit={preventImplicitSubmit}
       asForm={!viewing}
       headerActions={viewing && <button type="button" onClick={onEdit} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400"><PencilLine size={16} />Edit Activity</button>}
       dirty={viewing ? false : dirty}
       busy={viewing ? false : saving}
       stepper={<FormStepper steps={currentSteps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === currentSteps.length - 1} submitLabel={viewing ? 'Close' : editing ? 'Save changes' : form.status === 'Draft' ? 'Save draft' : 'Publish activity'} busy={viewing ? false : saving} disabled={loading || loadingSections} dirty={viewing ? false : dirty} finalButtonType={viewing ? 'button' : 'submit'} onFinalAction={viewing ? onClose : undefined} />}
+      actions={<FormActions onCancel={onClose} onBack={step > 0 ? handlePreviousStep : undefined} onNext={handleNextStep} isLastStep={step === currentSteps.length - 1} submitLabel={viewing ? 'Close' : editing ? 'Save Changes' : 'Publish Activity'} busyLabel={editing ? 'Saving…' : 'Publishing…'} busy={viewing ? false : saving} disabled={loading || loadingSections} dirty={viewing ? false : dirty} finalButtonType="button" onFinalAction={viewing ? onClose : handlePublishActivity} />}
       zIndex={editing ? 'z-[99999]' : 'z-[9999]'}
     >
-      <div className="space-y-4">
+      <div className="space-y-4" onKeyDown={(event) => {
+        if (event.key === 'Enter' && (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.type !== 'file') {
+          event.preventDefault()
+        }
+      }}>
         <InlineFeedback>{formError}</InlineFeedback>
         <InlineFeedback type="success">{successMessage}</InlineFeedback>
         {loading ? <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">Loading activity…</div> : viewing ? (
@@ -334,7 +353,6 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
               <FormField label="Description" optional error={errors.description} className="md:col-span-2">{({ id, describedBy, invalid }) => <textarea id={id} value={form.description} onChange={update('description')} rows={3} placeholder="Summarize the activity and expected outcome." aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid, 'resize-y')} />}</FormField>
               <FormField label="Instructions" optional error={errors.instructions} className="md:col-span-2">{({ id, describedBy, invalid }) => <textarea id={id} value={form.instructions} onChange={update('instructions')} rows={5} placeholder="Add detailed instructions, materials, or submission guidance." aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid, 'resize-y')} />}</FormField>
               <FormField label="Maximum score" required error={errors.max_score} helper="Students will see this as the total available score.">{({ id, describedBy, invalid }) => <input id={id} type="number" min="0" value={form.max_score} onChange={update('max_score')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
-              <FormField label="Cabinet station" optional error={errors.cabinet_station} helper="Use the cabinet label shown on the hardware.">{({ id, describedBy, invalid }) => <input id={id} value={form.cabinet_station} onChange={update('cabinet_station')} placeholder="e.g., Cabinet 1" aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
             </div>
           </FormSection>
         ) : step === 1 ? (
@@ -347,8 +365,8 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <FormField label="Due date" optional error={errors.due_date}>{({ id, describedBy, invalid }) => <input id={id} type="date" value={form.due_date} onChange={update('due_date')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
               <FormField label="Due time" optional error={errors.due_time}>{({ id, describedBy, invalid }) => <input id={id} type="time" value={form.due_time} onChange={update('due_time')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
-              <div className="md:col-span-2"><FileUploadArea files={form.files} onChange={handleFiles} onRemove={removeNewFile} label={form.files.length ? 'Replace selected files' : 'Select activity files'} helper="Choose one or more files. Names and sizes appear before upload." /></div>
-              {editing && existingAttachments.length > 0 && <div className="md:col-span-2"><p className="mb-2 text-sm font-semibold text-slate-700">Current attachments</p><FileUploadArea files={existingAttachments} onChange={handleFiles} onRemove={removeExistingFile} label="Add more files" helper="Existing files remain attached unless removed." /></div>}
+              <div className="md:col-span-2"><FileUploadArea files={form.files} onChange={handleFiles} onRemove={removeNewFile} accept={SUPPORTED_UPLOAD_ACCEPT} error={errors.attachments} label={form.files.length ? 'Add more files' : 'Select activity files'} helper="Choose one or more files. Names and sizes appear before upload." /></div>
+              {editing && existingAttachments.length > 0 && <div className="md:col-span-2"><p className="mb-2 text-sm font-semibold text-slate-700">Current attachments</p><FileUploadArea files={existingAttachments} onChange={handleFiles} onRemove={removeExistingFile} accept={SUPPORTED_UPLOAD_ACCEPT} label="Add more files" helper="Existing files remain attached unless removed." /></div>}
             </div>
           </FormSection>
         ) : (
@@ -356,8 +374,9 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
             <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
               <ReviewItem label="Title" value={form.title || 'Not provided'} /><ReviewItem label="Maximum score" value={form.max_score || '100'} />
               <ReviewItem label="Sections" value={selectedSections.map(getSectionName).join(', ') || 'None selected'} /><ReviewItem label="Deadline" value={form.due_date ? `${form.due_date}${form.due_time ? ` at ${form.due_time}` : ''}` : 'No deadline'} />
-              <ReviewItem label="Cabinet station" value={form.cabinet_station || 'Not specified'} /><ReviewItem label="Files" value={`${existingAttachments.length + form.files.length} attached`} />
+              <ReviewItem label="Attachments" value={[...existingAttachments.map((file) => file.filename || file.file_name || file.name || 'Attachment'), ...form.files.map((file) => file.name)].join(', ') || 'None attached'} />
               <div className="sm:col-span-2"><ReviewItem label="Description" value={form.description || 'No description'} /></div>
+              <div className="sm:col-span-2"><ReviewItem label="Instructions" value={form.instructions || 'No instructions'} /></div>
             </dl>
             <FormField label="Publishing status" required error={errors.status} className="mt-5">{({ id, describedBy, invalid }) => <select id={id} value={form.status} onChange={update('status')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="Published">Published</option><option value="Draft">Draft</option><option value="Scheduled">Scheduled</option><option value="Archived">Archived</option><option value="Closed">Closed</option></select>}</FormField>
           </FormSection>

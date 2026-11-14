@@ -69,20 +69,22 @@ export default function StudentDashboard() {
   }, [fetchDashboard])
 
   const formatDate = (value) => {
-    if (!value) return '—'
-    try {
-      return new Intl.DateTimeFormat('en-US', {
+    if (!value) return 'Date unavailable'
+    const date = new Date(value)
+    return Number.isNaN(date.getTime())
+      ? 'Date unavailable'
+      : new Intl.DateTimeFormat('en-US', {
         dateStyle: 'short',
         timeStyle: 'short',
-      }).format(new Date(value))
-    } catch {
-      return String(value)
-    }
+        timeZone: 'Asia/Manila',
+      }).format(date)
   }
 
   const timeRemaining = (due) => {
-    if (!due) return '—'
-    const diff = new Date(due).getTime() - renderedAt
+    if (!due) return 'No deadline'
+    const dueDate = new Date(due)
+    if (Number.isNaN(dueDate.getTime())) return 'Date unavailable'
+    const diff = dueDate.getTime() - renderedAt
     const abs = Math.abs(diff)
     const minutes = Math.round(abs / 60000)
     if (diff < 0) {
@@ -97,15 +99,19 @@ export default function StudentDashboard() {
 
   const dueBadge = (dueDate) => {
     if (!dueDate) return null
-    const diffHours = (new Date(dueDate).getTime() - renderedAt) / 3600000
+    const due = new Date(dueDate)
+    if (Number.isNaN(due.getTime())) return null
+    const diffHours = (due.getTime() - renderedAt) / 3600000
     if (diffHours < 0) return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700"><AlertCircle size={12} /> Overdue</span>
     if (diffHours <= 48) return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"><Clock size={12} /> Due Soon</span>
     return null
   }
 
-  const sortedUpcomingActivities = [...upcomingActivities].sort(
-    (a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0),
-  )
+  const sortedUpcomingActivities = [...upcomingActivities].sort((left, right) => {
+    const leftTime = left.due_date && !Number.isNaN(new Date(left.due_date).getTime()) ? new Date(left.due_date).getTime() : Number.MAX_SAFE_INTEGER
+    const rightTime = right.due_date && !Number.isNaN(new Date(right.due_date).getTime()) ? new Date(right.due_date).getTime() : Number.MAX_SAFE_INTEGER
+    return leftTime - rightTime
+  })
 
   return (
     <div className="space-y-5">
@@ -197,7 +203,7 @@ export default function StudentDashboard() {
                       <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
                         <div className="min-w-0">
                           <dt className="text-slate-500">Due date</dt>
-                          <dd className="mt-1 break-words font-medium text-slate-700">{formatDate(activity.due_date)} {dueBadge(activity.due_date)}</dd>
+                          <dd className="mt-1 break-words font-medium text-slate-700">{activity.due_date ? formatDate(activity.due_date) : 'No deadline'} {dueBadge(activity.due_date)}</dd>
                         </div>
                         <div className="min-w-0">
                           <dt className="text-slate-500">Remaining</dt>
@@ -223,7 +229,7 @@ export default function StudentDashboard() {
                         <tr key={activity.id} className="border-b border-slate-100 even:bg-slate-50 hover:bg-slate-100">
                           <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-900 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.title}</td>
                           <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.section_name || activity.subject || '—'}</td>
-                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{formatDate(activity.due_date)} {dueBadge(activity.due_date)}</td>
+                          <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.due_date ? formatDate(activity.due_date) : 'No deadline'} {dueBadge(activity.due_date)}</td>
                           <td className="break-words border-r border-slate-100 px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{activity.status || 'Active'}</td>
                           <td className="break-words px-1.5 py-2 text-slate-600 sm:px-2 sm:py-2.5 lg:px-3 lg:py-3">{timeRemaining(activity.due_date)}</td>
                         </tr>
@@ -291,9 +297,7 @@ export default function StudentDashboard() {
                   {upcomingActivities.length === 0 ? (
                     <div className="text-sm text-slate-500">No deadlines coming up.</div>
                   ) : (
-                    upcomingActivities
-                      .slice()
-                      .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0))
+                    sortedUpcomingActivities
                       .slice(0, 5)
                       .map((a) => (
                         <div key={a.id} className="flex items-center justify-between">

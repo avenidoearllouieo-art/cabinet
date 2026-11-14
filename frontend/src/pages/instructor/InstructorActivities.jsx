@@ -18,6 +18,7 @@ const formatDate = (value) => {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date(value))
   } catch {
     return String(value)
@@ -144,7 +145,10 @@ export default function InstructorActivities() {
     if (Number.isNaN(dueDate.getTime())) return { label: 'Date unavailable', tone: 'neutral' }
     const now = new Date()
     if (dueDate < now) return { label: 'Overdue', tone: 'danger' }
-    if (dueDate.toDateString() === now.toDateString()) return { label: 'Due today', tone: 'warning' }
+    const manilaDate = (date) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(date)
+    if (manilaDate(dueDate) === manilaDate(now)) return { label: 'Due today', tone: 'warning' }
     return { label: 'Upcoming', tone: 'info' }
   }
 
@@ -193,7 +197,7 @@ export default function InstructorActivities() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="My Activities"
+        title="Activities"
         description="Create and manage your teaching activities"
         action={<button type="button" onClick={() => { setEditingActivityId(null); setSelectedActivity(null); setIsAddModalOpen(true) }} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[#FFBE0B] px-4 py-2 font-semibold text-[#082B53] transition hover:bg-[#e0a800] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#082B53]"><Plus size={18} />Add Activity</button>}
       />

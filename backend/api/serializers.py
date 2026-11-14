@@ -1,3 +1,5 @@
+import mimetypes
+
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q
@@ -21,6 +23,7 @@ from .models import (
     ActivityAnnouncement,
     PasswordResetRequest,
 )
+from .file_uploads import validate_student_submission_files, validate_uploaded_files
 
 
 class AccessLogPhotoReadSerializer(serializers.Serializer):
@@ -508,30 +511,36 @@ class ActivityAttachmentSerializer(serializers.ModelSerializer):
     filename = serializers.SerializerMethodField()
     url = serializers.SerializerMethodField()
     size = serializers.SerializerMethodField()
+    content_type = serializers.SerializerMethodField()
+    preview_kind = serializers.SerializerMethodField()
     file_name = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ActivityAttachment
-        fields = ['id', 'filename', 'url', 'size', 'uploaded_at', 'file_name', 'file_size', 'download_url']
-        read_only_fields = ['id', 'filename', 'url', 'size', 'uploaded_at', 'file_name', 'file_size', 'download_url']
+        fields = ['id', 'filename', 'url', 'size', 'content_type', 'preview_kind', 'uploaded_at', 'file_name', 'file_size', 'download_url']
+        read_only_fields = ['id', 'filename', 'url', 'size', 'content_type', 'preview_kind', 'uploaded_at', 'file_name', 'file_size', 'download_url']
 
     def get_filename(self, obj):
         return obj.original_filename or obj.file.name.split('/')[-1]
 
     def get_url(self, obj):
-        request = self.context.get('request')
-        try:
-            url = obj.file.url
-        except ValueError:
-            return None
-        if request:
-            return request.build_absolute_uri(url)
-        return url
+        return None
 
     def get_size(self, obj):
-        return obj.file_size or obj.file.size
+        if obj.file_size:
+            return obj.file_size
+        try:
+            return obj.file.size
+        except (OSError, ValueError):
+            return None
+
+    def get_content_type(self, obj):
+        return obj.content_type or mimetypes.guess_type(self.get_filename(obj))[0] or ''
+
+    def get_preview_kind(self, obj):
+        return 'activity'
 
     def get_file_name(self, obj):
         return self.get_filename(obj)
@@ -540,10 +549,11 @@ class ActivityAttachmentSerializer(serializers.ModelSerializer):
         return self.get_size(obj)
 
     def get_download_url(self, obj):
-        return self.get_url(obj)
+        return None
 
 
 class SubmissionAttachmentSerializer(serializers.ModelSerializer):
+    file = serializers.SerializerMethodField()
     file_name = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
@@ -556,18 +566,14 @@ class SubmissionAttachmentSerializer(serializers.ModelSerializer):
     def get_file_name(self, obj):
         return obj.file.name.split('/')[-1]
 
+    def get_file(self, obj):
+        return None
+
     def get_file_size(self, obj):
         return obj.file.size
 
     def get_download_url(self, obj):
-        request = self.context.get('request')
-        try:
-            url = obj.file.url
-        except ValueError:
-            return None
-        if request:
-            return request.build_absolute_uri(url)
-        return url
+        return None
 
 
 class ActivitySerializer(serializers.ModelSerializer):
@@ -637,6 +643,12 @@ class ActivitySerializer(serializers.ModelSerializer):
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return None
 
+    def validate(self, attrs):
+        upload_errors = validate_uploaded_files(self._get_uploaded_files())
+        if upload_errors:
+            raise serializers.ValidationError({'attachments': upload_errors})
+        return super().validate(attrs)
+
     def _get_uploaded_files(self):
         if not hasattr(self, 'initial_data'):
             return []
@@ -682,8 +694,28 @@ class ActivitySerializer(serializers.ModelSerializer):
         attachment.original_filename = original_name.split('/')[-1]
         attachment.file_size = getattr(uploaded_file, 'size', 0) or getattr(uploaded_file, '_size', 0) or 0
         attachment.content_type = getattr(uploaded_file, 'content_type', '') or ''
-        attachment.save()
+        try:
+            attachment.save()
+        except Exception:
+            if attachment.file and attachment.file.name:
+                attachment.file.delete(save=False)
+            raise
         return attachment
+
+    def _create_attachments(self, activity, uploaded_files):
+        created = []
+        try:
+            for uploaded_file in uploaded_files:
+                attachment = self._create_attachment(activity, uploaded_file)
+                if attachment is not None:
+                    created.append(attachment)
+        except Exception:
+            for attachment in created:
+                if attachment.file and attachment.file.name:
+                    attachment.file.delete(save=False)
+                attachment.delete()
+            raise
+        return created
 
     def _delete_attachments(self, activity, attachment_ids):
         attachments = ActivityAttachment.objects.filter(activity=activity, id__in=attachment_ids)
@@ -692,6 +724,7 @@ class ActivitySerializer(serializers.ModelSerializer):
                 attachment.file.delete(save=False)
             attachment.delete()
 
+    @transaction.atomic
     def create(self, validated_data):
         assigned_sections = validated_data.pop('assigned_sections', [])
         assigned_instructor = validated_data.pop('assigned_instructor', None)
@@ -705,10 +738,10 @@ class ActivitySerializer(serializers.ModelSerializer):
         if assigned_sections:
             activity.assigned_sections.set(assigned_sections)
 
-        for uploaded_file in self._get_uploaded_files():
-            self._create_attachment(activity, uploaded_file)
+        self._create_attachments(activity, self._get_uploaded_files())
         return activity
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         assigned_sections = validated_data.pop('assigned_sections', None)
         assigned_instructor = validated_data.pop('assigned_instructor', None)
@@ -720,12 +753,10 @@ class ActivitySerializer(serializers.ModelSerializer):
         if assigned_sections is not None:
             activity.assigned_sections.set(assigned_sections)
 
+        self._create_attachments(activity, self._get_uploaded_files())
         deleted_attachment_ids = self._get_deleted_attachment_ids()
         if deleted_attachment_ids:
             self._delete_attachments(activity, deleted_attachment_ids)
-
-        for uploaded_file in self._get_uploaded_files():
-            self._create_attachment(activity, uploaded_file)
         return activity
 
     def get_student_submission_status(self, obj):
@@ -842,6 +873,11 @@ class SubmissionHistorySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'attempt', 'activity', 'student', 'submitted_at', 'graded_at']
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['file'] = None
+        return data
+
 
 class SubmissionSerializer(serializers.ModelSerializer):
     student = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -864,6 +900,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     files = serializers.SerializerMethodField()
     temp_upload_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
     removed_attachment_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    remove_primary_file = serializers.BooleanField(write_only=True, required=False, default=False)
     previous_attempts = SubmissionHistorySerializer(many=True, read_only=True)
 
     class Meta:
@@ -886,6 +923,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'files',
             'temp_upload_ids',
             'removed_attachment_ids',
+            'remove_primary_file',
             'submitted_at',
             'remarks',
             'score',
@@ -905,6 +943,75 @@ class SubmissionSerializer(serializers.ModelSerializer):
         read_only_fields = ['submitted_at', 'updated_at', 'graded_by', 'graded_by_name', 'graded_at', 'status', 'submission_status', 'instructor_name', 'files', 'previous_attempts']
 
     file = serializers.FileField(required=False, allow_null=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['file'] = None
+        return data
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or user.role != User.RoleChoices.STUDENT:
+            return attrs
+        if attrs.get('remove_primary_file') and not self.instance:
+            raise serializers.ValidationError({
+                'remove_primary_file': 'Only files on an existing submission can be removed.'
+            })
+
+        temp_upload_ids = list(dict.fromkeys(attrs.get('temp_upload_ids') or []))
+        direct_file = attrs.get('file')
+        if not temp_upload_ids and direct_file is None:
+            return attrs
+
+        activity = attrs.get('activity') or (self.instance.activity if self.instance else None)
+        temporary_uploads = list(TemporaryUpload.objects.filter(
+            pk__in=temp_upload_ids,
+            user=user,
+        ))
+        if len(temporary_uploads) != len(temp_upload_ids):
+            raise serializers.ValidationError({
+                'temp_upload_ids': 'One or more uploaded files are unavailable or do not belong to you.'
+            })
+        if activity and any(
+            upload.activity_id not in (None, activity.pk)
+            for upload in temporary_uploads
+        ):
+            raise serializers.ValidationError({
+                'temp_upload_ids': 'One or more uploaded files belong to a different activity.'
+            })
+
+        new_files = [upload.file for upload in temporary_uploads]
+        if direct_file is not None:
+            new_files.append(direct_file)
+
+        existing_files = []
+        if self.instance:
+            removed_ids = set(attrs.get('removed_attachment_ids') or [])
+            remove_primary_file = attrs.get('remove_primary_file', False)
+            all_attachments = list(self.instance.attachments.all())
+            attachments = list(self.instance.attachments.exclude(pk__in=removed_ids))
+            existing_files.extend(attachment.file for attachment in attachments)
+            all_attachment_names = {attachment.file.name for attachment in all_attachments}
+            has_unattached_primary_file = bool(
+                self.instance.file and self.instance.file.name not in all_attachment_names
+            )
+            if remove_primary_file and not has_unattached_primary_file:
+                raise serializers.ValidationError({
+                    'remove_primary_file': 'This submission has no separate primary file to remove.'
+                })
+            if (
+                has_unattached_primary_file
+                and direct_file is None
+                and not remove_primary_file
+            ):
+                existing_files.append(self.instance.file)
+
+        upload_errors = validate_student_submission_files(new_files, existing_files)
+        if upload_errors:
+            raise serializers.ValidationError({'files': upload_errors})
+        return attrs
 
     def get_status(self, obj):
         if obj.score is not None:
@@ -937,87 +1044,127 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
     def get_files(self, obj):
         """Return file info for display, using SubmissionAttachment when available."""
-        request = self.context.get('request')
         attachments = getattr(obj, 'attachments', None)
+        data = []
+        attachment_names = set()
         if attachments and attachments.exists():
-            data = []
             for at in attachments.all():
                 try:
+                    attachment_names.add(at.file.name)
                     data.append({
                         'id': at.id,
                         'name': at.file.name.split('/')[-1],
                         'size': at.file.size if hasattr(at.file, 'size') else None,
-                        'url': request.build_absolute_uri(at.file.url) if request else at.file.url,
+                        'content_type': mimetypes.guess_type(at.file.name)[0] or '',
+                        'preview_kind': 'submission',
+                        'url': None,
                     })
                 except:
                     continue
-            return data
 
-        if obj.file:
+        if obj.file and obj.file.name not in attachment_names:
             try:
-                return [{
-                    'id': 1,
+                data.append({
+                    'id': obj.pk,
                     'name': obj.file.name.split('/')[-1],
                     'size': obj.file.size if hasattr(obj.file, 'size') else None,
-                    'url': request.build_absolute_uri(obj.file.url) if request else obj.file.url
-                }]
+                    'content_type': mimetypes.guess_type(obj.file.name)[0] or '',
+                    'preview_kind': 'submission_file',
+                    'url': None,
+                })
             except:
-                return []
-        return []
+                pass
+        return data
 
+    def _copy_temporary_uploads(self, submission, temp_files):
+        created_attachments = []
+        source_files = []
+        try:
+            for upload in temp_files:
+                source_storage = upload.file.storage
+                source_name = upload.file.name
+                attachment = SubmissionAttachment(submission=submission)
+                try:
+                    attachment.file.save(source_name.rsplit('/', 1)[-1], upload.file, save=False)
+                    attachment.save()
+                except Exception:
+                    if attachment.file and attachment.file.name:
+                        attachment.file.storage.delete(attachment.file.name)
+                    raise
+                created_attachments.append(attachment)
+                source_files.append((upload, source_storage, source_name))
+
+            if created_attachments and not submission.file:
+                submission.file = created_attachments[0].file
+                submission.save(update_fields=['file'])
+        except Exception:
+            for attachment in created_attachments:
+                if attachment.file and attachment.file.name:
+                    attachment.file.storage.delete(attachment.file.name)
+                attachment.delete()
+            raise
+
+        for upload, source_storage, source_name in source_files:
+            try:
+                upload.file.close()
+                source_storage.delete(source_name)
+                upload.delete()
+            except Exception:
+                continue
+
+    @transaction.atomic
     def create(self, validated_data):
         temp_ids = validated_data.pop('temp_upload_ids', None)
+        validated_data.pop('removed_attachment_ids', None)
+        validated_data.pop('remove_primary_file', None)
         temp_files = []
         if temp_ids:
             temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
-            if temp_files and 'file' not in validated_data:
-                validated_data['file'] = temp_files[0].file
 
         submission = super().create(validated_data)
         if temp_files:
-            first_saved = False
-            for up in temp_files:
-                try:
-                    att = SubmissionAttachment.objects.create(submission=submission, file=up.file)
-                    if not first_saved:
-                        submission.file = att.file
-                        submission.save(update_fields=['file'])
-                        first_saved = True
-                except Exception:
-                    continue
-                up.delete()
+            self._copy_temporary_uploads(submission, temp_files)
         return submission
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         temp_ids = validated_data.pop('temp_upload_ids', None)
         removed_ids = validated_data.pop('removed_attachment_ids', None)
+        remove_primary_file = validated_data.pop('remove_primary_file', False)
+        removed_ids = set(removed_ids or [])
+        attached_file_names = {attachment.file.name for attachment in instance.attachments.all()}
+        removed_legacy_file = bool(
+            instance.file
+            and instance.file.name not in attached_file_names
+            and remove_primary_file
+        )
+        legacy_file_storage = instance.file.storage if removed_legacy_file else None
+        legacy_file_name = instance.file.name if removed_legacy_file else None
         temp_files = []
         if temp_ids:
             temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
 
         submission = super().update(instance, validated_data)
 
-        if removed_ids:
-            for attachment in submission.attachments.filter(id__in=removed_ids):
-                try:
-                    if attachment.file:
-                        attachment.file.delete(save=False)
-                except Exception:
-                    pass
-                attachment.delete()
-
         if temp_files:
-            first_saved = False
-            for up in temp_files:
-                try:
-                    att = SubmissionAttachment.objects.create(submission=submission, file=up.file)
-                    if not first_saved:
-                        submission.file = att.file
-                        submission.save(update_fields=['file'])
-                        first_saved = True
-                except Exception:
-                    continue
-                up.delete()
+            self._copy_temporary_uploads(submission, temp_files)
+
+        if removed_ids:
+            removed_attachments = list(submission.attachments.filter(id__in=removed_ids))
+            removed_file_names = {attachment.file.name for attachment in removed_attachments if attachment.file}
+            for attachment in removed_attachments:
+                if attachment.file:
+                    attachment.file.delete(save=False)
+                attachment.delete()
+            if submission.file and submission.file.name in removed_file_names:
+                replacement = submission.attachments.first()
+                submission.file = replacement.file if replacement else ''
+                submission.save(update_fields=['file'])
+        if removed_legacy_file and submission.file and submission.file.name == legacy_file_name:
+            replacement = submission.attachments.first()
+            submission.file = replacement.file if replacement else ''
+            submission.save(update_fields=['file'])
+            legacy_file_storage.delete(legacy_file_name)
 
         return submission
 

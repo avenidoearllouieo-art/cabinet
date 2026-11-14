@@ -19,14 +19,15 @@ import json
 import subprocess
 import sys
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook, load_workbook
 
 from .admin import AccessLogAdmin
-from .models import AccessLog, AccessLogPhoto, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, CabinetSession
+from .models import AccessLog, AccessLogPhoto, ActivityDiscussion, ActivityDiscussionAttachment, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, TemporaryUpload, PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, CabinetSession
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
@@ -182,6 +183,7 @@ class InstructorSectionOverviewScopeTests(TestCase):
         self.assertEqual({activity['id'] for activity in payload['activities']}, {self.activity_a.pk})
         self.assertEqual({item['id'] for item in payload['recent_submissions']}, {self.student_a.submissions.get().pk})
         self.assertEqual({log['user'] for log in payload['access_logs']}, {self.student_a.pk})
+        self.assertTrue(all('nfc_uid' not in log for log in payload['access_logs']))
         self.assertEqual(payload['cabinet_stations'], [{'station': 'Cabinet Station 1', 'status': 'Available'}])
 
     def test_assigned_sections_and_section_list_metrics_respect_selected_section(self):
@@ -213,6 +215,26 @@ class InstructorSectionOverviewScopeTests(TestCase):
             {student['id'] for student in students_response.json()['results']},
             {self.student_b.pk, self.student_b_missing.pk},
         )
+
+    def test_admin_section_directory_reports_actual_students_and_activities(self):
+        admin_user = User.objects.create_user(
+            username='section-directory-admin',
+            email='section-directory-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin_user)
+
+        response = self.client.get('/api/sections/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        sections = {item['section_id']: item for item in response.json()['results']}
+        self.assertEqual(sections[self.section_a.pk]['student_count'], 1)
+        self.assertEqual(sections[self.section_a.pk].get('activity_count'), 1, sections[self.section_a.pk])
+        self.assertEqual(sections[self.section_b.pk]['student_count'], 2)
+        self.assertEqual(sections[self.section_b.pk]['activity_count'], 1)
+        self.assertEqual(sections[self.section_b.pk]['instructor'], self.instructor.pk)
+        self.assertEqual(sections[self.section_b.pk]['instructor_name'], self.instructor.get_full_name().strip() or self.instructor.username)
 
     def test_section_destination_endpoints_are_scoped_to_selected_section(self):
         activities_response = self.client.get(f'/api/activities/?section={self.section_a.pk}')
@@ -291,6 +313,40 @@ class InstructorSectionAssignmentTests(TestCase):
         self.assertFalse(created.check_password('created-instructor'))
         self.assertTrue(created.check_password('secret1234'))
         self.assertFalse(Section.objects.filter(pk__in=[self.section_a.pk, self.section_b.pk]).exclude(instructor=created).exists())
+
+    def test_admin_can_create_student_and_administrator_roles_and_invalid_roles_are_rejected(self):
+        student_response = self.client.post('/api/users/', {
+            'username': 'created-student',
+            'email': 'created-student@example.com',
+            'password': 'secret1234',
+            'first_name': 'Created',
+            'last_name': 'Student',
+            'role': User.RoleChoices.STUDENT,
+            'student_id': 'ST-NEW-001',
+            'section': self.section_a.pk,
+        }, format='json')
+        admin_response = self.client.post('/api/users/', {
+            'username': 'created-admin',
+            'email': 'created-admin@example.com',
+            'password': 'secret1234',
+            'first_name': 'Created',
+            'last_name': 'Admin',
+            'role': User.RoleChoices.ADMIN,
+        }, format='json')
+        invalid_response = self.client.post('/api/users/', {
+            'username': 'invalid-role-user',
+            'email': 'invalid-role-user@example.com',
+            'password': 'secret1234',
+            'role': 'administrator-with-invalid-value',
+        }, format='json')
+
+        self.assertEqual(student_response.status_code, 201, student_response.json())
+        self.assertEqual(admin_response.status_code, 201, admin_response.json())
+        self.assertEqual(invalid_response.status_code, 400, invalid_response.json())
+        self.assertEqual(User.objects.get(username='created-student').role, User.RoleChoices.STUDENT)
+        self.assertEqual(User.objects.get(username='created-admin').role, User.RoleChoices.ADMIN)
+        self.assertTrue(User.objects.get(username='created-admin').check_password('secret1234'))
+        self.assertTrue(User.objects.filter(pk=self.first_instructor.pk).exists())
 
     def test_assignment_transfer_removes_previous_owner(self):
         self.first_instructor.assigned_sections.add(self.section_a)
@@ -412,6 +468,160 @@ class InstructorSectionAssignmentTests(TestCase):
         )
 
 
+class ActivityDiscussionAccessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='discussion-instructor',
+            email='discussion-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='DISCUSSION-001',
+        )
+        self.assigned_instructor = User.objects.create_user(
+            username='discussion-assigned-instructor',
+            email='discussion-assigned@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='DISCUSSION-002',
+        )
+        self.other_instructor = User.objects.create_user(
+            username='discussion-other-instructor',
+            email='discussion-other@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='DISCUSSION-003',
+        )
+        self.section = Section.objects.create(section_name='Discussion Section', instructor=self.instructor)
+        self.section.assigned_instructors.add(self.assigned_instructor)
+        self.student = User.objects.create_user(
+            username='discussion-student',
+            email='discussion-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='DISCUSSION-STUDENT-001',
+            section=self.section,
+        )
+        self.owned_activity = Activity.objects.create(
+            title='Owned discussion activity',
+            created_by=self.instructor,
+        )
+        self.assigned_activity = Activity.objects.create(
+            title='Assigned discussion activity',
+            created_by=self.other_instructor,
+        )
+        self.assigned_activity.assigned_sections.add(self.section)
+        self.unrelated_activity = Activity.objects.create(
+            title='Unrelated discussion activity',
+            created_by=self.other_instructor,
+        )
+
+    def test_instructor_can_create_discussion_attachment_for_owned_activity(self):
+        self.client.force_authenticate(user=self.instructor)
+        attachment = SimpleUploadedFile('brief.pdf', b'%PDF-1.4\nbrief', content_type='application/pdf')
+
+        response = self.client.post('/api/activity-discussions/', {
+            'activity': self.owned_activity.pk,
+            'message': 'Review the attached brief.',
+            'attachment': attachment,
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        discussion = ActivityDiscussion.objects.get(pk=response.json()['id'])
+        stored_attachment = ActivityDiscussionAttachment.objects.get(discussion=discussion)
+        self.assertEqual(stored_attachment.original_filename, 'brief.pdf')
+        self.assertEqual(response.json()['attachments'][0]['filename'], 'brief.pdf')
+        self.assertEqual(response.json()['sender'], self.instructor.pk)
+
+        appended_file = SimpleUploadedFile('appendix.pdf', b'%PDF-1.4\nappendix', content_type='application/pdf')
+        edit_response = self.client.patch(
+            f"/api/activity-discussions/{discussion.pk}/",
+            {'message': 'Updated with an appendix.', 'attachment': appended_file},
+            format='multipart',
+        )
+        self.assertEqual(edit_response.status_code, 200, edit_response.json())
+        self.assertEqual(len(edit_response.json()['attachments']), 2)
+        self.assertEqual(discussion.attachments.count(), 2)
+
+    def test_assigned_instructor_can_view_and_post_but_not_access_unrelated_discussions(self):
+        assigned_message = ActivityDiscussion.objects.create(
+            activity=self.assigned_activity,
+            sender=self.instructor,
+            sender_role=User.RoleChoices.INSTRUCTOR,
+            message='Assigned activity thread.',
+        )
+        unrelated_message = ActivityDiscussion.objects.create(
+            activity=self.unrelated_activity,
+            sender=self.other_instructor,
+            sender_role=User.RoleChoices.INSTRUCTOR,
+            message='Private to another instructor.',
+        )
+        self.client.force_authenticate(user=self.assigned_instructor)
+
+        list_response = self.client.get('/api/activity-discussions/')
+        create_response = self.client.post('/api/activity-discussions/', {
+            'activity': self.assigned_activity.pk,
+            'message': 'I can access this assigned activity.',
+        }, format='json')
+        forbidden_response = self.client.post('/api/activity-discussions/', {
+            'activity': self.unrelated_activity.pk,
+            'message': 'This must be rejected.',
+        }, format='json')
+        hidden_detail = self.client.get(f'/api/activity-discussions/{unrelated_message.pk}/')
+
+        self.assertEqual(list_response.status_code, 200, list_response.json())
+        self.assertEqual({item['id'] for item in list_response.json()['results']}, {assigned_message.pk})
+        self.assertEqual(create_response.status_code, 201, create_response.json())
+        self.assertEqual(forbidden_response.status_code, 403)
+        self.assertEqual(hidden_detail.status_code, 404)
+
+        assigned_message = ActivityDiscussion.objects.get(pk=assigned_message.pk)
+        move_response = self.client.patch(
+            f'/api/activity-discussions/{assigned_message.pk}/',
+            {'activity': self.unrelated_activity.pk},
+            format='json',
+        )
+        self.assertEqual(move_response.status_code, 403)
+        assigned_message.refresh_from_db()
+        self.assertEqual(assigned_message.activity_id, self.assigned_activity.pk)
+
+    def test_student_discussion_scope_is_limited_to_their_section(self):
+        student_activity = Activity.objects.create(
+            title='Student section discussion activity',
+            section=self.section,
+            created_by=self.instructor,
+        )
+        visible = ActivityDiscussion.objects.create(
+            activity=student_activity,
+            sender=self.student,
+            sender_role=User.RoleChoices.STUDENT,
+            message='Visible section post.',
+        )
+        assigned_activity = Activity.objects.create(
+            title='M2M assigned discussion activity',
+            created_by=self.instructor,
+        )
+        assigned_activity.assigned_sections.add(self.section)
+        assigned_visible = ActivityDiscussion.objects.create(
+            activity=assigned_activity,
+            sender=self.instructor,
+            sender_role=User.RoleChoices.INSTRUCTOR,
+            message='Visible through assigned sections.',
+        )
+        ActivityDiscussion.objects.create(
+            activity=self.unrelated_activity,
+            sender=self.other_instructor,
+            sender_role=User.RoleChoices.INSTRUCTOR,
+            message='Unrelated post.',
+        )
+        self.client.force_authenticate(user=self.student)
+
+        response = self.client.get('/api/activity-discussions/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual({item['id'] for item in response.json()['results']}, {visible.pk, assigned_visible.pk})
+
+
 class ActivityCreationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -435,6 +645,42 @@ class ActivityCreationTests(TestCase):
             instructor_id='I002',
             nfc_uid='NFC-INST-002',
         )
+
+    def test_admin_cannot_create_update_or_delete_activities(self):
+        admin_user = User.objects.create_user(
+            username='activity-admin',
+            email='activity-admin@example.com',
+            password='secret123',
+            role=User.RoleChoices.ADMIN,
+        )
+        activity = Activity.objects.create(title='Instructor-owned activity', created_by=self.instructor)
+        self.client.force_authenticate(user=admin_user)
+
+        create_response = self.client.post('/api/activities/', {'title': 'Admin-created activity'}, format='json')
+        update_response = self.client.patch(f'/api/activities/{activity.pk}/', {'title': 'Admin-edited activity'}, format='json')
+        delete_response = self.client.delete(f'/api/activities/{activity.pk}/')
+
+        self.assertEqual(create_response.status_code, 403)
+        self.assertEqual(update_response.status_code, 403)
+        self.assertEqual(delete_response.status_code, 403)
+        activity.refresh_from_db()
+        self.assertEqual(activity.title, 'Instructor-owned activity')
+        self.assertEqual(Activity.objects.count(), 1)
+
+    def test_django_superuser_can_maintain_activities(self):
+        superuser = User.objects.create_superuser(
+            username='activity-superuser',
+            email='activity-superuser@example.com',
+            password='secret123',
+        )
+        activity = Activity.objects.create(title='Maintenance activity', created_by=self.instructor)
+        self.client.force_authenticate(user=superuser)
+
+        response = self.client.patch(f'/api/activities/{activity.pk}/', {'title': 'Maintained activity'}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        activity.refresh_from_db()
+        self.assertEqual(activity.title, 'Maintained activity')
 
     def test_instructor_can_create_activity_with_extended_fields(self):
         self.client.force_authenticate(user=self.instructor)
@@ -467,6 +713,72 @@ class ActivityCreationTests(TestCase):
         self.assertEqual(activity.created_by, self.instructor)
         self.assertEqual(activity.instructions, '<p>Read the brief carefully.</p>')
         self.assertTrue(activity.assigned_sections.filter(section_id__in=[self.section_a.section_id, self.section_b.section_id]).count() == 2)
+
+    def test_instructor_can_create_academic_activity_without_cabinet_station(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.post('/api/activities/', {
+            'title': 'Station-free activity',
+            'assigned_sections': [self.section_a.pk],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        self.assertEqual(response.json()['cabinet_station'], '')
+
+    def test_instructor_cannot_create_or_reassign_activity_to_unassigned_section(self):
+        unrelated_section = Section.objects.create(
+            section_name='Unrelated Section',
+            subject_code='OTHER-SEC',
+            instructor=self.other_instructor,
+        )
+        activity = Activity.objects.create(
+            title='Owned activity',
+            created_by=self.instructor,
+            section=self.section_a,
+        )
+        self.client.force_authenticate(user=self.instructor)
+
+        create_response = self.client.post('/api/activities/', {
+            'title': 'Unauthorized activity',
+            'assigned_sections': [unrelated_section.pk],
+        }, format='json')
+        update_response = self.client.patch(f'/api/activities/{activity.pk}/', {
+            'assigned_sections': [unrelated_section.pk],
+        }, format='json')
+
+        self.assertEqual(create_response.status_code, 400, create_response.json())
+        self.assertEqual(update_response.status_code, 400, update_response.json())
+        self.assertFalse(Activity.objects.filter(title='Unauthorized activity').exists())
+        activity.refresh_from_db()
+        self.assertEqual(activity.section_id, self.section_a.pk)
+        self.assertFalse(activity.assigned_sections.exists())
+
+    def test_activity_without_deadline_is_serialized_as_null(self):
+        activity = Activity.objects.create(title='No deadline activity', created_by=self.instructor, due_date=None)
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.get(f'/api/activities/{activity.pk}/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertIsNone(response.json()['due_date'])
+
+    def test_activity_list_and_details_include_assigned_instructor_name(self):
+        activity = Activity.objects.create(
+            title='Different assigned instructor',
+            created_by=self.instructor,
+            assigned_instructor=self.other_instructor,
+        )
+        self.client.force_authenticate(user=self.instructor)
+
+        list_response = self.client.get('/api/activities/')
+        detail_response = self.client.get(f'/api/activities/{activity.pk}/')
+
+        self.assertEqual(list_response.status_code, 200, list_response.json())
+        self.assertEqual(detail_response.status_code, 200, detail_response.json())
+        listed = next(item for item in list_response.json()['results'] if item['id'] == activity.pk)
+        expected_name = self.other_instructor.get_full_name().strip() or self.other_instructor.username
+        self.assertEqual(listed['assigned_instructor_name'], expected_name)
+        self.assertEqual(detail_response.json()['assigned_instructor_name'], expected_name)
 
     def test_create_assigns_authenticated_instructor_and_list_is_isolated(self):
         self.client.force_authenticate(user=self.instructor)
@@ -505,7 +817,7 @@ class ActivityCreationTests(TestCase):
 
     def test_instructor_can_upload_files_with_activity(self):
         self.client.force_authenticate(user=self.instructor)
-        file_upload = SimpleUploadedFile('brief.pdf', b'file-content', content_type='application/pdf')
+        file_upload = SimpleUploadedFile('brief.pdf', b'%PDF-1.4\nfile-content', content_type='application/pdf')
 
         response = self.client.post('/api/activities/', {
             'title': 'Activity with File',
@@ -525,8 +837,31 @@ class ActivityCreationTests(TestCase):
         data = response.json()
         self.assertTrue(data['attachments'])
         self.assertEqual(data['attachments'][0]['filename'], 'brief.pdf')
+        self.assertEqual(data['attachments'][0]['content_type'], 'application/pdf')
+        self.assertEqual(data['attachments'][0]['preview_kind'], 'activity')
         activity = Activity.objects.get(id=data['id'])
         self.assertTrue(activity.attachments.exists())
+
+    def test_invalid_activity_attachment_rejects_activity_without_storing_any_file(self):
+        self.client.force_authenticate(user=self.instructor)
+        before_activities = Activity.objects.count()
+        before_attachments = ActivityAttachment.objects.count()
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            valid_image = SimpleUploadedFile(
+                'valid.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png',
+            )
+            mislabeled_pdf = SimpleUploadedFile('broken.pdf', b'not-a-pdf', content_type='application/pdf')
+            response = self.client.post('/api/activities/', {
+                'title': 'Must not be partially created',
+                'assigned_sections': [self.section_a.pk],
+                'attachments': [valid_image, mislabeled_pdf],
+            }, format='multipart')
+
+            self.assertEqual(response.status_code, 400, response.json())
+            self.assertEqual(Activity.objects.count(), before_activities)
+            self.assertEqual(ActivityAttachment.objects.count(), before_attachments)
+            self.assertFalse(os.listdir(media_root))
 
     def test_instructor_can_edit_activity_and_keep_existing_attachments(self):
         self.client.force_authenticate(user=self.instructor)
@@ -539,7 +874,7 @@ class ActivityCreationTests(TestCase):
         )
         existing_attachment = ActivityAttachment.objects.create(activity=activity, file=SimpleUploadedFile('old.pdf', b'old', content_type='application/pdf'))
 
-        new_file = SimpleUploadedFile('new.pdf', b'new', content_type='application/pdf')
+        new_file = SimpleUploadedFile('new.pdf', b'%PDF-1.4\nnew', content_type='application/pdf')
         response = self.client.patch(f'/api/activities/{activity.id}/', {
             'title': 'Updated Activity',
             'attachments': [new_file],
@@ -629,6 +964,49 @@ class SubmissionGradingTests(TestCase):
         self.assertEqual(self.submission.graded_by, self.instructor)
         self.assertIsNotNone(self.submission.graded_at)
         self.assertEqual(self.submission.status, 'Graded')
+
+    def test_admin_cannot_grade_edit_or_delete_submissions(self):
+        admin_user = User.objects.create_user(
+            username='submission-admin',
+            email='submission-admin@example.com',
+            password='secret123',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin_user)
+
+        update_response = self.client.patch(f'/api/submissions/{self.submission.pk}/', {'remarks': 'Admin edit'}, format='json')
+        grade_response = self.client.post(f'/api/submissions/{self.submission.pk}/grade/', {'score': 95, 'feedback': 'Admin grade'}, format='json')
+        delete_response = self.client.delete(f'/api/submissions/{self.submission.pk}/')
+
+        self.assertEqual(update_response.status_code, 403)
+        self.assertEqual(grade_response.status_code, 403)
+        self.assertEqual(delete_response.status_code, 403)
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.remarks, 'Initial submission')
+        self.assertIsNone(self.submission.score)
+        self.assertTrue(Submission.objects.filter(pk=self.submission.pk).exists())
+
+    def test_submission_date_filter_uses_asia_manila_calendar_day(self):
+        start_boundary = Submission.objects.create(activity=self.activity, student=self.student, attempt=2)
+        end_boundary = Submission.objects.create(activity=self.activity, student=self.student, attempt=3)
+        next_day = Submission.objects.create(activity=self.activity, student=self.student, attempt=4)
+        Submission.objects.filter(pk=self.submission.pk).update(submitted_at=datetime(2026, 8, 10, 15, 59, tzinfo=ZoneInfo('UTC')))
+        Submission.objects.filter(pk=start_boundary.pk).update(submitted_at=datetime(2026, 8, 10, 16, 0, tzinfo=ZoneInfo('UTC')))
+        Submission.objects.filter(pk=end_boundary.pk).update(submitted_at=datetime(2026, 8, 11, 15, 59, tzinfo=ZoneInfo('UTC')))
+        Submission.objects.filter(pk=next_day.pk).update(submitted_at=datetime(2026, 8, 11, 16, 0, tzinfo=ZoneInfo('UTC')))
+        admin_user = User.objects.create_user(
+            username='submission-date-admin',
+            email='submission-date-admin@example.com',
+            password='secret123',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin_user)
+
+        response = self.client.get('/api/submissions/?submission_date=2026-08-11')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        result_ids = [item['id'] for item in response.json()['results']]
+        self.assertEqual(result_ids, [end_boundary.pk, start_boundary.pk])
 
     def test_assigned_section_instructor_can_grade_and_view_stats(self):
         assigned_instructor = User.objects.create_user(
@@ -809,6 +1187,7 @@ class StudentProfileTests(TestCase):
             first_name='Student',
             last_name='Five',
             student_id='S005',
+            nfc_uid='STUDENT-PROFILE-UID',
         )
 
     def test_student_can_view_own_profile(self):
@@ -819,6 +1198,7 @@ class StudentProfileTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['id'], self.student.id)
         self.assertEqual(response.json()['student_id'], 'S005')
+        self.assertNotIn('nfc_uid', response.json())
 
     def test_student_profile_resolves_instructors_from_section_relationships(self):
         primary = User.objects.create_user(
@@ -866,6 +1246,7 @@ class StudentProfileTests(TestCase):
         self.assertEqual(payload['section_instructors'][0]['email'], primary.email)
         self.assertEqual(payload['section_instructors'][0]['contact_number'], '555-0101')
         self.assertEqual(payload['section_instructors'][0]['role'], User.RoleChoices.INSTRUCTOR)
+        self.assertNotIn('nfc_uid', payload)
 
     def test_student_can_update_editable_profile_fields(self):
         self.client.force_authenticate(user=self.student)
@@ -878,6 +1259,361 @@ class StudentProfileTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['email'], 'updated@example.com')
         self.assertEqual(response.json()['contact_number'], '09171234567')
+
+
+class StudentActivityAccessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.instructor = User.objects.create_user(
+            username='student-activity-instructor',
+            email='student-activity-instructor@example.com',
+            password='secret1234',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='STUDENT-ACTIVITY-INSTRUCTOR',
+        )
+        self.section = Section.objects.create(section_name='Student Activity Section', instructor=self.instructor)
+        self.other_section = Section.objects.create(section_name='Other Student Activity Section')
+        self.student = User.objects.create_user(
+            username='activity-student',
+            email='activity-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='ACTIVITY-STUDENT',
+            section=self.section,
+        )
+        self.other_student = User.objects.create_user(
+            username='activity-other-student',
+            email='activity-other-student@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='ACTIVITY-OTHER-STUDENT',
+            section=self.other_section,
+        )
+        self.section_activity = Activity.objects.create(
+            title='Legacy section activity',
+            section=self.section,
+            created_by=self.instructor,
+        )
+        self.assigned_activity = Activity.objects.create(
+            title='M2M assigned activity',
+            created_by=self.instructor,
+        )
+        self.assigned_activity.assigned_sections.add(self.section)
+        self.unrelated_activity = Activity.objects.create(
+            title='Unrelated activity',
+            section=self.other_section,
+            created_by=self.instructor,
+        )
+        self.client.force_authenticate(user=self.student)
+
+    def test_student_activity_lists_and_stats_include_only_assigned_sections(self):
+        response = self.client.get('/api/activities/')
+        stats = self.client.get('/api/activities/stats/')
+        dashboard = self.client.get('/api/dashboard/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(
+            {item['id'] for item in response.json()['results']},
+            {self.section_activity.pk, self.assigned_activity.pk},
+        )
+        self.assertEqual(self.client.get(f'/api/activities/{self.unrelated_activity.pk}/').status_code, 404)
+        self.assertEqual(stats.status_code, 200, stats.json())
+        self.assertEqual(stats.json()['total_activities'], 2)
+        self.assertEqual(dashboard.status_code, 200, dashboard.json())
+        self.assertEqual(dashboard.json()['total_activities'], 2)
+        self.assertEqual(
+            {item['id'] for item in dashboard.json()['upcoming_activities']},
+            {self.section_activity.pk, self.assigned_activity.pk},
+        )
+        create_activity = self.client.post('/api/activities/', {'title': 'Student-created activity'}, format='json')
+        edit_activity = self.client.patch(f'/api/activities/{self.assigned_activity.pk}/', {'title': 'Student-edited activity'}, format='json')
+        create_section = self.client.post('/api/sections/', {'section_name': 'Student-created section'}, format='json')
+        self.assertEqual(create_activity.status_code, 403)
+        self.assertEqual(edit_activity.status_code, 403)
+        self.assertEqual(create_section.status_code, 403)
+
+    def test_student_can_submit_and_edit_own_submission_without_creating_duplicates(self):
+        upload = SimpleUploadedFile('work.pdf', b'%PDF-1.4\nwork', content_type='application/pdf')
+        create_response = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'remarks': 'Initial note',
+            'file': upload,
+        }, format='multipart')
+
+        self.assertEqual(create_response.status_code, 201, create_response.json())
+        submission_id = create_response.json()['id']
+        other_submission = Submission.objects.create(
+            activity=self.assigned_activity,
+            student=self.other_student,
+            file=SimpleUploadedFile('other-work.pdf', b'other', content_type='application/pdf'),
+        )
+        list_response = self.client.get('/api/submissions/')
+        self.assertEqual({item['id'] for item in list_response.json()['results']}, {submission_id})
+        self.assertEqual(self.client.get(f'/api/submissions/{other_submission.pk}/').status_code, 404)
+
+        update_response = self.client.patch(f'/api/submissions/{submission_id}/', {
+            'activity': self.assigned_activity.pk,
+            'remarks': 'Updated note',
+        }, format='json')
+        grade_attempt = self.client.patch(f'/api/submissions/{submission_id}/', {'score': 95, 'feedback': 'Student supplied'}, format='json')
+        grade_action = self.client.post(f'/api/submissions/{submission_id}/grade/', {'score': 95}, format='json')
+        grade_create = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'remarks': 'Grade injection attempt',
+            'score': 95,
+            'feedback': 'Student supplied',
+            'file': SimpleUploadedFile('grade-attempt.pdf', b'%PDF-1.4\ngrade', content_type='application/pdf'),
+        }, format='multipart')
+        unrelated_submission = self.client.post('/api/submissions/', {
+            'activity': self.unrelated_activity.pk,
+            'remarks': 'Must not be accepted',
+            'file': SimpleUploadedFile('unrelated.pdf', b'%PDF-1.4\nunrelated', content_type='application/pdf'),
+        }, format='multipart')
+
+        self.assertEqual(update_response.status_code, 200, update_response.json())
+        self.assertEqual(grade_attempt.status_code, 400, grade_attempt.json())
+        self.assertEqual(grade_action.status_code, 403)
+        self.assertEqual(grade_create.status_code, 400, grade_create.json())
+        self.assertEqual(unrelated_submission.status_code, 403)
+        self.assertEqual(Submission.objects.filter(activity=self.assigned_activity, student=self.student).count(), 1)
+        self.assertTrue(Submission.objects.filter(pk=other_submission.pk).exists())
+        self.assertEqual(Submission.objects.get(pk=submission_id).remarks, 'Updated note')
+        self.assertIsNone(Submission.objects.get(pk=submission_id).score)
+        self.assertTrue(update_response.json()['files'][0]['name'].startswith('work'))
+        self.assertIsNone(update_response.json()['files'][0]['url'])
+        self.assertEqual(update_response.json()['files'][0]['preview_kind'], 'submission_file')
+
+    def test_student_uploads_are_limited_to_assigned_activities_and_matching_submissions(self):
+        invalid_activity_upload = self.client.post('/api/student/submissions/upload', {
+            'activity': self.unrelated_activity.pk,
+            'files': [SimpleUploadedFile('not-allowed.pdf', b'no', content_type='application/pdf')],
+        }, format='multipart')
+        valid_upload = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': [SimpleUploadedFile('assigned.pdf', b'%PDF-1.4\nyes', content_type='application/pdf')],
+        }, format='multipart')
+
+        self.assertEqual(invalid_activity_upload.status_code, 404)
+        self.assertEqual(valid_upload.status_code, 201, valid_upload.json())
+        temporary_upload = TemporaryUpload.objects.get(pk=valid_upload.json()['uploads'][0]['id'])
+        self.assertEqual(temporary_upload.activity_id, self.assigned_activity.pk)
+        unrelated_upload = TemporaryUpload.objects.create(
+            user=self.student,
+            activity=self.unrelated_activity,
+            file=SimpleUploadedFile('wrong-activity.pdf', b'wrong', content_type='application/pdf'),
+        )
+        mismatched_attachment = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'temp_upload_ids': [unrelated_upload.pk],
+        }, format='json')
+        self.assertEqual(mismatched_attachment.status_code, 400, mismatched_attachment.json())
+
+    def test_student_can_replace_legacy_submission_file(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        submission = Submission.objects.create(
+            activity=self.assigned_activity,
+            student=self.student,
+            file=SimpleUploadedFile('old.png', b'\x89PNG\r\n\x1a\nold-image', content_type='image/png'),
+        )
+        old_file_name = submission.file.name
+        staged = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'remove_primary_file': True,
+            'files': [SimpleUploadedFile('replacement.png', b'\x89PNG\r\n\x1a\nnew-image', content_type='image/png')],
+        }, format='multipart')
+        self.assertEqual(staged.status_code, 201, staged.json())
+
+        response = self.client.patch(f'/api/submissions/{submission.pk}/', {
+            'remove_primary_file': True,
+            'temp_upload_ids': [staged.json()['uploads'][0]['id']],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        submission.refresh_from_db()
+        self.assertEqual(submission.attachments.count(), 1, response.json())
+        self.assertEqual(submission.file.name, submission.attachments.first().file.name)
+        self.assertFalse(submission.file.storage.exists(old_file_name))
+
+    def test_student_can_upload_and_submit_five_supported_files_as_one_submission(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        files = [
+            SimpleUploadedFile(f'image-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png')
+            for index in range(5)
+        ]
+
+        uploaded = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': files,
+        }, format='multipart')
+
+        self.assertEqual(uploaded.status_code, 201, uploaded.json())
+        upload_ids = [item['id'] for item in uploaded.json()['uploads']]
+        submitted = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'remarks': 'Five files in one submission.',
+            'temp_upload_ids': upload_ids,
+        }, format='multipart')
+
+        self.assertEqual(submitted.status_code, 201, submitted.json())
+        submission = Submission.objects.get(pk=submitted.json()['id'])
+        self.assertEqual(submission.attachments.count(), 5)
+        self.assertEqual(len(submitted.json()['files']), 5)
+        self.assertFalse(TemporaryUpload.objects.filter(pk__in=upload_ids).exists())
+        self.assertTrue(all(attachment.file.storage.exists(attachment.file.name) for attachment in submission.attachments.all()))
+
+    def test_student_six_file_draft_batch_is_rejected_without_partial_storage(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        files = [
+            SimpleUploadedFile(f'image-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png')
+            for index in range(6)
+        ]
+
+        response = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': files,
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 400, response.json())
+        self.assertIn('at most 5 files', ' '.join(response.json()['files']))
+        self.assertFalse(TemporaryUpload.objects.filter(user=self.student).exists())
+        self.assertEqual(os.listdir(media_directory.name), [])
+
+    def test_student_cannot_exceed_five_files_across_separate_draft_uploads(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        first_batch = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': [
+                SimpleUploadedFile(f'first-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png')
+                for index in range(4)
+            ],
+        }, format='multipart')
+        self.assertEqual(first_batch.status_code, 201, first_batch.json())
+
+        second_batch = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': [
+                SimpleUploadedFile(f'second-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png')
+                for index in range(2)
+            ],
+        }, format='multipart')
+
+        self.assertEqual(second_batch.status_code, 400, second_batch.json())
+        self.assertIn('at most 5 files', ' '.join(second_batch.json()['files']))
+        self.assertEqual(TemporaryUpload.objects.filter(user=self.student, activity=self.assigned_activity).count(), 4)
+
+    def test_final_submission_rejects_six_temp_files_and_preserves_the_drafts(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        uploads = [
+            TemporaryUpload.objects.create(
+                user=self.student,
+                activity=self.assigned_activity,
+                file=SimpleUploadedFile(f'image-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png'),
+            )
+            for index in range(6)
+        ]
+
+        response = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'temp_upload_ids': [upload.pk for upload in uploads],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 400, response.json())
+        self.assertIn('at most 5 files', ' '.join(response.json()['files']))
+        self.assertEqual(Submission.objects.filter(activity=self.assigned_activity, student=self.student).count(), 0)
+        self.assertEqual(TemporaryUpload.objects.filter(pk__in=[upload.pk for upload in uploads]).count(), 6)
+
+    def test_resubmission_counts_retained_attachments_and_preserves_them_on_rejection(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        submission = Submission.objects.create(activity=self.assigned_activity, student=self.student)
+        existing_attachments = [
+            SubmissionAttachment.objects.create(
+                submission=submission,
+                file=SimpleUploadedFile(
+                    f'existing-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png',
+                ),
+            )
+            for index in range(5)
+        ]
+        submission.file = existing_attachments[0].file
+        submission.save(update_fields=['file'])
+        staged = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'files': [SimpleUploadedFile('new.png', b'\x89PNG\r\n\x1a\nnew-image', content_type='image/png')],
+        }, format='multipart')
+        self.assertEqual(staged.status_code, 400, staged.json())
+        self.assertIn('at most 5 files', ' '.join(staged.json()['files']))
+        self.assertEqual(submission.attachments.count(), 5)
+        self.assertTrue(all(attachment.file.storage.exists(attachment.file.name) for attachment in existing_attachments))
+        self.assertFalse(TemporaryUpload.objects.filter(user=self.student, activity=self.assigned_activity).exists())
+
+    def test_resubmission_can_replace_an_attachment_without_exceeding_the_file_limit(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        submission = Submission.objects.create(activity=self.assigned_activity, student=self.student)
+        existing_attachments = [
+            SubmissionAttachment.objects.create(
+                submission=submission,
+                file=SimpleUploadedFile(
+                    f'existing-{index}.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png',
+                ),
+            )
+            for index in range(5)
+        ]
+        submission.file = existing_attachments[0].file
+        submission.save(update_fields=['file'])
+
+        response = self.client.post('/api/student/submissions/upload', {
+            'activity': self.assigned_activity.pk,
+            'removed_attachment_ids': [existing_attachments[0].pk],
+            'files': [SimpleUploadedFile('replacement.png', b'\x89PNG\r\n\x1a\nreplacement', content_type='image/png')],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        self.assertEqual(TemporaryUpload.objects.filter(user=self.student, activity=self.assigned_activity).count(), 1)
+
+    def test_invalid_student_upload_batch_is_rejected_without_partial_temp_files(self):
+        before_uploads = TemporaryUpload.objects.filter(user=self.student).count()
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            valid_image = SimpleUploadedFile(
+                'valid.png', b'\x89PNG\r\n\x1a\nimage-data', content_type='image/png',
+            )
+            mislabeled_pdf = SimpleUploadedFile('broken.pdf', b'not-a-pdf', content_type='application/pdf')
+            response = self.client.post('/api/student/submissions/upload', {
+                'activity': self.assigned_activity.pk,
+                'files': [valid_image, mislabeled_pdf],
+            }, format='multipart')
+
+            self.assertEqual(response.status_code, 400, response.json())
+            self.assertEqual(TemporaryUpload.objects.filter(user=self.student).count(), before_uploads)
+            self.assertFalse(os.listdir(media_root))
+
+    def test_single_temporary_upload_rejects_mislabeled_file_before_storage(self):
+        media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        response = self.client.post('/api/temp-uploads/', {
+            'file': SimpleUploadedFile('broken.pdf', b'not a PDF', content_type='application/pdf'),
+            'activity': self.assigned_activity.pk,
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 400, response.json())
+        self.assertIn('do not match', ' '.join(response.json()['file']))
+        self.assertFalse(TemporaryUpload.objects.filter(user=self.student).exists())
+        self.assertEqual(os.listdir(media_directory.name), [])
 
 
 class InstructorProfileTests(TestCase):
@@ -1500,6 +2236,346 @@ class StudentWorkbookImportTests(TestCase):
                 os.environ['DEVICE_API_KEY'] = previous_key
 
 
+    class CustomAdminUserImportAPITests(TestCase):
+        def setUp(self):
+            self.client = APIClient()
+            self.admin = User.objects.create_superuser(
+                username='custom-import-admin',
+                email='custom-import-admin@example.com',
+                password='TestAdminPassword-123',
+                nfc_uid='CUSTOM-IMPORT-ADMIN-UID',
+            )
+            self.primary_instructor = User.objects.create_user(
+                username='import-primary-instructor',
+                email='import-primary-instructor@example.com',
+                password='TestInstructorPassword-123',
+                role=User.RoleChoices.INSTRUCTOR,
+                instructor_id='IMPORT-PRIMARY-INSTRUCTOR',
+                nfc_uid='IMPORT-PRIMARY-UID',
+            )
+            self.section = Section.objects.create(
+                subject_code='IMPORT-SEC-1',
+                section_name='Import Section One',
+                program='BSCS',
+                year_level='3',
+                academic_year='2026-2027',
+                instructor=self.primary_instructor,
+            )
+
+        @staticmethod
+        def xlsx_file(headers, rows, name='custom-import.xlsx'):
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(headers)
+            for row in rows:
+                sheet.append(row)
+            data = BytesIO()
+            workbook.save(data)
+            return SimpleUploadedFile(name, data.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+        def test_student_xlsx_preview_does_not_write_and_confirm_revalidates(self):
+            self.client.force_authenticate(user=self.admin)
+            headers = [
+                'Student ID', 'First Name', 'Last Name', 'Email', 'Contact Number',
+                'Section', 'Program', 'Year Level', 'Academic Year', 'Account Status',
+            ]
+            rows = [
+                ['CUSTOM-STU-100', 'Avery', 'Example', 'avery.custom@example.com', '09170000001', 'IMPORT-SEC-1', 'BSCS', '3', '2026-2027', 'Inactive'],
+                ['CUSTOM-STU-100', 'Casey', 'Example', 'casey.custom@example.com', '09170000002', 'IMPORT-SEC-1', 'BSCS', '3', '2026-2027', 'Active'],
+            ]
+            preview = self.client.post('/api/users/import/preview/', {
+                'role': 'student',
+                'file': self.xlsx_file(headers, rows),
+            }, format='multipart')
+
+            self.assertEqual(preview.status_code, 200, preview.json())
+            payload = preview.json()
+            self.assertEqual(payload['total_rows'], 2)
+            self.assertEqual(payload['valid_rows'], 1)
+            self.assertEqual(payload['duplicate_rows'], 1)
+            self.assertEqual(payload['rows'][0]['validation_status'], 'Valid')
+            self.assertEqual(payload['rows'][1]['validation_status'], 'Duplicate')
+            self.assertFalse(User.objects.filter(student_id='CUSTOM-STU-100').exists())
+
+            confirmed = self.client.post('/api/users/import/confirm/', {
+                'role': 'student',
+                'file': self.xlsx_file(headers, rows),
+            }, format='multipart')
+
+            self.assertEqual(confirmed.status_code, 201, confirmed.json())
+            self.assertEqual(confirmed.json()['successfully_imported'], 1)
+            self.assertEqual(confirmed.json()['skipped'], 1)
+            student = User.objects.get(student_id='CUSTOM-STU-100')
+            self.assertEqual(student.email, 'avery.custom@example.com')
+            self.assertEqual(student.contact_number, '09170000001')
+            self.assertEqual(student.section, self.section)
+            self.assertFalse(student.is_active)
+            self.assertIsNone(student.nfc_uid)
+            self.assertFalse(student.has_usable_password())
+            self.assertFalse(student.is_staff)
+            self.assertFalse(student.is_superuser)
+
+            repeated = self.client.post('/api/users/import/confirm/', {
+                'role': 'student',
+                'file': self.xlsx_file(headers, rows),
+            }, format='multipart')
+            self.assertEqual(repeated.status_code, 200, repeated.json())
+            self.assertEqual(repeated.json()['successfully_imported'], 0)
+            self.assertEqual(User.objects.filter(student_id='CUSTOM-STU-100').count(), 1)
+
+        def test_instructor_csv_import_preserves_nfc_and_primary_section_assignment(self):
+            self.client.force_authenticate(user=self.admin)
+            csv_content = (
+                'Instructor/Employee ID,First Name,Last Name,Email,Contact Number,Assigned Sections,Account Status\n'
+                'CUSTOM-INS-100,Rae,Santos,rae.custom@example.com,09170000003,IMPORT-SEC-1,Active\n'
+            )
+            uploaded_file = SimpleUploadedFile('custom-instructors.csv', csv_content.encode(), content_type='text/csv')
+            preview = self.client.post('/api/users/import/preview/', {
+                'role': 'instructor',
+                'file': uploaded_file,
+            }, format='multipart')
+
+            self.assertEqual(preview.status_code, 200, preview.json())
+            self.assertEqual(preview.json()['valid_rows'], 1)
+            self.assertFalse(User.objects.filter(instructor_id='CUSTOM-INS-100').exists())
+
+            confirmed = self.client.post('/api/users/import/confirm/', {
+                'role': 'instructor',
+                'file': SimpleUploadedFile('custom-instructors.csv', csv_content.encode(), content_type='text/csv'),
+            }, format='multipart')
+
+            self.assertEqual(confirmed.status_code, 201, confirmed.json())
+            instructor = User.objects.get(instructor_id='CUSTOM-INS-100')
+            self.assertEqual(instructor.contact_number, '09170000003')
+            self.assertTrue(instructor.assigned_sections.filter(pk=self.section.pk).exists())
+            self.assertEqual(Section.objects.get(pk=self.section.pk).instructor, self.primary_instructor)
+            self.assertIsNone(instructor.nfc_uid)
+            self.assertFalse(instructor.has_usable_password())
+            self.assertFalse(instructor.is_staff)
+            self.assertFalse(instructor.is_superuser)
+
+        def test_templates_support_both_formats_and_only_student_or_instructor_roles(self):
+            self.client.force_authenticate(user=self.admin)
+
+            student_xlsx = self.client.get('/api/users/import/template/?role=student&file_format=xlsx')
+            instructor_csv = self.client.get('/api/users/import/template/?role=instructor&file_format=csv')
+            instructor_xlsx = self.client.get('/api/users/import/template/?role=instructor&file_format=xlsx')
+            admin_template = self.client.get('/api/users/import/template/?role=admin&file_format=xlsx')
+
+            self.assertEqual(student_xlsx.status_code, 200)
+            self.assertIn('student-import-template.xlsx', student_xlsx['Content-Disposition'])
+            student_workbook = load_workbook(BytesIO(student_xlsx.content), read_only=True, data_only=True)
+            student_sheet = student_workbook.active
+            student_headers = tuple(next(student_sheet.iter_rows(min_row=7, max_row=7, values_only=True)))
+            self.assertEqual(student_sheet['A1'].value, 'TapTrack Student Import Template')
+            self.assertIn('Required: student_id, first_name, last_name, email.', student_sheet['A3'].value)
+            self.assertIn('Optional: section.', student_sheet['A4'].value)
+            student_workbook.close()
+            self.assertEqual(student_headers, (
+                'student_id (required)', 'first_name (required)', 'last_name (required)',
+                'email (required)', 'section (optional)',
+            ))
+            self.assertEqual(instructor_csv.status_code, 200)
+            template_text = instructor_csv.content.decode('utf-8-sig')
+            self.assertEqual(template_text.strip(), 'instructor_id,first_name,last_name,email,sections')
+            self.assertEqual(instructor_xlsx.status_code, 200)
+            instructor_workbook = load_workbook(BytesIO(instructor_xlsx.content), read_only=True, data_only=True)
+            instructor_sheet = instructor_workbook.active
+            instructor_headers = tuple(next(instructor_sheet.iter_rows(min_row=7, max_row=7, values_only=True)))
+            self.assertIn('Required: instructor_id, first_name, last_name, email.', instructor_sheet['A3'].value)
+            self.assertIn('BSIT-1A;BSIT-1B;BSIT-2A', instructor_sheet['A5'].value)
+            instructor_workbook.close()
+            self.assertEqual(instructor_headers, (
+                'instructor_id (required)', 'first_name (required)', 'last_name (required)',
+                'email (required)', 'sections (optional)',
+            ))
+            self.assertEqual(admin_template.status_code, 400)
+
+        def test_styled_student_and_instructor_workbooks_round_trip_through_preview(self):
+            self.client.force_authenticate(user=self.admin)
+            student_template = self.client.get('/api/users/import/template/?role=student&file_format=xlsx')
+            student_workbook = load_workbook(BytesIO(student_template.content))
+            student_workbook.active.append([
+                'STYLED-STU-100', 'Avery', 'Workbook', 'avery.styled@example.com', '',
+            ])
+            student_data = BytesIO()
+            student_workbook.save(student_data)
+            student_workbook.close()
+            student_preview = self.client.post('/api/users/import/preview/', {
+                'role': 'student',
+                'file': SimpleUploadedFile('styled-students.xlsx', student_data.getvalue()),
+            }, format='multipart')
+
+            self.assertEqual(student_preview.status_code, 200, student_preview.json())
+            self.assertEqual(student_preview.json()['valid_rows'], 1)
+            self.assertEqual(student_preview.json()['rows'][0]['sections'], [])
+            self.assertFalse(User.objects.filter(student_id='STYLED-STU-100').exists())
+
+            instructor_template = self.client.get('/api/users/import/template/?role=instructor&file_format=xlsx')
+            instructor_workbook = load_workbook(BytesIO(instructor_template.content))
+            instructor_workbook.active.append([
+                'STYLED-INS-100', 'Rae', 'Workbook', 'rae.styled@example.com', 'IMPORT-SEC-1',
+            ])
+            instructor_data = BytesIO()
+            instructor_workbook.save(instructor_data)
+            instructor_workbook.close()
+            instructor_preview = self.client.post('/api/users/import/preview/', {
+                'role': 'instructor',
+                'file': SimpleUploadedFile('styled-instructors.xlsx', instructor_data.getvalue()),
+            }, format='multipart')
+
+            self.assertEqual(instructor_preview.status_code, 200, instructor_preview.json())
+            self.assertEqual(instructor_preview.json()['valid_rows'], 1)
+            self.assertEqual(instructor_preview.json()['rows'][0]['sections'], ['Import Section One'])
+            self.assertFalse(User.objects.filter(instructor_id='STYLED-INS-100').exists())
+
+        def test_multiple_student_files_combine_simple_required_and_optional_section_rows(self):
+            self.client.force_authenticate(user=self.admin)
+            first_content = (
+                b'student_id,first_name,last_name,email\n'
+                b'MULTI-STU-100,Avery,Example,avery.multi@example.com\n'
+            )
+            second_content = (
+                b'student_id,first_name,last_name,email,section\n'
+                b'MULTI-STU-101,Casey,Example,casey.multi@example.com,IMPORT-SEC-1\n'
+            )
+            first_file = SimpleUploadedFile(
+                'students-no-section.csv',
+                first_content,
+                content_type='text/csv',
+            )
+            second_file = SimpleUploadedFile(
+                'students-with-section.csv',
+                second_content,
+                content_type='text/csv',
+            )
+
+            preview = self.client.post('/api/users/import/preview/', {
+                'role': 'student',
+                'files': [first_file, second_file],
+            }, format='multipart')
+
+            self.assertEqual(preview.status_code, 200, preview.json())
+            self.assertEqual(preview.json()['total_rows'], 2)
+            self.assertEqual(preview.json()['valid_rows'], 2)
+            self.assertEqual(preview.json()['rows'][0]['sections'], [])
+            self.assertEqual(preview.json()['rows'][1]['sections'], ['Import Section One'])
+            self.assertFalse(User.objects.filter(student_id__in=['MULTI-STU-100', 'MULTI-STU-101']).exists())
+
+            confirmed = self.client.post('/api/users/import/confirm/', {
+                'role': 'student',
+                'files': [
+                    SimpleUploadedFile('students-no-section.csv', first_content, content_type='text/csv'),
+                    SimpleUploadedFile('students-with-section.csv', second_content, content_type='text/csv'),
+                ],
+            }, format='multipart')
+
+            self.assertEqual(confirmed.status_code, 201, confirmed.json())
+            self.assertEqual(confirmed.json()['successfully_imported'], 2)
+            students = list(User.objects.filter(student_id__in=['MULTI-STU-100', 'MULTI-STU-101']).order_by('student_id'))
+            self.assertIsNone(students[0].section)
+            self.assertEqual(students[1].section, self.section)
+            self.assertTrue(all(student.has_usable_password() is False and student.nfc_uid is None for student in students))
+
+        def test_multiple_instructor_files_assign_semicolon_sections_and_allow_blank_sections(self):
+            self.client.force_authenticate(user=self.admin)
+            second_section = Section.objects.create(
+                subject_code='IMPORT-SEC-2',
+                section_name='Import Section Two',
+                instructor=self.primary_instructor,
+            )
+            first_content = (
+                b'instructor_id,first_name,last_name,email,sections\n'
+                b'MULTI-INS-100,Rae,Santos,rae.multi@example.com,IMPORT-SEC-1;IMPORT-SEC-2\n'
+            )
+            second_content = (
+                b'instructor_id,first_name,last_name,email\n'
+                b'MULTI-INS-101,Sam,Lee,sam.multi@example.com\n'
+            )
+            preview = self.client.post('/api/users/import/preview/', {
+                'role': 'instructor',
+                'files': [
+                    SimpleUploadedFile('instructors-sections.csv', first_content, content_type='text/csv'),
+                    SimpleUploadedFile('instructors-no-sections.csv', second_content, content_type='text/csv'),
+                ],
+            }, format='multipart')
+
+            self.assertEqual(preview.status_code, 200, preview.json())
+            self.assertEqual(preview.json()['valid_rows'], 2)
+            self.assertEqual(preview.json()['rows'][0]['sections'], ['Import Section One', 'Import Section Two'])
+            self.assertEqual(preview.json()['rows'][1]['sections'], [])
+            self.assertEqual(preview.json()['rows'][1]['file'], 'instructors-no-sections.csv')
+
+            confirmed = self.client.post('/api/users/import/confirm/', {
+                'role': 'instructor',
+                'files': [
+                    SimpleUploadedFile('instructors-sections.csv', first_content, content_type='text/csv'),
+                    SimpleUploadedFile('instructors-no-sections.csv', second_content, content_type='text/csv'),
+                ],
+            }, format='multipart')
+
+            self.assertEqual(confirmed.status_code, 201, confirmed.json())
+            first = User.objects.get(instructor_id='MULTI-INS-100')
+            second = User.objects.get(instructor_id='MULTI-INS-101')
+            self.assertEqual(set(first.assigned_sections.values_list('pk', flat=True)), {self.section.pk, second_section.pk})
+            self.assertFalse(second.assigned_sections.exists())
+            self.assertEqual(self.section.instructor, self.primary_instructor)
+            self.assertEqual(second_section.instructor, self.primary_instructor)
+            self.assertIsNone(first.nfc_uid)
+            self.assertFalse(first.has_usable_password())
+
+        def test_batch_preview_marks_cross_file_duplicates_and_invalid_rows_without_writing(self):
+            self.client.force_authenticate(user=self.admin)
+            first_content = (
+                b'student_id,first_name,last_name,email,section\n'
+                b'DUP-BATCH-100,Avery,Valid,dup.batch@example.com,\n'
+            )
+            second_content = (
+                b'student_id,first_name,last_name,email,section\n'
+                b'DUP-BATCH-100,Casey,Duplicate,casey.duplicate@example.com,\n'
+                b'DUP-BATCH-101,Robin,Duplicate,dup.batch@example.com,\n'
+                b'BAD-BATCH-102,Jamie,Invalid,not-an-email,\n'
+                b',Missing,Identifier,missing.identifier@example.com,Unknown Section\n'
+            )
+            preview = self.client.post('/api/users/import/preview/', {
+                'role': 'student',
+                'files': [
+                    SimpleUploadedFile('batch-one.csv', first_content, content_type='text/csv'),
+                    SimpleUploadedFile('batch-two.csv', second_content, content_type='text/csv'),
+                ],
+            }, format='multipart')
+
+            self.assertEqual(preview.status_code, 200, preview.json())
+            payload = preview.json()
+            self.assertEqual(payload['valid_rows'], 1)
+            self.assertEqual(payload['duplicate_rows'], 2)
+            self.assertEqual(payload['invalid_rows'], 2)
+            self.assertEqual(payload['rows'][1]['file'], 'batch-two.csv')
+            self.assertIn('valid email', ' '.join(error['message'] for error in payload['errors']))
+            self.assertIn('No existing Section', ' '.join(error['message'] for error in payload['errors']))
+            self.assertFalse(User.objects.filter(student_id__startswith='DUP-BATCH-').exists())
+            self.assertFalse(User.objects.filter(student_id='BAD-BATCH-102').exists())
+
+        def test_import_endpoints_reject_students_and_instructors(self):
+            student = User.objects.create_user(
+                username='custom-import-student',
+                email='custom-import-student@example.com',
+                password='StudentPassword-123',
+                role=User.RoleChoices.STUDENT,
+                student_id='CUSTOM-IMPORT-STUDENT',
+            )
+            self.client.force_authenticate(user=student)
+            student_response = self.client.get('/api/users/import/template/?role=student')
+            self.assertEqual(student_response.status_code, 403)
+
+            self.client.force_authenticate(user=self.primary_instructor)
+            instructor_response = self.client.post('/api/users/import/preview/', {}, format='multipart')
+            self.assertEqual(instructor_response.status_code, 403)
+
+
+CustomAdminUserImportAPITests = StudentWorkbookImportTests.CustomAdminUserImportAPITests
+
+
 class InstructorAccessLogTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -1509,6 +2585,7 @@ class InstructorAccessLogTests(TestCase):
             password='secret1234',
             role=User.RoleChoices.INSTRUCTOR,
             instructor_id='ACCESS-LOG-INSTRUCTOR',
+            nfc_uid='INSTRUCTOR-ACCESS-UID',
         )
         self.section_a = Section.objects.create(section_name='Log Section A', instructor=self.instructor)
         self.section_b = Section.objects.create(section_name='Log Section B')
@@ -1523,6 +2600,7 @@ class InstructorAccessLogTests(TestCase):
             first_name='Casey',
             last_name='Alpha',
             section=self.section_a,
+            nfc_uid='STUDENT-ACCESS-UID-A',
         )
         self.student_b = User.objects.create_user(
             username='access-log-student-b',
@@ -1533,6 +2611,7 @@ class InstructorAccessLogTests(TestCase):
             first_name='Jordan',
             last_name='Beta',
             section=self.section_b,
+            nfc_uid='STUDENT-ACCESS-UID-B',
         )
         self.outside_student = User.objects.create_user(
             username='access-log-outside-student',
@@ -1541,6 +2620,7 @@ class InstructorAccessLogTests(TestCase):
             role=User.RoleChoices.STUDENT,
             student_id='LOG-STUDENT-OUTSIDE',
             section=self.unrelated_section,
+            nfc_uid='OUTSIDE-ACCESS-UID',
         )
         now = timezone.now()
         self.success_log = self.create_log(
@@ -1626,7 +2706,7 @@ class InstructorAccessLogTests(TestCase):
         self.assertEqual(serialized['student_id'], 'LOG-STUDENT-A')
         self.assertEqual(serialized['student_name'], 'Casey Alpha')
         self.assertEqual(serialized['section_name'], 'Log Section A')
-        self.assertEqual(serialized['nfc_uid'], 'AA11BB22')
+        self.assertNotIn('nfc_uid', serialized)
         self.assertEqual(serialized['cabinet_name'], 'Cabinet Alpha')
         self.assertEqual(serialized['station'], 'Reader 1')
         self.assertEqual(serialized['access_result'], 'Success')
@@ -1635,10 +2715,34 @@ class InstructorAccessLogTests(TestCase):
 
         failed = next(entry for entry in results if entry['id'] == self.rejected_log.pk)
         self.assertEqual(failed['access_result'], 'Failed')
-        self.assertEqual(failed['nfc_uid'], '')
+        self.assertNotIn('nfc_uid', failed)
         self.assertEqual(failed['cabinet_name'], '')
         self.assertEqual(failed['reason'], '')
         self.assertEqual(next(entry for entry in results if entry['id'] == self.duplicate_log.pk)['reason'], 'Duplicate participant scan')
+
+    def test_instructor_profile_and_student_details_omit_all_nfc_uids(self):
+        self.setUpInstructor()
+
+        profile_response = self.client.get('/api/users/profile/')
+        students_response = self.client.get('/api/users/?role=student')
+        student_details_response = self.client.get(f'/api/users/{self.student_a.pk}/profile-details/')
+
+        self.assertEqual(profile_response.status_code, 200, profile_response.json())
+        self.assertEqual(students_response.status_code, 200, students_response.json())
+        self.assertEqual(student_details_response.status_code, 200, student_details_response.json())
+
+        def assert_uid_omitted(payload):
+            if isinstance(payload, dict):
+                self.assertNotIn('nfc_uid', payload)
+                for value in payload.values():
+                    assert_uid_omitted(value)
+            elif isinstance(payload, list):
+                for value in payload:
+                    assert_uid_omitted(value)
+
+        assert_uid_omitted(profile_response.json())
+        assert_uid_omitted(students_response.json())
+        assert_uid_omitted(student_details_response.json())
 
     def test_instructor_filters_cover_failure_groups_search_dates_sections_and_pages(self):
         self.setUpInstructor()
@@ -1661,7 +2765,11 @@ class InstructorAccessLogTests(TestCase):
             {self.success_log.pk, self.old_log.pk},
         )
         nfc_search = self.client.get('/api/access-logs/?search=AA11BB22')
-        self.assertEqual([entry['id'] for entry in nfc_search.json()['results']], [self.success_log.pk])
+        self.assertEqual(nfc_search.json()['results'], [])
+        nfc_filter = self.client.get('/api/access-logs/?nfc_uid=AA11BB22')
+        self.assertEqual({entry['id'] for entry in nfc_filter.json()['results']}, {
+            self.success_log.pk, self.rejected_log.pk, self.duplicate_log.pk, self.old_log.pk,
+        })
         section_response = self.client.get(f'/api/access-logs/?user__section={self.section_b.pk}')
         self.assertEqual(
             {entry['id'] for entry in section_response.json()['results']},
@@ -1688,6 +2796,61 @@ class InstructorAccessLogTests(TestCase):
 
         section_options = self.client.get(f'/api/access-logs/filter-options/?user__section={self.section_b.pk}')
         self.assertEqual(section_options.json()['cabinets'], ['Cabinet Gamma'])
+
+    def test_instructor_user_responses_omit_own_and_student_uids_but_admin_can_read_them(self):
+        self.setUpInstructor()
+
+        own_profile = self.client.get('/api/users/profile/')
+        student_profile = self.client.get(f'/api/users/{self.student_a.pk}/')
+        unrelated_profile = self.client.get(f'/api/users/{self.outside_student.pk}/')
+
+        self.assertEqual(own_profile.status_code, 200, own_profile.json())
+        self.assertEqual(student_profile.status_code, 200, student_profile.json())
+        self.assertNotIn('nfc_uid', own_profile.json())
+        self.assertNotIn('nfc_uid', student_profile.json())
+        self.assertEqual(unrelated_profile.status_code, 404)
+
+        admin = User.objects.create_user(
+            username='access-log-admin',
+            email='access-log-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin)
+        admin_student = self.client.get(f'/api/users/{self.student_a.pk}/')
+        admin_log = self.client.get('/api/access-logs/?page_size=25')
+
+        self.assertEqual(admin_student.json()['nfc_uid'], 'STUDENT-ACCESS-UID-A')
+        self.assertEqual(next(item for item in admin_log.json()['results'] if item['id'] == self.success_log.pk)['nfc_uid'], 'AA11BB22')
+        admin_uid_search = self.client.get('/api/access-logs/?search=AA11BB22')
+        self.assertEqual([item['id'] for item in admin_uid_search.json()['results']], [self.success_log.pk])
+
+    def test_cabinet_session_participant_uid_is_admin_only(self):
+        session = CabinetSession.objects.create(station='Reader Session')
+        session.opened_by.add(self.student_a)
+        unrelated_session = CabinetSession.objects.create(station='Unrelated Reader Session')
+        unrelated_session.opened_by.add(self.outside_student)
+        self.setUpInstructor()
+
+        instructor_response = self.client.get('/api/cabinet-sessions/')
+
+        self.assertEqual(instructor_response.status_code, 200, instructor_response.json())
+        instructor_session = next(item for item in instructor_response.json()['results'] if item['id'] == session.pk)
+        self.assertNotIn('uid', instructor_session['opened_by'][0])
+        self.assertNotIn(unrelated_session.pk, {item['id'] for item in instructor_response.json()['results']})
+
+        admin = User.objects.create_user(
+            username='session-uid-admin',
+            email='session-uid-admin@example.com',
+            password='secret1234',
+            role=User.RoleChoices.ADMIN,
+        )
+        self.client.force_authenticate(user=admin)
+        admin_response = self.client.get('/api/cabinet-sessions/')
+        admin_results = {item['id']: item for item in admin_response.json()['results']}
+        self.assertIn(unrelated_session.pk, admin_results)
+        admin_session = admin_results[session.pk]
+        self.assertEqual(admin_session['opened_by'][0]['uid'], 'STUDENT-ACCESS-UID-A')
 
 
 class StudentAccessLogsTests(TestCase):
@@ -1725,6 +2888,11 @@ class StudentAccessLogsTests(TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['cabinet_name'], 'Cabinet A')
         self.assertEqual(results[0]['user'], self.student.id)
+        self.assertNotIn('nfc_uid', results[0])
+
+        uid_search = self.client.get('/api/access-logs/?search=ABC123')
+        self.assertEqual(uid_search.status_code, 200, uid_search.json())
+        self.assertEqual(uid_search.json()['results'], [])
 
     def test_student_stats_endpoint_returns_private_totals(self):
         self.client.force_authenticate(user=self.student)
@@ -1736,6 +2904,15 @@ class StudentAccessLogsTests(TestCase):
         self.assertEqual(data['total_accesses_today'], 1)
         self.assertEqual(data['successful_accesses_today'], 1)
         self.assertEqual(data['failed_accesses_today'], 0)
+
+    def test_student_dashboard_does_not_expose_nfc_uid(self):
+        self.client.force_authenticate(user=self.student)
+
+        response = self.client.get('/api/dashboard/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertTrue(response.json()['recent_access_logs'])
+        self.assertTrue(all('nfc_uid' not in log for log in response.json()['recent_access_logs']))
 
     def test_access_logs_store_nfc_uid_and_cabinet_session(self):
         session = CabinetSession.objects.create(station='Station 1', status='open')
@@ -2677,9 +3854,10 @@ class UserProfileAccessLogTests(TestCase):
         )
         self.assertEqual(self.client.get(f'/api/users/{self.mary.pk}/access-logs/').status_code, 404)
         self.assertEqual(self.client.get(f'/api/access-logs/{self.mary_logs[0].pk}/').status_code, 404)
-        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 403)
-        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 403)
-        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/profile-details/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/activities/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/users/{self.john.pk}/submissions/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/users/{self.mary.pk}/profile-details/').status_code, 404)
 
         self.client.force_authenticate(user=self.john)
         self_response = self.client.get(f'/api/users/{self.john.pk}/access-logs/')

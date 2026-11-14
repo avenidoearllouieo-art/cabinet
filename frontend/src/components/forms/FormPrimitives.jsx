@@ -101,6 +101,11 @@ export function FormDialog({
   stepper,
   actions,
   headerActions,
+  headerIcon,
+  headerClassName = 'border-slate-200 bg-white',
+  titleClassName = 'text-[#0B1F3A]',
+  descriptionClassName = 'text-slate-500',
+  closeButtonClassName = 'border-slate-200 text-slate-600 hover:bg-slate-100 focus:ring-blue-900',
   asForm = true,
   maxWidth = 'max-w-4xl',
   zIndex = 'z-[var(--tt-layer-modal)]',
@@ -171,14 +176,19 @@ export function FormDialog({
   return createPortal(
     <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-950/65 p-2 sm:p-4`} onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
       <DialogSurface ref={surfaceRef} tabIndex={-1} {...submitProps} className={`flex max-h-[94vh] max-h-[calc(100dvh-1rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-2xl sm:rounded-xl`} role="dialog" aria-modal="true" aria-label={title}>
-        <header className="sticky top-0 z-20 flex items-start justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
+        <header className={`sticky top-0 z-20 flex items-start justify-between gap-2 border-b px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 ${headerClassName}`}>
           <div className="min-w-0">
-            <h2 className="break-words text-xl font-bold text-[#0B1F3A] sm:text-2xl">{title}</h2>
-            {description && <p className="mt-1 break-words text-sm text-slate-500">{description}</p>}
+            <div className="flex items-center gap-3">
+              {headerIcon && <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FFBE0B] text-[#082B53]">{headerIcon}</span>}
+              <div className="min-w-0">
+                <h2 className={`break-words text-xl font-bold sm:text-2xl ${titleClassName}`}>{title}</h2>
+                {description && <p className={`mt-1 break-words text-sm ${descriptionClassName}`}>{description}</p>}
+              </div>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {headerActions}
-            <button type="button" onClick={requestClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50" aria-label="Close dialog">
+            <button type="button" onClick={requestClose} disabled={busy} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 disabled:opacity-50 ${closeButtonClassName}`} aria-label="Close dialog">
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -192,7 +202,7 @@ export function FormDialog({
   )
 }
 
-export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busy = false, disabled = false, destructiveAction, dirty = false, finalButtonType = 'submit', onFinalAction, hideCancel = false }) {
+export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busyLabel = 'Saving…', busy = false, disabled = false, destructiveAction, dirty = false, finalButtonType = 'submit', onFinalAction, hideCancel = false }) {
   const requestCancel = () => {
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
     onCancel?.()
@@ -207,7 +217,7 @@ export function FormActions({ onCancel, onBack, onNext, isLastStep = false, subm
           <button type="button" onClick={onNext} disabled={busy || disabled} className="min-h-11 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">Continue</button>
         ) : (
           <button type={finalButtonType} onClick={onFinalAction} disabled={busy || disabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">
-            {busy ? <LoadingSpinner label="Saving…" /> : submitLabel}
+            {busy ? <LoadingSpinner label={busyLabel} /> : submitLabel}
           </button>
         )}
       </div>
@@ -231,7 +241,7 @@ export function PasswordField({ value, onChange, error, label = 'Password', requ
   )
 }
 
-export function FileUploadArea({ files = [], onChange, onRemove, multiple = true, accept, label = 'Choose files', helper = 'Supported files depend on your course requirements.', disabled = false }) {
+export function FileUploadArea({ files = [], onChange, onRemove, multiple = true, accept, label = 'Choose files', helper = 'Supported files depend on your course requirements.', error, disabled = false }) {
   const inputRef = useRef(null)
   const formatSize = (bytes) => {
     if (!Number.isFinite(bytes)) return ''
@@ -239,6 +249,8 @@ export function FileUploadArea({ files = [], onChange, onRemove, multiple = true
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
+  const fileLabel = (file) => file.name || file.filename || file.file_name || 'Attachment'
+  const fileType = (file) => file.type || file.content_type || file.mime_type || 'Unknown file type'
   return (
     <div>
       <input ref={inputRef} type="file" multiple={multiple} accept={accept} onChange={onChange} disabled={disabled} className="sr-only" />
@@ -247,12 +259,20 @@ export function FileUploadArea({ files = [], onChange, onRemove, multiple = true
         <span className="text-sm font-bold text-[#0B1F3A]">{label}</span>
         <span className="mt-1 text-xs text-slate-500">{helper}</span>
       </button>
+      {error && <p className="mt-2 text-sm font-medium text-rose-700" role="alert">{Array.isArray(error) ? error.join(' ') : error}</p>}
       {files.length > 0 && (
         <ul className="mt-3 space-y-2" aria-label="Selected files">
           {files.map((file, index) => (
-            <li key={`${file.name || file.filename}-${file.size || index}`} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
-              <span className="min-w-0"><span className="block truncate font-semibold text-slate-700">{file.name || file.filename || file.file_name || 'Attachment'}</span><span className="text-xs text-slate-500">{formatSize(file.size || file.file_size)}</span></span>
-              {onRemove && <button type="button" onClick={() => onRemove(file, index)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-600" aria-label={`Remove ${file.name || file.filename || 'file'}`}><X className="h-4 w-4" /></button>}
+            <li key={`${fileLabel(file)}-${file.size || file.file_size || index}`} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-slate-700">{fileLabel(file)}</span>
+                <span className="block text-xs text-slate-500">
+                  {formatSize(file.size || file.file_size) && <span>{formatSize(file.size || file.file_size)}</span>}
+                  {formatSize(file.size || file.file_size) && fileType(file) && <span aria-hidden="true"> • </span>}
+                  {fileType(file) && <span>{fileType(file)}</span>}
+                </span>
+              </span>
+              {onRemove && <button type="button" onClick={() => onRemove(file, index)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-600" aria-label={`Remove ${fileLabel(file)}`}><X className="h-4 w-4" /></button>}
             </li>
           ))}
         </ul>

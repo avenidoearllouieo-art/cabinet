@@ -6,6 +6,7 @@ import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import StatusBadge from '../../components/StatusBadge'
 import DataTable from '../../components/DataTable'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import { Search, BookOpen, Users, ClipboardCheck, Clock3, BadgeCheck, X } from 'lucide-react'
 
 const getStatusBadge = (status) => {
@@ -30,6 +31,22 @@ const formatRelativeTime = (value) => {
 
   const diffInWeeks = Math.round(diffInDays / 7)
   return `${diffInWeeks} wk ago`
+}
+
+const formatManilaDate = (value) => {
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(date)
+}
+
+const formatManilaDateTime = (value) => {
+  if (!value) return 'Time unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Time unavailable'
+    : new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(date)
 }
 
 const formatYearLevel = (value) => {
@@ -221,7 +238,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                 <button key={activity.id} type="button" onClick={() => onViewActivity(activity.id)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-3 text-left transition hover:border-[#ffc107]">
                   <div>
                     <p className="text-sm font-medium text-slate-900">{activity.title || 'Untitled activity'}</p>
-                    <p className="text-xs text-slate-500">{activity.due_date ? `Due ${new Date(activity.due_date).toLocaleDateString()}` : 'No due date'}</p>
+                    <p className="text-xs text-slate-500">{activity.due_date ? `Due ${formatManilaDate(activity.due_date)}` : 'No due date'}</p>
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${String(activity.status || '').toLowerCase().includes('complete') ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
                     {activity.status || 'Active'}
@@ -267,7 +284,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                 <ul className="mt-3 space-y-2">
                   {recentSubmissions.slice(0, 5).map((submission) => (
                     <li key={submission.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2">
-                      <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{submission.student_name || 'Unknown student'} · {submission.activity_title || 'Unknown activity'}</p><p className="text-xs text-slate-500">{submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Date unavailable'}</p></div>
+                      <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{submission.student_name || 'Unknown student'} · {submission.activity_title || 'Unknown activity'}</p><p className="text-xs text-slate-500">{formatManilaDateTime(submission.submitted_at)}</p></div>
                       <StatusBadge status={submission.status || 'submitted'} label={submission.score == null ? submission.status || 'Submitted' : `Graded · ${submission.score}`} />
                     </li>
                   ))}
@@ -312,7 +329,7 @@ const SectionDetailDrawer = ({ section, overview, overviewLoading, overviewError
                 <div key={log.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#e7edf4] bg-[#f7f9fc] px-3 py-2.5">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-slate-900">{log.student_name || log.user_name || 'Unknown user'}</p>
-                    <p className="text-xs text-slate-500">{log.station || 'Station not recorded'} · {log.access_time ? new Date(log.access_time).toLocaleString() : 'Time unavailable'}</p>
+                    <p className="text-xs text-slate-500">{log.station || 'Station not recorded'} · {formatManilaDateTime(log.access_time)}</p>
                   </div>
                   <span className={`shrink-0 text-xs font-semibold ${log.status === 'success' ? 'text-emerald-700' : 'text-red-700'}`}>{log.status || 'Unknown'}</span>
                 </div>
@@ -349,9 +366,8 @@ export default function InstructorSections() {
   const fetchSections = useCallback(async () => {
     try {
       setLoading(true)
-      const sectionsRes = await api.get('/sections/')
-      const rawSections = Array.isArray(sectionsRes.data) ? sectionsRes.data : sectionsRes.data.results || []
-      setSections(rawSections)
+      const { results } = await fetchAllResults(api, '/sections/')
+      setSections(results)
       setError('')
     } catch (err) {
       console.error('Error fetching instructor sections:', err)

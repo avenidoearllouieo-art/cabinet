@@ -32,6 +32,11 @@ from .views import (
     PasswordResetConfirmView,
     StudentSubmissionUpload,
     TemporaryUploadViewSet,
+    AdminUserImportTemplateView,
+    AdminUserImportPreviewView,
+    AdminUserImportConfirmView,
+    AcademicFilePreviewAuthorizeView,
+    AcademicFilePreviewContentView,
 )
 
 router = DefaultRouter()
@@ -48,6 +53,11 @@ router.register(r'activity-discussions', ActivityDiscussionViewSet, basename='ac
 router.register(r'activity-announcements', ActivityAnnouncementViewSet, basename='activityannouncement')
 
 urlpatterns = [
+    path('file-previews/<str:kind>/<int:attachment_id>/authorize/', AcademicFilePreviewAuthorizeView.as_view(), name='academic_file_preview_authorize'),
+    path('file-previews/<str:kind>/<int:attachment_id>/content/', AcademicFilePreviewContentView.as_view(), name='academic_file_preview_content'),
+    path('users/import/template/', AdminUserImportTemplateView.as_view(), name='admin_user_import_template'),
+    path('users/import/preview/', AdminUserImportPreviewView.as_view(), name='admin_user_import_preview'),
+    path('users/import/confirm/', AdminUserImportConfirmView.as_view(), name='admin_user_import_confirm'),
     path('', include(router.urls)),
     path('auth/login/', CustomTokenObtainPairView.as_view(), name='auth_login'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth_refresh'),

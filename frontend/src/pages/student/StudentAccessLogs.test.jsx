@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
 import StudentAccessLogs from './StudentAccessLogs.jsx'
@@ -46,16 +46,24 @@ describe('StudentAccessLogs', () => {
     vi.resetAllMocks()
   })
 
-  it('shows a combined date-time value and masks the student NFC value', async () => {
+  it('shows Manila access timestamps and no NFC UID information', async () => {
     render(<MemoryRouter><StudentAccessLogs /></MemoryRouter>)
 
     const expectedDateTime = new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: 'Asia/Manila',
     }).format(new Date('2026-10-04T15:04:00Z'))
 
+    expect(await screen.findByRole('heading', { name: 'Access History', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('searchbox', { name: 'Search logs' }).getAttribute('placeholder')).toBe('Search access history...')
     expect(await screen.findAllByText(expectedDateTime, { selector: 'span' })).toHaveLength(1)
     expect(screen.queryByText('ABCD123456')).toBeNull()
-    expect(screen.getAllByText('••••3456', { selector: 'span' }).length).toBeGreaterThan(0)
+    expect(screen.queryByText('••••3456')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'View Details' }))
+    expect(await screen.findByRole('dialog', { name: 'Cabinet Access Log Details' })).toBeTruthy()
+    expect(screen.queryByText('ABCD123456')).toBeNull()
+    expect(screen.queryByText('••••3456')).toBeNull()
   })
 })
