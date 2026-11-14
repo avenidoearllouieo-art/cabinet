@@ -693,7 +693,6 @@ class NFCEnrollmentSession(models.Model):
         blank=True,
         related_name='nfc_enrollment_sessions',
     )
-
     def set_token(self, token):
         self.token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
         self.token_hash = make_password(token)

@@ -11,6 +11,18 @@ export function getRegistrationValidationError(error) {
 }
 
 export function getRegistrationSubmissionError(error) {
+  if (!error?.response) {
+    return 'TapTrack could not be reached. Check your connection and try again.'
+  }
+
+  if (error.response.status === 410) {
+    return 'This registration link has expired or was already used. Tap the card again at the Cabinet to restart.'
+  }
+
+  if (error.response.status === 429) {
+    return 'Too many registration attempts. Wait a while, then try again.'
+  }
+
   const payload = error?.response?.data
   const fieldError = payload && Object.values(payload)
     .flatMap((messages) => Array.isArray(messages) ? messages : [messages])

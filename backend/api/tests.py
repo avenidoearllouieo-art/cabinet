@@ -1,10 +1,12 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.contrib import admin as django_admin
 from django.conf import settings
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.test import TransactionTestCase
 from django.db import connection
+from django.db import IntegrityError
 from django.db.migrations.executor import MigrationExecutor
 from django.urls import reverse
 from django.utils import timezone
@@ -19,6 +21,7 @@ import sys
 import tempfile
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -1156,10 +1159,37 @@ class ProfileAdminFormTests(TestCase):
         self.assertEqual(field.queryset.filter(role=User.RoleChoices.STUDENT).count(), field.queryset.count())
 
 
+class TimezoneConfigurationTests(SimpleTestCase):
+    def test_backend_uses_philippine_timezone(self):
+        self.assertEqual(settings.TIME_ZONE, 'Asia/Manila')
+
+
+class InstructorWorkbookImportTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.admin = User.objects.create_superuser(
+            username='instructor-import-admin',
+            email='instructor-import-admin@example.com',
+            password='TestAdminPassword-123',
+            nfc_uid='INSTRUCTOR-IMPORT-ADMIN-UID',
+        )
+        self.client.force_login(self.admin)
+        self.section = Section.objects.create(subject_code='INST-SEC', section_name='Instructor Import Section')
+        self.import_url = reverse('admin:api_instructorprofile_import_instructors')
+
+    def test_instructor_admin_changelist_links_to_import_page(self):
+        response = self.client.get(reverse('admin:api_instructorprofile_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Import Instructors (.xlsx)')
+        self.assertContains(response, self.import_url)
+
+
 class StudentWorkbookImportTests(TestCase):
     HEADERS = ['Student ID', 'First Name', 'Last Name', 'Email', 'Role', 'Subject']
 
     def setUp(self):
+        cache.clear()
         self.client = Client()
         self.admin = User.objects.create_superuser(
             username='student-import-admin',
@@ -1443,9 +1473,11 @@ class StudentWorkbookImportTests(TestCase):
             token = parse_qs(urlparse(initial.json()['registration_url']).query)['token'][0]
             registration = self.client.post('/api/cabinet/enrollment/register/', {
                 'token': token,
+                'role': 'student',
                 'username': 'taylor_enroll',
                 'student_id': student.student_id,
                 'password': 'Enrollment-Test-Password-123',
+                'confirm_password': 'Enrollment-Test-Password-123',
             })
             self.assertEqual(registration.status_code, 201, registration.json())
             registration_log = AccessLog.objects.get(
@@ -3100,6 +3132,7 @@ class AccessLogPhotoMigrationTests(TransactionTestCase):
 ])
 class CabinetDeviceIntegrationTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.device_api_key = 'cabinet-device-test-key'
         os.environ['DEVICE_API_KEY'] = self.device_api_key
@@ -3521,9 +3554,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         registration = self.client.post('/api/cabinet/enrollment/register/', {
             'token': token,
+            'role': 'student',
             'username': 'taptrack_test_student',
             'student_id': student.student_id,
             'password': 'Fixture-Only-Password-123',
+            'confirm_password': 'Fixture-Only-Password-123',
         }, format='json')
         self.assertEqual(registration.status_code, 201, registration.json())
 
@@ -3959,9 +3994,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'registration-token',
+            'role': 'student',
             'username': 'pending_student',
             'student_id': 'PENDING-001',
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
 
         self.assertEqual(response.status_code, 201, response.json())
@@ -3976,9 +4013,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         reused = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'registration-token',
+            'role': 'student',
             'username': 'pending_student',
             'student_id': 'PENDING-001',
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(reused.status_code, 410, reused.json())
 
@@ -4008,9 +4047,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'username-conflict-token',
+            'role': 'student',
             'username': 'claimed_username',
             'student_id': pending_student.student_id,
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
 
         self.assertEqual(response.status_code, 409, response.json())
@@ -4033,8 +4074,10 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'required-fields-token',
+            'role': 'student',
             'student_id': 'PENDING-REQUIRED-001',
             'password': 'short',
+            'confirm_password': 'short',
         }, format='json')
 
         self.assertEqual(response.status_code, 400, response.json())
@@ -4053,9 +4096,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'unknown-student-token',
+            'role': 'student',
             'username': 'unknown_student',
             'student_id': 'DOES-NOT-EXIST',
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
 
         self.assertEqual(response.status_code, 404, response.json())
@@ -4088,9 +4133,11 @@ class CabinetDeviceIntegrationTests(TestCase):
 
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'assigned-token',
+            'role': 'student',
             'username': 'pending_nfc_student',
             'student_id': 'PENDING-002',
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(response.status_code, 409, response.json())
 
@@ -4115,7 +4162,286 @@ class CabinetDeviceIntegrationTests(TestCase):
         response = self.client.post('/api/cabinet/enrollment/register/', {
             'token': 'existing-account-token',
             'username': 'existing_account_student',
+            'role': 'student',
             'student_id': 'EXISTING-001',
             'password': 'new-password-123',
+            'confirm_password': 'new-password-123',
         }, format='json')
         self.assertEqual(response.status_code, 409, response.json())
+
+
+@override_settings(
+    TAPTRACK_NFC_DEVICE_MAP=[{
+        'device_id': 'ENROLLMENT-TEST-READER',
+        'api_key': 'nfc-enrollment-device-key',
+        'station': 'Station 1',
+        'cabinet_name': 'Cabinet 1',
+        'active': True,
+    }],
+)
+class NFCEnrollmentRegistrationTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.device_api_key = 'nfc-enrollment-device-key'
+        self.previous_device_key = os.environ.get('DEVICE_API_KEY')
+        os.environ['DEVICE_API_KEY'] = self.device_api_key
+        self.section = Section.objects.create(
+            section_name='Identity Test Section',
+            subject_code='ID-101',
+            program='Computer Science',
+            academic_year='2026-2027',
+        )
+
+    def tearDown(self):
+        if self.previous_device_key is None:
+            os.environ.pop('DEVICE_API_KEY', None)
+        else:
+            os.environ['DEVICE_API_KEY'] = self.previous_device_key
+
+    def make_enrollment(self, uid, token):
+        enrollment = NFCEnrollmentSession(
+            nfc_uid=uid,
+            token_digest='',
+            token_hash='',
+            expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        enrollment.set_token(token)
+        enrollment.save()
+        return enrollment
+
+    def register(self, token, role, identifier_field, identifier, username, password, confirm_password=None):
+        return self.client.post('/api/cabinet/enrollment/register/', {
+            'token': token,
+            'role': role,
+            identifier_field: identifier,
+            'username': username,
+            'password': password,
+            'confirm_password': confirm_password if confirm_password is not None else password,
+        }, format='json')
+
+    def test_student_registration_binds_existing_roster_record(self):
+        student = User.objects.create_user(
+            username='enrollment-student-roster',
+            email='enrollment-student@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-STUDENT-001',
+            section=self.section,
+            first_name='Taylor',
+            last_name='Student',
+        )
+        enrollment = self.make_enrollment('IDENTITY-STUDENT-CARD', 'student-identity-token')
+
+        mismatched_passwords = self.register(
+            'student-identity-token', 'student', 'student_id', student.student_id,
+            'taylor_student', 'Cobalt!93-RiverQuartz', 'different-password-123',
+        )
+        self.assertEqual(mismatched_passwords.status_code, 400, mismatched_passwords.json())
+        student.refresh_from_db()
+        self.assertIsNone(student.nfc_uid)
+
+        registration = self.register(
+            'student-identity-token', 'student', 'student_id', student.student_id,
+            'taylor_student', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(registration.status_code, 201, registration.json())
+        self.assertTrue(registration.json()['nfc_registered'])
+        self.assertNotIn('nfc_uid', registration.json())
+
+        student.refresh_from_db()
+        enrollment.refresh_from_db()
+        self.assertEqual(student.nfc_uid, 'IDENTITY-STUDENT-CARD')
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
+        scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'IDENTITY-STUDENT-CARD'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(scan.status_code, 200, scan.json())
+        self.assertEqual(scan.json()['student_id'], student.student_id)
+
+    def test_instructor_registration_binds_existing_roster_record(self):
+        instructor = User.objects.create_user(
+            username='enrollment-instructor-roster',
+            email='enrollment-instructor@example.test',
+            password=None,
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='IDENTITY-INSTRUCTOR-001',
+            first_name='Rae',
+            last_name='Instructor',
+        )
+        instructor.assigned_sections.add(self.section)
+        self.make_enrollment('IDENTITY-INSTRUCTOR-CARD', 'instructor-identity-token')
+
+        registration = self.register(
+            'instructor-identity-token', 'instructor', 'instructor_id', instructor.instructor_id,
+            'rae_instructor', 'Orbit!72-MapleCipher',
+        )
+        self.assertEqual(registration.status_code, 201, registration.json())
+        self.assertEqual(registration.json()['role'], 'instructor')
+        self.assertEqual(registration.json()['name'], 'Rae Instructor')
+        self.assertEqual(registration.json()['instructor_id'], instructor.instructor_id)
+        self.assertTrue(registration.json()['nfc_registered'])
+        instructor.refresh_from_db()
+        self.assertEqual(instructor.nfc_uid, 'IDENTITY-INSTRUCTOR-CARD')
+        scan = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'IDENTITY-INSTRUCTOR-CARD'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(scan.status_code, 200, scan.json())
+        self.assertEqual(scan.json()['role'], 'instructor')
+
+    def test_unknown_id_and_wrong_role_do_not_register_an_account(self):
+        student = User.objects.create_user(
+            username='enrollment-privacy-student',
+            email='enrollment-privacy@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-PRIVACY-001',
+        )
+        enrollment = self.make_enrollment('IDENTITY-PRIVACY-CARD', 'privacy-identity-token')
+
+        unknown = self.register(
+            'privacy-identity-token', 'student', 'student_id', 'NOT-A-REAL-ID',
+            'unknown_user', 'Cobalt!93-RiverQuartz',
+        )
+        wrong_role = self.register(
+            'privacy-identity-token', 'instructor', 'instructor_id', student.student_id,
+            'wrong_role_user', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(unknown.status_code, 404, unknown.json())
+        self.assertEqual(wrong_role.status_code, 404, wrong_role.json())
+        self.assertNotIn('name', unknown.json())
+        self.assertNotIn('email', unknown.json())
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
+        self.assertIsNone(student.nfc_uid)
+
+    def test_existing_account_and_duplicate_card_are_rejected(self):
+        already_registered = User.objects.create_user(
+            username='already-registered',
+            email='already-registered@example.test',
+            password='ExistingPassword!901',
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-ALREADY-001',
+        )
+        pending = User.objects.create_user(
+            username='pending-duplicate-card',
+            email='pending-duplicate-card@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-PENDING-002',
+        )
+        existing_card_owner = User.objects.create_user(
+            username='existing-card-owner',
+            email='existing-card-owner@example.test',
+            password='ExistingPassword!902',
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-CARD-OWNER-003',
+            nfc_uid='IDENTITY-DUPLICATE-CARD',
+        )
+        account_enrollment = self.make_enrollment('IDENTITY-ACCOUNT-CARD', 'already-registered-token')
+        card_enrollment = self.make_enrollment('IDENTITY-DUPLICATE-CARD', 'duplicate-card-token')
+
+        account_result = self.register(
+            'already-registered-token', 'student', 'student_id', already_registered.student_id,
+            'new_username', 'Cobalt!93-RiverQuartz',
+        )
+        card_result = self.register(
+            'duplicate-card-token', 'student', 'student_id', pending.student_id,
+            'pending_duplicate', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(account_result.status_code, 409, account_result.json())
+        self.assertEqual(card_result.status_code, 409, card_result.json())
+        already_registered.refresh_from_db()
+        pending.refresh_from_db()
+        account_enrollment.refresh_from_db()
+        card_enrollment.refresh_from_db()
+        self.assertIsNone(already_registered.nfc_uid)
+        self.assertIsNone(pending.nfc_uid)
+        self.assertEqual(account_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
+        self.assertEqual(card_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
+        self.assertEqual(existing_card_owner.nfc_uid, 'IDENTITY-DUPLICATE-CARD')
+
+    def test_inactive_roster_account_cannot_register_a_card(self):
+        inactive_student = User.objects.create_user(
+            username='inactive-enrollment-student',
+            email='inactive-enrollment@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-INACTIVE-001',
+            is_active=False,
+        )
+        enrollment = self.make_enrollment('IDENTITY-INACTIVE-CARD', 'inactive-enrollment-token')
+
+        response = self.register(
+            'inactive-enrollment-token', 'student', 'student_id', inactive_student.student_id,
+            'inactive_student', 'Cobalt!93-RiverQuartz',
+        )
+
+        self.assertEqual(response.status_code, 409, response.json())
+        inactive_student.refresh_from_db()
+        enrollment.refresh_from_db()
+        self.assertIsNone(inactive_student.nfc_uid)
+        self.assertFalse(inactive_student.has_usable_password())
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
+
+    def test_expired_and_reused_enrollment_tokens_are_rejected(self):
+        student = User.objects.create_user(
+            username='enrollment-token-student',
+            email='enrollment-token-student@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-TOKEN-001',
+        )
+        expired = self.make_enrollment('IDENTITY-EXPIRED-TOKEN-CARD', 'expired-enrollment-token')
+        expired.expires_at = timezone.now() - timedelta(seconds=1)
+        expired.save(update_fields=['expires_at'])
+        expired_result = self.register(
+            'expired-enrollment-token', 'student', 'student_id', student.student_id,
+            'expired_user', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(expired_result.status_code, 410, expired_result.json())
+        expired.refresh_from_db()
+        self.assertEqual(expired.status, NFCEnrollmentSession.StatusChoices.EXPIRED)
+
+        current = self.make_enrollment('IDENTITY-CURRENT-TOKEN-CARD', 'single-use-token')
+        first_result = self.register(
+            'single-use-token', 'student', 'student_id', student.student_id,
+            'token_student', 'Cobalt!93-RiverQuartz',
+        )
+        reused_result = self.register(
+            'single-use-token', 'student', 'student_id', student.student_id,
+            'token_student', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(first_result.status_code, 201, first_result.json())
+        self.assertEqual(reused_result.status_code, 410, reused_result.json())
+        current.refresh_from_db()
+        self.assertEqual(current.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
+
+    def test_registration_rolls_back_account_and_session_when_log_fails(self):
+        student = User.objects.create_user(
+            username='enrollment-rollback-student',
+            email='enrollment-rollback@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-ROLLBACK-001',
+        )
+        enrollment = self.make_enrollment('IDENTITY-ROLLBACK-CARD', 'rollback-registration-token')
+
+        with patch('api.views.AccessLog.objects.create', side_effect=IntegrityError('simulated log failure')):
+            response = self.register(
+                'rollback-registration-token', 'student', 'student_id', student.student_id,
+                'rollback_user', 'Cobalt!93-RiverQuartz',
+            )
+
+        self.assertEqual(response.status_code, 409, response.json())
+        student.refresh_from_db()
+        enrollment.refresh_from_db()
+        self.assertIsNone(student.nfc_uid)
+        self.assertFalse(student.has_usable_password())
+        self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)

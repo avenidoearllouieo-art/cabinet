@@ -442,10 +442,22 @@ class PasswordResetStatusSerializer(serializers.Serializer):
 
 class CabinetRegistrationSerializer(serializers.Serializer):
     full_name = serializers.CharField(required=True, allow_blank=False, max_length=150)
-    student_id = serializers.CharField(required=True, allow_blank=False, max_length=50)
+    role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR], required=False, default=User.RoleChoices.STUDENT)
+    student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    instructor_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
     email = serializers.EmailField(required=True)
     section = serializers.CharField(required=False, allow_blank=True, max_length=100)
     nfc_uid = serializers.CharField(required=True, allow_blank=False, max_length=100)
+
+    def validate(self, attrs):
+        role = attrs.get('role', User.RoleChoices.STUDENT)
+        if role == User.RoleChoices.STUDENT:
+            if not attrs.get('student_id', '').strip():
+                raise serializers.ValidationError({'student_id': 'Student ID is required for student registrations.'})
+        else:
+            if not attrs.get('instructor_id', '').strip():
+                raise serializers.ValidationError({'instructor_id': 'Instructor ID is required for instructor registrations.'})
+        return attrs
 
 
 class PasswordResetConfirmationSerializer(serializers.Serializer):
@@ -475,8 +487,21 @@ class PasswordResetTokenValidationSerializer(serializers.Serializer):
 class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
     token = serializers.CharField(required=True, allow_blank=False, write_only=True)
     username = serializers.CharField(required=True, allow_blank=False, max_length=150)
-    student_id = serializers.CharField(required=True, allow_blank=False, max_length=50)
+    role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR])
+    student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    instructor_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
     password = serializers.CharField(required=True, write_only=True, min_length=8)
+    confirm_password = serializers.CharField(required=True, write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        role = attrs.get('role', User.RoleChoices.STUDENT)
+        if role == User.RoleChoices.STUDENT and not attrs.get('student_id', '').strip():
+            raise serializers.ValidationError({'student_id': 'Student ID is required for student enrollment.'})
+        if role == User.RoleChoices.INSTRUCTOR and not attrs.get('instructor_id', '').strip():
+            raise serializers.ValidationError({'instructor_id': 'Instructor ID is required for instructor enrollment.'})
+        if attrs['password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
 
 
 class ActivityAttachmentSerializer(serializers.ModelSerializer):

@@ -8,7 +8,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import (
     IsAdminRole, IsDiscussionAuthorOrInstructor, IsInstructorRole,
     IsStudentRole, HasDeviceAPIKey, PasswordResetRateThrottle,
-    PasswordResetStatusRateThrottle,
+    PasswordResetStatusRateThrottle, NFCEnrollmentRateThrottle,
     CanReadAccessLogPhoto,
     CanReadAccessLogPhotoImage,
 )
@@ -28,6 +28,7 @@ from django.urls import reverse
 from django.utils.cache import patch_cache_control
 from django.conf import settings
 from django.core import signing
+from django.core.exceptions import ValidationError as DjangoValidationError
 from PIL import Image, UnidentifiedImageError
 from urllib.parse import quote
 import hashlib
@@ -2156,13 +2157,26 @@ class NFCEnrollmentValidationView(APIView):
 class NFCEnrollmentRegistrationView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [NFCEnrollmentRateThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = NFCEnrollmentRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        try:
+            return self._register(data)
+        except IntegrityError:
+            return Response(
+                {'error': 'The username or NFC card was registered by another request. Try different details or scan the card again.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    def _register(self, data):
         token = data['token'].strip()
         token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        role = data['role']
+        identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
+        identifier_value = data.get(identifier_field, '').strip()
 
         with transaction.atomic():
             enrollment = NFCEnrollmentSession.objects.select_for_update().filter(
@@ -2182,19 +2196,22 @@ class NFCEnrollmentRegistrationView(APIView):
                 )
 
             user = User.objects.select_for_update().filter(
-                student_id=data['student_id'].strip(),
-                role=User.RoleChoices.STUDENT,
+                role=role,
+                **{identifier_field: identifier_value},
             ).first()
             if not user:
                 return Response(
-                    {'error': 'Student ID was not found in the existing student records.'},
+                    {'error': 'No account matches the selected role and ID.'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            if not user.is_active:
+                return Response({'error': 'This account is inactive and cannot be registered.'}, status=status.HTTP_409_CONFLICT)
             if user.has_usable_password() or user.nfc_uid:
-                return Response(
-                    {'error': 'A TapTrack account already exists for this Student ID.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
+                return Response({'error': 'This account is already registered.'}, status=status.HTTP_409_CONFLICT)
+            try:
+                validate_password(data['password'], user=user)
+            except DjangoValidationError as exc:
+                return Response({'password': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
             username = data['username'].strip()
             if User.objects.filter(username__iexact=username).exclude(pk=user.pk).exists():
                 return Response(
@@ -2202,16 +2219,19 @@ class NFCEnrollmentRegistrationView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
             if User.objects.filter(nfc_uid=enrollment.nfc_uid).exclude(pk=user.pk).exists():
+                entity_label = 'student' if role == User.RoleChoices.STUDENT else 'instructor'
                 return Response(
-                    {'error': 'This NFC card is already assigned to another student.'},
+                    {'error': f'This NFC card is already assigned to another {entity_label}.'},
                     status=status.HTTP_409_CONFLICT,
                 )
 
             user.username = username
             user.nfc_uid = enrollment.nfc_uid
-            user.is_active = True
             user.set_password(data['password'])
-            user.full_clean()
+            try:
+                user.full_clean()
+            except DjangoValidationError as exc:
+                return Response({'error': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
             user.save()
 
             enrollment.status = NFCEnrollmentSession.StatusChoices.COMPLETED
@@ -2232,8 +2252,11 @@ class NFCEnrollmentRegistrationView(APIView):
             {
                 'success': True,
                 'message': 'Registration successful.',
+                'role': user.role,
                 'student_id': user.student_id,
+                'instructor_id': user.instructor_id,
                 'name': user.get_full_name().strip(),
+                'nfc_registered': True,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -2247,12 +2270,15 @@ class CabinetRegistrationView(APIView):
         serializer = CabinetRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        student_id = data['student_id'].strip()
+        role = data.get('role', User.RoleChoices.STUDENT)
+        identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
+        identifier_value = data.get(identifier_field, '').strip()
         nfc_uid = data['nfc_uid'].strip().upper()
         email = data['email'].strip().lower()
 
-        if User.objects.filter(student_id=student_id).exists():
-            return Response({'error': 'Student ID is already registered.'}, status=status.HTTP_409_CONFLICT)
+        if User.objects.filter(role=role, **{identifier_field: identifier_value}).exists():
+            account_label = 'Student ID' if role == User.RoleChoices.STUDENT else 'Instructor ID'
+            return Response({'error': f'{account_label} is already registered.'}, status=status.HTTP_409_CONFLICT)
         if User.objects.filter(nfc_uid=nfc_uid).exists():
             return Response({'error': 'NFC card is already registered.'}, status=status.HTTP_409_CONFLICT)
         if User.objects.filter(email__iexact=email).exists():
@@ -2269,16 +2295,30 @@ class CabinetRegistrationView(APIView):
                 return Response({'error': 'Section was not found.'}, status=status.HTTP_400_BAD_REQUEST)
 
         name_parts = data['full_name'].strip().split(None, 1)
-        user = User(
-            username=student_id,
-            student_id=student_id,
-            email=email,
-            first_name=name_parts[0],
-            last_name=name_parts[1] if len(name_parts) > 1 else '',
-            role=User.RoleChoices.STUDENT,
-            section=section,
-            nfc_uid=nfc_uid,
-        )
+        if role == User.RoleChoices.STUDENT:
+            username = identifier_value or data['full_name'].strip().replace(' ', '_')
+            user = User(
+                username=username,
+                student_id=identifier_value,
+                email=email,
+                first_name=name_parts[0],
+                last_name=name_parts[1] if len(name_parts) > 1 else '',
+                role=User.RoleChoices.STUDENT,
+                section=section,
+                nfc_uid=nfc_uid,
+            )
+        else:
+            username = identifier_value or data['full_name'].strip().replace(' ', '_')
+            user = User(
+                username=username,
+                instructor_id=identifier_value,
+                email=email,
+                first_name=name_parts[0],
+                last_name=name_parts[1] if len(name_parts) > 1 else '',
+                role=User.RoleChoices.INSTRUCTOR,
+                section=section,
+                nfc_uid=nfc_uid,
+            )
         user.set_unusable_password()
         try:
             user.full_clean()
@@ -2286,11 +2326,13 @@ class CabinetRegistrationView(APIView):
         except Exception as error:
             if hasattr(error, 'message_dict'):
                 return Response(error.message_dict, status=status.HTTP_400_BAD_REQUEST)
-            return Response({'error': 'Student registration could not be completed.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Registration could not be completed.'}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             'id': user.id,
+            'role': user.role,
             'student_id': user.student_id,
+            'instructor_id': user.instructor_id,
             'name': user.get_full_name().strip(),
             'email': user.email,
             'section': section.subject_code or section.section_name if section else '',

@@ -23,8 +23,10 @@ test('other API failures include the response status', () => {
   assert.match(message, /HTTP 503/)
 })
 
-test('registration form fields are required and ordered as username, student ID, password', () => {
-  assert.deepEqual(NFC_REGISTRATION_FIELDS.map(({ label }) => label), ['Username', 'Student ID', 'Password'])
+test('registration credential fields require username, password, and confirmation', () => {
+  assert.deepEqual(NFC_REGISTRATION_FIELDS.map(({ label }) => label), ['Username', 'Password', 'Confirm Password'])
+  assert.equal(NFC_REGISTRATION_FIELDS[1].type, 'password')
+  assert.equal(NFC_REGISTRATION_FIELDS[1].minLength, 8)
   assert.equal(NFC_REGISTRATION_FIELDS[2].type, 'password')
   assert.equal(NFC_REGISTRATION_FIELDS[2].minLength, 8)
 })
@@ -33,4 +35,10 @@ test('registration submission displays backend field validation messages', () =>
   const message = getRegistrationSubmissionError({ response: { data: { username: ['That username is already in use.'] } } })
 
   assert.equal(message, 'That username is already in use.')
+})
+
+test('registration submission explains network, expired links, and throttled requests', () => {
+  assert.match(getRegistrationSubmissionError(new Error('Network Error')), /could not be reached/i)
+  assert.match(getRegistrationSubmissionError({ response: { status: 410 } }), /expired/i)
+  assert.match(getRegistrationSubmissionError({ response: { status: 429 } }), /too many registration attempts/i)
 })

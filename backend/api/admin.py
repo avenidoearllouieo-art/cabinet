@@ -31,8 +31,11 @@ from .models import (
     PasswordRecoveryAuditEvent,
 )
 from .student_import import (
+    build_instructor,
     build_student,
+    read_instructor_workbook,
     read_student_workbook,
+    validate_instructor_rows,
     validate_student_rows,
 )
 
@@ -139,6 +142,18 @@ class StudentCreationForm(forms.ModelForm):
 
 class StudentWorkbookUploadForm(forms.Form):
     workbook = forms.FileField(label='Student workbook (.xlsx)')
+
+    def clean_workbook(self):
+        workbook = self.cleaned_data['workbook']
+        if not workbook.name.lower().endswith('.xlsx'):
+            raise forms.ValidationError('Upload an Excel .xlsx workbook.')
+        if workbook.size > 10 * 1024 * 1024:
+            raise forms.ValidationError('The workbook must be 10 MB or smaller.')
+        return workbook
+
+
+class InstructorWorkbookUploadForm(forms.Form):
+    workbook = forms.FileField(label='Instructor workbook (.xlsx)')
 
     def clean_workbook(self):
         workbook = self.cleaned_data['workbook']
@@ -368,11 +383,112 @@ class StudentProfileAdmin(admin.ModelAdmin):
 
 @admin.register(InstructorProfile)
 class InstructorProfileAdmin(admin.ModelAdmin):
+    change_list_template = 'admin/api/instructorprofile/change_list.html'
     form = CustomUserChangeForm
     add_form = InstructorCreationForm
     autocomplete_fields = ('assigned_sections',)
     list_display = ('instructor_id', 'first_name', 'last_name', 'email', 'is_active')
     search_fields = ('instructor_id', 'first_name', 'last_name', 'email')
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'import-instructors/',
+                self.admin_site.admin_view(self.import_instructors_view),
+                name='api_instructorprofile_import_instructors',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context['instructor_import_url'] = reverse('admin:api_instructorprofile_import_instructors')
+        return super().changelist_view(request, extra_context=extra_context)
+
+    def import_instructors_view(self, request):
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+
+        context = {
+            **self.admin_site.each_context(request),
+            'opts': self.model._meta,
+            'title': 'Import Instructors',
+            'form': InstructorWorkbookUploadForm(),
+            'rows': [],
+            'errors': [],
+            'confirm_nonce': '',
+            'result': None,
+            'uploaded': False,
+        }
+        preview_key = 'api_instructor_import_preview'
+
+        if request.method == 'POST' and request.POST.get('action') == 'confirm':
+            preview = request.session.get(preview_key)
+            nonce = request.POST.get('confirm_nonce', '')
+            if not preview or not secrets.compare_digest(str(preview.get('nonce', '')), nonce):
+                request.session.pop(preview_key, None)
+                context['errors'] = [{'row': '-', 'column': 'confirmation', 'message': 'The preview expired or is invalid. Upload the workbook again.'}]
+                return render(request, 'admin/api/instructorprofile/import_instructors.html', context, status=400)
+
+            rows = preview.get('rows', [])
+            prepared, errors = validate_instructor_rows(rows)
+            if errors:
+                request.session.pop(preview_key, None)
+                context['rows'] = prepared
+                context['errors'] = errors
+                return render(request, 'admin/api/instructorprofile/import_instructors.html', context, status=400)
+
+            try:
+                with transaction.atomic():
+                    for row in prepared:
+                        instructor = build_instructor(row)
+                        instructor.full_clean()
+                        instructor.save()
+                        pending_section_ids = getattr(instructor, '_pending_section_ids', [])
+                        if pending_section_ids:
+                            instructor.assigned_sections.set(Section.objects.filter(pk__in=pending_section_ids).distinct())
+                            Section.objects.filter(instructor=instructor).exclude(pk__in=pending_section_ids).update(instructor=None)
+                            Section.objects.filter(pk__in=pending_section_ids).update(instructor=instructor)
+                        else:
+                            instructor.assigned_sections.clear()
+                            Section.objects.filter(instructor=instructor).update(instructor=None)
+            except (ValidationError, IntegrityError) as error:
+                request.session.pop(preview_key, None)
+                context['rows'] = prepared
+                if isinstance(error, ValidationError) and hasattr(error, 'message_dict'):
+                    context['errors'] = [
+                        {'row': '-', 'column': field, 'message': '; '.join(messages)}
+                        for field, messages in error.message_dict.items()
+                    ]
+                else:
+                    context['errors'] = [{'row': '-', 'column': 'database', 'message': 'The import conflicted with existing data. No records were imported.'}]
+                return render(request, 'admin/api/instructorprofile/import_instructors.html', context, status=400)
+
+            request.session.pop(preview_key, None)
+            context['result'] = {'created': len(prepared), 'updated': 0}
+            return render(request, 'admin/api/instructorprofile/import_instructors.html', context)
+
+        if request.method == 'POST':
+            context['form'] = InstructorWorkbookUploadForm(request.POST, request.FILES)
+            if context['form'].is_valid():
+                context['uploaded'] = True
+                rows, workbook_errors = read_instructor_workbook(context['form'].cleaned_data['workbook'])
+                prepared, row_errors = validate_instructor_rows(rows) if rows else ([], [])
+                context['rows'] = prepared
+                context['errors'] = workbook_errors + row_errors
+                if not context['errors']:
+                    nonce = secrets.token_urlsafe(24)
+                    request.session[preview_key] = {'nonce': nonce, 'rows': prepared}
+                    context['confirm_nonce'] = nonce
+            else:
+                context['errors'] = [
+                    {'row': '-', 'column': 'file', 'message': message}
+                    for field, messages in context['form'].errors.items()
+                    for message in messages
+                ]
+                return render(request, 'admin/api/instructorprofile/import_instructors.html', context, status=400)
+
+        return render(request, 'admin/api/instructorprofile/import_instructors.html', context)
 
     # restrict displayed fields when editing an existing instructor
     def get_fieldsets(self, request, obj=None):
