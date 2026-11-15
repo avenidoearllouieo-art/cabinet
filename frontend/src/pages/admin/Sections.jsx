@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useState } from 'react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
 import StatusBadge from '../../components/StatusBadge'
+import SectionOverviewModal from '../../components/sections/SectionOverviewModal.jsx'
 import AddSectionModal from '../../components/sections/AddSectionModal.jsx'
 import EditSectionModal from '../../components/sections/EditSectionModal.jsx'
 import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx'
 import AssignInstructorModal from '../../components/sections/AssignInstructorModal.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
-import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, ChevronDown, ChevronRight } from 'lucide-react'
 
 export default function Sections() {
   const [sections, setSections] = useState([])
@@ -30,7 +30,6 @@ export default function Sections() {
   const [openActionId, setOpenActionId] = useState(null)
   const [openActionLayout, setOpenActionLayout] = useState(null)
   const [selectedSectionForDrawer, setSelectedSectionForDrawer] = useState(null)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isAssignInstructorOpen, setIsAssignInstructorOpen] = useState(false)
   const [assignmentSections, setAssignmentSections] = useState([])
   const [instructorFilter, setInstructorFilter] = useState('all')
@@ -40,8 +39,6 @@ export default function Sections() {
   const [sectionStudents, setSectionStudents] = useState(new Map())
   const [loadingStudentSections, setLoadingStudentSections] = useState(new Set())
   const [studentErrors, setStudentErrors] = useState(new Map())
-  const drawerRef = useRef(null)
-  const drawerCloseButtonRef = useRef(null)
 
   const fetchSections = async () => {
     try {
@@ -63,46 +60,6 @@ export default function Sections() {
     }
     load()
   }, [])
-
-  useEffect(() => {
-    if (!isDrawerOpen) return undefined
-
-    const previousFocus = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const focusTimer = window.setTimeout(() => drawerCloseButtonRef.current?.focus({ preventScroll: true }), 0)
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        setIsDrawerOpen(false)
-        setSelectedSectionForDrawer(null)
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusable = [...(drawerRef.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') || [])]
-        .filter((element) => element.getClientRects().length)
-      if (!focusable.length) {
-        event.preventDefault()
-        drawerRef.current?.focus()
-        return
-      }
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.clearTimeout(focusTimer)
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', handleKeyDown)
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
-    }
-  }, [isDrawerOpen])
 
   const handleSectionAdded = (newSection) => {
     if (!newSection || !newSection.id) {
@@ -225,8 +182,6 @@ export default function Sections() {
     return <StatusBadge status={normalized} label={label} />
   }
 
-  const getAssignedCabinet = (row) => row.assigned_cabinet || row.cabinet_station || row.cabinet_name || '—'
-
   const toggleSelection = (id) => {
     setSelectedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))
   }
@@ -242,12 +197,31 @@ export default function Sections() {
 
   const openSectionDrawer = (section) => {
     setSelectedSectionForDrawer(section)
-    setIsDrawerOpen(true)
   }
 
   const closeSectionDrawer = () => {
-    setIsDrawerOpen(false)
     setSelectedSectionForDrawer(null)
+  }
+
+  const editDrawerSection = () => {
+    const section = selectedSectionForDrawer
+    if (!section) return
+    closeSectionDrawer()
+    window.setTimeout(() => handleOpenEditModal(section.id, section), 0)
+  }
+
+  const assignDrawerInstructor = () => {
+    const section = selectedSectionForDrawer
+    if (!section) return
+    closeSectionDrawer()
+    window.setTimeout(() => openAssignInstructor(section), 0)
+  }
+
+  const deleteDrawerSection = () => {
+    const section = selectedSectionForDrawer
+    if (!section) return
+    closeSectionDrawer()
+    window.setTimeout(() => handleOpenDeleteModal(section), 0)
   }
 
   const openAssignInstructor = (section) => {
@@ -496,56 +470,16 @@ export default function Sections() {
         </div>
       )}
 
-      {isDrawerOpen && selectedSectionForDrawer && (
-        createPortal(
-          <div className="fixed inset-0 z-[var(--tt-layer-drawer)] flex justify-end bg-[#071f41]/55 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && closeSectionDrawer()}>
-            <button type="button" className="flex-1 cursor-default" onClick={closeSectionDrawer} aria-label="Close section details" />
-            <aside ref={drawerRef} tabIndex={-1} className="flex h-full min-h-0 w-full max-w-lg flex-col overflow-hidden border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="section-details-title" onMouseDown={(event) => event.stopPropagation()}>
-              <header className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-3 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
-                <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wide text-[#526780]">Section Details</p>
-                  <h2 id="section-details-title" className="mt-1 break-words text-xl font-bold text-[#102a4c]">{selectedSectionForDrawer.section_name || 'Section Details'}</h2>
-                  <p className="mt-1 text-sm text-[#526780]">{selectedSectionForDrawer.subject_code || 'Subject code not recorded'}</p>
-                  <div className="mt-2">{getStatusBadge(selectedSectionForDrawer.status)}</div>
-                </div>
-                <button ref={drawerCloseButtonRef} type="button" onClick={closeSectionDrawer} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close section details"><X size={18} /></button>
-              </header>
-              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm text-[#374151] sm:p-5">
-                <div className="space-y-4 pb-4">
-              <div className="rounded-xl border border-[#dbe5f0] bg-[#eef4fa] p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Overview</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#082b53]">{selectedSectionForDrawer.subject_code || 'No code'}</span>
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">{selectedSectionForDrawer.program || 'No program'}</span>
-                  <span className="rounded-full bg-[#fff5d6] px-3 py-1 text-xs font-semibold text-[#8a5900]">{selectedSectionForDrawer.year_level || 'No year level'}</span>
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#526780]">{selectedSectionForDrawer.academic_year || 'No academic year'}</span>
-                </div>
-              </div>
-              <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Instructor</div>
-                <div className="mt-2 font-medium text-[#111827]">{selectedSectionForDrawer.instructor_name || 'No Instructor Assigned'}</div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Students</div>
-                  <div className="mt-2 text-lg font-semibold text-[#111827]">{selectedSectionForDrawer.student_count || 0}</div>
-                </div>
-                <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Activities</div>
-                  <div className="mt-2 text-lg font-semibold text-[#111827]">{selectedSectionForDrawer.activity_count || 0}</div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-[#dbe5f0] bg-white p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Assigned Cabinet</div>
-                <div className="mt-2 font-medium text-[#111827]">{getAssignedCabinet(selectedSectionForDrawer)}</div>
-              </div>
-                </div>
-              </div>
-            </aside>
-          </div>
-          , document.body,
-        )
-      )}
+      <SectionOverviewModal
+        key={selectedSectionForDrawer?.section_id ?? selectedSectionForDrawer?.id ?? 'closed'}
+        isOpen={Boolean(selectedSectionForDrawer)}
+        section={selectedSectionForDrawer}
+        role="admin"
+        onClose={closeSectionDrawer}
+        onEditSection={editDrawerSection}
+        onAssignInstructor={assignDrawerInstructor}
+        onDeleteSection={deleteDrawerSection}
+      />
 
       <AddSectionModal
         isOpen={isAddModalOpen}

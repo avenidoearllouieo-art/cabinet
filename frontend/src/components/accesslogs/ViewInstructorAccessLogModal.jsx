@@ -1,5 +1,5 @@
-import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import Modal from '../Modal.jsx'
+import { ShieldCheck } from 'lucide-react'
 import StatusBadge from '../StatusBadge.jsx'
 import { accessLogResult, accessLogValue, formatAccessLogDate, formatAccessLogTime } from './accessLogFormatters.js'
 import AccessLogPhotoPanel from './AccessLogPhotoPanel.jsx'
@@ -15,21 +15,16 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, all
   if (!isOpen || !log) return null
   const result = accessLogResult(log)
 
-  return createPortal(
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-[#071f41]/55 p-4 backdrop-blur-[2px]">
-      <div className="max-h-[90vh] w-full max-w-[760px] overflow-y-auto rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-xl sm:p-6" role="dialog" aria-modal="true" aria-label="Cabinet Access Log Details">
-        <div className="mb-5 flex items-start justify-between gap-4 rounded-lg border-l-4 border-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
-          <div>
-            <p className="text-xs font-bold uppercase text-[#526780]">{accessLogValue(log.action)} event</p>
-            <h2 className="mt-1 text-xl font-bold text-[#102a4c]">Cabinet Access Log Details</h2>
-            <p className="mt-1 text-sm text-[#526780]">Audit details for event {accessLogValue(log.id)}.</p>
-            <div className="mt-2">{result === 'Not recorded' ? <StatusBadge label={result} tone="neutral" /> : <StatusBadge status={result.toLowerCase()} label={result} />}</div>
-          </div>
-          <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close modal">
-            <X size={17} />
-          </button>
-        </div>
-
+  return (
+      <Modal
+        isOpen={isOpen && Boolean(log)}
+        onClose={onClose}
+        title="Cabinet Access Log Details"
+        description={`${accessLogValue(log.action)} event · Audit details for event ${accessLogValue(log.id)}.`}
+        headerIcon={<ShieldCheck size={20} />}
+        headerActions={result === 'Not recorded' ? <StatusBadge label={result} tone="neutral" /> : <StatusBadge status={result.toLowerCase()} label={result} />}
+        maxWidth="760px"
+      >
         <div className="space-y-5">
           <section className="rounded-lg border border-[#dbe5f0] bg-[#f3f6fa] p-4">
             <h3 className="mb-3 text-sm font-semibold text-[#102a4c]">Access Event</h3>
@@ -72,10 +67,8 @@ export default function ViewInstructorAccessLogModal({ isOpen, log, onClose, all
         </div>
 
         <div className="mt-5 flex justify-end border-t border-[#dbe5f0] pt-4">
-          <button type="button" onClick={onClose} className="tt-button tt-button-secondary">Close</button>
+          <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-[#082B53] hover:bg-slate-50">Close</button>
         </div>
-      </div>
-    </div>,
-    document.body,
+      </Modal>
   )
 }

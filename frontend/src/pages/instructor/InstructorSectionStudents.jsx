@@ -77,14 +77,14 @@ export default function InstructorSectionStudents() {
     {
       key: 'profile_image_url',
       label: 'Photo',
-      className: 'min-w-[100px]',
+      className: 'w-[82px] min-w-[82px] max-w-[82px] align-middle',
       render: (_value, row) => (
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 overflow-hidden rounded-full bg-slate-100">
+        <div className="flex justify-center">
+          <div className="h-10 w-10 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-sm">
             {row.profile_image_url ? (
               <img src={row.profile_image_url} alt={`${row.first_name || ''} ${row.last_name || ''}`} className="h-full w-full object-cover" />
             ) : (
-              <span className="flex h-full w-full items-center justify-center text-sm text-slate-500">N/A</span>
+              <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">N/A</span>
             )}
           </div>
         </div>
@@ -93,27 +93,27 @@ export default function InstructorSectionStudents() {
     {
       key: 'full_name',
       label: 'Student Name',
-      className: 'min-w-[220px]',
+      className: 'min-w-[180px] max-w-[220px] align-middle',
       render: (_value, row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—',
     },
-    { key: 'student_id', label: 'Student ID', className: 'min-w-[160px]' },
-    { key: 'email', label: 'Email', className: 'min-w-[220px]' },
+    { key: 'student_id', label: 'Student ID', className: 'min-w-[140px] max-w-[160px] align-middle' },
+    { key: 'email', label: 'Email', className: 'min-w-[220px] max-w-[260px] align-middle' },
     {
       key: 'section_name',
       label: 'Section',
-      className: 'min-w-[180px]',
+      className: 'min-w-[140px] max-w-[180px] align-middle',
       render: (value) => value || '—',
     },
     {
       key: 'is_active',
       label: 'Registration Status',
-      className: 'min-w-[160px]',
+      className: 'min-w-[150px] max-w-[180px] align-middle',
       render: (value) => <StatusBadge status={value ? 'active' : 'inactive'} label={value ? 'Active' : 'Inactive'} />,
     },
     {
       key: 'last_access_status',
       label: 'Cabinet Access Status',
-      className: 'min-w-[180px]',
+      className: 'min-w-[180px] max-w-[220px] align-middle',
       render: (value) => {
         if (!value) return <StatusBadge status="unknown" label="No access records" />
         return value === 'success'
@@ -192,7 +192,16 @@ export default function InstructorSectionStudents() {
           </div>
         </div>
 
-        <DataTable columns={columns} rows={filteredStudents} loading={loading} variant="instructor" />
+        <DataTable
+          columns={columns}
+          rows={filteredStudents}
+          loading={loading}
+          variant="instructor"
+          showActions={false}
+          constrainTableHeight={false}
+          tableClassName="w-full min-w-0 table-auto border-collapse text-xs sm:text-sm"
+          tableWrapperClassName="overflow-x-hidden"
+        />
       </div>
     </div>
   )

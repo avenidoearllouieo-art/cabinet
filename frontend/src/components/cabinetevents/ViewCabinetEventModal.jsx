@@ -1,9 +1,9 @@
-import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import api from '../../services/api.js'
 import { formatAccessLogDuration } from '../accesslogs/accessLogFormatters.js'
 import StatusBadge from '../StatusBadge.jsx'
-import { X } from 'lucide-react'
+import Modal from '../Modal.jsx'
+import { Activity } from 'lucide-react'
 
 export default function ViewCabinetEventModal({ isOpen, eventId, event, onClose, onDelete, onUnauthorized }) {
   const resolvedEventId = event?.id ?? eventId
@@ -59,19 +59,24 @@ export default function ViewCabinetEventModal({ isOpen, eventId, event, onClose,
       ? 'success'
       : 'neutral'
 
-  return createPortal(
-    <div className="fixed inset-0 z-[99999] flex bg-black/45" role="presentation">
-      <button type="button" onClick={onClose} className="absolute inset-0 h-full w-full cursor-default" aria-label="Close event details" />
-      <aside className="relative ml-auto flex h-full w-1/2 min-w-[480px] max-w-[780px] flex-col overflow-y-auto bg-white p-4 shadow-2xl sm:p-6 max-md:w-full max-md:min-w-0" role="dialog" aria-modal="true" aria-label="Cabinet Event Details">
-        <div className="mb-6 flex items-start justify-between gap-4 rounded-lg border-l-4 border-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
-          <div>
-            <p className="text-xs font-bold uppercase text-[#526780]">{displayEvent.event_type || 'Cabinet event'}</p>
-            <h2 className="mt-1 text-xl font-bold text-taptrack-navy">Cabinet Event Details</h2>
-            <p className="mt-1 text-sm text-[#526780]">Event #{displayEvent.id || resolvedEventId}</p>
-            <div className="mt-2"><StatusBadge label={displayEvent.result || 'Unknown'} tone={resultTone} /></div>
+  return (
+      <Modal
+        isOpen={isOpen && Boolean(resolvedEventId)}
+        onClose={onClose}
+        title="Cabinet Event Details"
+        description={`${displayEvent.event_type || 'Cabinet event'} · Event #${displayEvent.id || resolvedEventId}`}
+        headerIcon={<Activity size={20} />}
+        headerActions={<StatusBadge label={displayEvent.result || 'Unknown'} tone={resultTone} />}
+        drawer
+        maxWidth="min(100vw, 780px)"
+        containerClassName="border-l border-[#dbe5f0] shadow-2xl"
+        footer={(
+          <div className="flex items-center justify-between gap-3">
+            <button type="button" onClick={() => onDelete?.(displayEvent)} className="min-h-10 rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50">Delete Event</button>
+            <button type="button" onClick={onClose} className="min-h-11 rounded-lg bg-[#FFBE0B] px-4 py-2 text-sm font-bold text-[#082B53] hover:bg-amber-400">Close</button>
           </div>
-          <button type="button" onClick={onClose} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] hover:bg-[#f3f6fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close drawer"><X size={18} /></button>
-        </div>
+        )}
+      >
 
         {formError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div>}
         {loading ? (
@@ -118,12 +123,6 @@ export default function ViewCabinetEventModal({ isOpen, eventId, event, onClose,
           </div>
         )}
 
-        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-200 pt-5">
-          <button type="button" onClick={() => onDelete?.(displayEvent)} className="min-h-10 rounded-md border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">Delete Event</button>
-          <button type="button" onClick={onClose} className="min-h-10 rounded-lg bg-[#ffc107] px-4 py-2 text-sm font-bold text-[#082b53] hover:bg-[#e0a800] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#082b53]">Close</button>
-        </div>
-      </aside>
-    </div>,
-    document.body,
+      </Modal>
   )
 }

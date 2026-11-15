@@ -50,4 +50,25 @@ describe('Modal keyboard focus', () => {
     render(<Modal isOpen title="Compact dialog" onClose={() => {}} maxWidth="520px">Details</Modal>)
     expect(screen.getByRole('dialog', { name: 'Compact dialog' }).style.maxWidth).toBe('520px')
   })
+
+  it('closes only the topmost dialog on Escape', async () => {
+    function NestedDialogs() {
+      const [outerOpen, setOuterOpen] = useState(true)
+      const [innerOpen, setInnerOpen] = useState(true)
+      return (
+        <Modal isOpen={outerOpen} onClose={() => setOuterOpen(false)} title="Outer dialog">
+          <Modal isOpen={innerOpen} onClose={() => setInnerOpen(false)} title="Inner dialog">Nested content</Modal>
+        </Modal>
+      )
+    }
+
+    render(<NestedDialogs />)
+    expect(screen.getByRole('dialog', { name: 'Outer dialog' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Inner dialog' })).toBeTruthy()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Inner dialog' })).toBeNull())
+    expect(screen.getByRole('dialog', { name: 'Outer dialog' })).toBeTruthy()
+  })
 })

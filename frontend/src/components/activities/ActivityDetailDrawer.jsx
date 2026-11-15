@@ -1,8 +1,8 @@
-import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useState } from 'react'
-import { X, FileText, Users, ClipboardList, CircleCheckBig } from 'lucide-react'
+import { FileText, Users, ClipboardList, CircleCheckBig } from 'lucide-react'
 import api from '../../services/api.js'
 import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
+import Modal from '../Modal.jsx'
 
 
 const formatDate = (value) => {
@@ -75,14 +75,6 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
     }
   }, [activity])
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose?.()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
   const displayActivity = activity ? details || activity : null
   const assignedSections = useMemo(() => {
     if (!displayActivity) return []
@@ -98,36 +90,19 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
 
   if (!displayActivity) return null
 
-  return createPortal(
-    <div className="fixed inset-0 z-[9999] flex bg-[#071f41]/55 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
-      <div className="flex-1" aria-hidden="true" />
-      <aside className="relative z-10 flex w-full max-w-[600px] pointer-events-auto flex-col overflow-y-auto border-l border-[#dbe5f0] bg-[#f7f9fc] shadow-[-18px_0_50px_rgba(0,43,91,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-5 top-5 z-[100] flex h-10 w-10 pointer-events-auto items-center justify-center rounded-xl border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#eef4fa] hover:text-[#102a4c] focus:outline-none focus:ring-2 focus:ring-[#ffc107]/70"
-          aria-label="Close activity drawer"
-        >
-          <X size={20} strokeWidth={2.5} />
-        </button>
-        <div className="space-y-5 px-4 pb-6 pt-2 sm:px-6">
-          <div className="sticky top-0 z-20 pointer-events-auto -mx-4 border-b border-[#dbe5f0] bg-[#f7f9fc]/95 px-4 pb-4 pt-2 backdrop-blur sm:-mx-6 sm:px-6">
-            <div className="rounded-2xl border border-[#dbe5f0] bg-white p-5 shadow-[0_8px_24px_rgba(25,55,89,0.06)]">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Activity Details</p>
-                  <h2 className="mt-2 text-2xl font-bold tracking-tight text-[#102a4c]">{displayActivity.title || 'Untitled Activity'}</h2>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <StatusBadge status={displayActivity.status || 'Published'} />
-                <span className="inline-flex items-center gap-2 rounded-full bg-[#eef4fa] px-3 py-1 text-sm font-semibold text-[#28415f]">
-                  <ClipboardList size={14} />
-                  {displayActivity.activity_type || 'Assignment'}
-                </span>
-              </div>
-            </div>
-          </div>
+  return (
+      <Modal
+        isOpen={Boolean(displayActivity)}
+        onClose={onClose}
+        title={displayActivity.title || 'Untitled Activity'}
+        description={`${displayActivity.activity_type || 'Assignment'} · ${assignedSections.length ? assignedSections.join(', ') : 'No sections assigned'}`}
+        headerIcon={<ClipboardList size={20} />}
+        headerActions={<StatusBadge status={displayActivity.status || 'Published'} />}
+        drawer
+        maxWidth="min(100vw, 600px)"
+        closeLabel="Close activity details"
+      >
+        <div className="space-y-5">
 
           {loading && <p className="text-sm text-slate-500">Loading details…</p>}
 
@@ -176,8 +151,6 @@ export default function ActivityDetailDrawer({ activity, onClose }) {
             <div className="mt-4"><AcademicFileAttachments attachments={displayActivity.attachments || []} kind="activity" /></div>
           </div>
         </div>
-      </aside>
-    </div>,
-    document.body,
+      </Modal>
   )
 }

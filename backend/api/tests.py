@@ -128,6 +128,7 @@ class InstructorSectionOverviewScopeTests(TestCase):
             password='secret1234',
             role=User.RoleChoices.STUDENT,
             student_id='OV-STU-A',
+            nfc_uid='OVERVIEW-NFC-A',
             section=self.section_a,
         )
         self.student_b = User.objects.create_user(
@@ -180,6 +181,8 @@ class InstructorSectionOverviewScopeTests(TestCase):
             'pending_review': 1,
         })
         self.assertEqual({student['id'] for student in payload['students']}, {self.student_a.pk})
+        self.assertTrue(payload['students'][0]['nfc_registered'])
+        self.assertNotIn('nfc_uid', payload['students'][0])
         self.assertEqual({activity['id'] for activity in payload['activities']}, {self.activity_a.pk})
         self.assertEqual({item['id'] for item in payload['recent_submissions']}, {self.student_a.submissions.get().pk})
         self.assertEqual({log['user'] for log in payload['access_logs']}, {self.student_a.pk})

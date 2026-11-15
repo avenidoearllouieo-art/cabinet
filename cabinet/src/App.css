@@ -15,9 +15,8 @@
 
 .app-root {
   width: 100%;
-  height: 100vh;
   height: 100dvh;
-  min-height: 100vh;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -30,9 +29,8 @@
 
 .screen {
   width: 100%;
-  height: 100vh;
   height: 100dvh;
-  min-height: 100vh;
+  min-height: 0;
   max-height: 100dvh;
   display: flex;
   align-items: center;
@@ -56,15 +54,18 @@
 
 .home-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
   align-items: center;
-  gap: clamp(24px, 5vw, 80px);
+  gap: clamp(14px, 2.4vw, 36px);
   width: min(1480px, 100%);
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
 }
 
 .cabinet-home-card { width: 100%; margin: 0; text-align: center; }
+.home-screen { padding: 12px clamp(16px, 2.4vw, 32px); overflow: hidden; }
+.home-error { grid-column: 1 / -1; margin: 0; }
 .status-panel,
 .confirm-panel { width: min(1100px, 100%); margin: 0 auto; }
 .nfc-registration-panel { width: min(1100px, 100%); }
@@ -86,7 +87,7 @@
   background: var(--surface);
 }
 
-.hero-card { padding: 24px; margin-bottom: 18px; }
+.hero-card { padding: 20px; margin-bottom: 18px; }
 .brand-wordmark {
   display: block;
   width: min(340px, 78%);
@@ -100,7 +101,7 @@
 .title {
   margin: 0 0 8px;
   color: var(--heading);
-  font-size: clamp(2rem, 4vw, 2.55rem);
+  font-size: clamp(1.35rem, 3.1vh, 2rem);
   font-weight: 800;
 }
 .subtitle,
@@ -160,11 +161,11 @@
 .home-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(14px, 2vw, 24px);
+  gap: 12px;
   width: 100%;
   margin: 0 auto;
 }
-.home-action { width: 100%; min-height: clamp(104px, 17vh, 180px); font-size: clamp(1.05rem, 1.8vw, 1.4rem); }
+.home-action { width: 100%; min-height: clamp(72px, 13vh, 104px); padding: 12px 14px; font-size: clamp(0.95rem, 2.2vh, 1.2rem); }
 .recovery-panel { width: min(720px, 100%); margin: 0 auto; }
 .recovery-queue {
   display: grid;
@@ -258,6 +259,7 @@
   border-radius: 12px;
   background: #fff;
 }
+.registration-qr svg { display: block; width: min(280px, 44dvh); height: auto; }
 .student-readout {
   display: grid;
   gap: 4px;
@@ -293,6 +295,30 @@
 .status-dot { width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%; background: #94a3b8; }
 .status-dot.good { background: #16803c; box-shadow: 0 0 0 4px rgba(22, 128, 60, 0.12); }
 .status-dot.warning-dot { background: var(--highlight); box-shadow: 0 0 0 4px rgba(255, 193, 7, 0.18); }
+.disconnected-dot { background: #c62828; box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.12); }
+.nfc-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 40px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px auto 0;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--heading);
+  font-size: 0.9rem;
+}
+.nfc-indicator.is-connected { border-color: rgba(22, 128, 60, 0.3); background: #f0f8f2; }
+.nfc-indicator.is-unavailable { border-color: rgba(180, 35, 24, 0.28); background: #fef3f2; }
+.nfc-indicator .status-dot { width: 10px; height: 10px; flex-basis: 10px; }
+.nfc-diagnostics { max-width: 100%; color: #8d291f; font-size: 0.75rem; }
+.nfc-diagnostics summary { cursor: pointer; font-weight: 700; }
+.nfc-diagnostics p { max-width: 360px; margin: 6px 0 0; overflow-wrap: anywhere; line-height: 1.35; }
 .clock-card {
   display: grid;
   gap: 4px;
@@ -319,7 +345,9 @@
   font-size: 1.08rem;
   font-weight: 750;
   transition: transform 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+  touch-action: manipulation;
 }
+.btn.home-action { min-height: clamp(88px, 13vh, 118px); font-size: 1.15rem; }
 .btn:hover { transform: translateY(-1px); }
 .btn:focus-visible { outline: 3px solid rgba(255, 193, 7, 0.8); outline-offset: 3px; }
 .btn:disabled { cursor: not-allowed; opacity: 0.56; transform: none; }
@@ -584,9 +612,11 @@
 
 @media (max-width: 760px) {
   .screen { width: 100%; border-radius: 0; padding: clamp(10px, 2dvh, 18px); }
-  .home-shell { grid-template-columns: minmax(0, 1fr); align-content: center; gap: 16px; }
+  .home-screen { overflow-y: auto; }
+  .home-shell { height: auto; min-height: 100%; grid-template-columns: minmax(0, 1fr); align-content: center; gap: 12px; }
+  .cabinet-home-card.hero-card { padding: 14px; }
   .home-actions { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .home-action { min-height: 72px; }
+  .btn.home-action { min-height: 64px; }
   .station-grid { grid-template-columns: 1fr; }
   .station-status-grid { gap: 8px; }
   .station-status-card { min-height: 116px; padding: 12px; }
@@ -598,19 +628,39 @@
 }
 
 @media (max-height: 600px) {
-  .screen { padding: clamp(10px, 2vw, 24px); }
-  .hero-card { padding: 14px; margin-bottom: 12px; }
-  .nfc-ring { width: 132px; height: 132px; margin-bottom: 12px; }
+  .screen:not(.home-screen) { padding: clamp(8px, 1.8vw, 18px); }
+  .hero-card { padding: 12px; margin-bottom: 0; }
+  .nfc-ring { width: 112px; height: 112px; margin-bottom: 8px; }
   .small-ring { width: 88px; height: 88px; }
-  .clock-card { padding: 10px 12px; }
-  .home-action { min-height: 62px; }
+  .clock-card { padding: 8px 12px; margin-top: 8px; }
+  .home-action { min-height: 72px; }
   .cabinet-home-card.hero-card { display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .cabinet-home-card .brand-wordmark { width: min(250px, 65%); max-height: 76px; margin-bottom: 8px; }
-  .cabinet-home-card .title-block { margin: 0 0 10px; }
+  .cabinet-home-card .brand-wordmark { width: min(240px, 62%); max-height: 66px; margin-bottom: 4px; }
+  .cabinet-home-card .title-block { margin: 0 0 6px; }
+  .cabinet-home-card .title { margin-bottom: 4px; font-size: 1.45rem; }
+  .cabinet-home-card .station-status-grid { gap: 8px; margin-bottom: 0; }
+  .cabinet-home-card .station-status-card { min-height: 78px; gap: 4px; padding: 8px 10px; }
+  .cabinet-home-card .station-status-card > span:not(.station-status-label),
+  .cabinet-home-card .station-status-card > small { font-size: 0.75rem; }
+  .cabinet-home-card .nfc-indicator { min-height: 32px; margin-top: 4px; padding: 4px 10px; }
+  .cabinet-home-card .clock-label { font-size: 0.68rem; }
+  .cabinet-home-card .clock-time { font-size: 0.88rem; }
+  .btn.home-action { min-height: 76px; font-size: 1rem; }
+  .panel,
+  .participant-shell { max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+  .panel > .button-row:last-child,
+  .participant-shell > .button-row:last-child { position: sticky; bottom: -1px; z-index: 2; padding: 8px 0 2px; background: var(--surface); }
+  .registration-qr { padding: 8px; margin: 4px auto 8px; }
+  .registration-qr svg { width: min(240px, 38dvh); }
+  .nfc-registration-frame { height: min(42dvh, 240px); margin: 8px 0; }
+  .button-row { gap: 8px; margin-top: 10px; }
+  .btn { min-height: 60px; padding: 10px 16px; }
+  .participant-card { min-height: 60px; padding: 10px 12px; }
+  .participant-badge { width: 34px; height: 34px; flex-basis: 34px; }
 }
 
 @media (max-height: 600px) and (min-width: 761px) {
-  .home-shell { grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr); gap: clamp(16px, 3vw, 42px); }
+  .home-shell { grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: clamp(12px, 2vw, 24px); }
   .participant-shell {
     display: grid;
     grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);

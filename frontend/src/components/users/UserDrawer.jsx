@@ -1,8 +1,9 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { X, CheckCircle2, CircleOff, Mail, Wifi, Clock3, Badge, ClipboardList, LayoutList, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CheckCircle2, CircleOff, Mail, Wifi, Clock3, Badge, ClipboardList, LayoutList, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import api from '../../services/api.js'
 import Modal from '../Modal.jsx'
+import { ModalBody, ModalHeader } from '../ModalPrimitives.jsx'
 import UserCabinetAccessModal from './UserCabinetAccessModal.jsx'
 
 const getUserId = (user) => {
@@ -210,43 +211,31 @@ export default function UserDrawer({ user, onClose, onAction }) {
   return createPortal(
     <div className="fixed inset-0 z-[var(--tt-layer-drawer)] flex bg-slate-950/45" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
       <aside className="relative ml-auto flex h-full w-full max-w-[760px] flex-col overflow-hidden bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="user-profile-title">
-        <header className="z-10 flex shrink-0 items-center gap-3 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] px-3 py-3 sm:px-5">
-        <button
-          ref={closeButtonRef}
-          type="button"
-          onClick={onClose}
-          className="order-2 ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] sm:order-last"
-          aria-label="Close profile drawer"
-        >
-          <X size={18} />
-        </button>
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100">
-              {profileImageUrl ? (
-                <img src={profileImageUrl} alt={displayName} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center bg-slate-200 text-lg font-semibold text-slate-600">
-                  {(user.first_name?.[0] || user.last_name?.[0] || user.username?.[0] || 'U').toUpperCase()}
-                </div>
-              )}
+        <ModalHeader
+          title={displayName}
+          titleId="user-profile-title"
+          description={`@${user.username || '—'}`}
+          icon={(
+            <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-slate-100">
+              {profileImageUrl ? <img src={profileImageUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-base font-semibold text-slate-600">{(user.first_name?.[0] || user.last_name?.[0] || user.username?.[0] || 'U').toUpperCase()}</span>}
+            </span>
+          )}
+          closeRef={closeButtonRef}
+          closeLabel="Close profile drawer"
+          onClose={onClose}
+          tone="navy"
+          className="px-3 py-3 sm:px-5"
+          actions={(
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${roleColors(user.role)}`}>{roleLabel(user.role)}</span>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${user.is_active ? 'bg-[#ECFDF3] text-[#15803D]' : 'bg-[#FEE2E2] text-[#B91C1C]'}`}>
+                {user.is_active ? <CheckCircle2 size={11} /> : <CircleOff size={11} />}{user.is_active ? 'Active' : 'Inactive'}
+              </span>
             </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase text-slate-500">User Profile</p>
-              <h2 id="user-profile-title" className="break-words text-base font-semibold leading-5 text-slate-900 sm:text-lg">{displayName}</h2>
-              <p className="break-all text-xs text-slate-600">@{user.username || '—'}</p>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${roleColors(user.role)}`}>
-                  {roleLabel(user.role)}
-                </span>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${user.is_active ? 'bg-[#ECFDF3] text-[#15803D]' : 'bg-[#FEE2E2] text-[#B91C1C]'}`}>
-                  {user.is_active ? <CheckCircle2 size={11} /> : <CircleOff size={11} />}{user.is_active ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
+          )}
+        />
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+        <ModalBody className="p-3 sm:p-5">
         <div className="flex flex-col gap-4">
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase text-slate-700">Basic Information</h3>
@@ -463,7 +452,7 @@ export default function UserDrawer({ user, onClose, onAction }) {
             </div>
           </div>
         </div>
-        </div>
+        </ModalBody>
       </aside>
       <UserCabinetAccessModal
         isOpen={accessHistoryOpen}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
 import Sections from './Sections.jsx'
 
@@ -18,13 +19,26 @@ const section = {
   instructor: null,
   instructor_name: null,
 }
+const overview = {
+  section: { ...section, academic_year: '2026-2027' },
+  counts: { students: 12, activities: 3, submitted: 8, expected: 36, missing: 28, late: 2, pending_review: 5 },
+  students: [{ id: 21, first_name: 'Mika', last_name: 'Reyes', student_id: 'ST-21', is_active: true }],
+  activities: [{ id: 31, title: 'Safety Activity', due_date: '2026-11-20T12:00:00Z' }],
+  recent_submissions: [{ id: 41, student_name: 'Mika Reyes', activity_title: 'Safety Activity', submitted_at: '2026-11-10T12:00:00Z', status: 'submitted', score: null }],
+  access_logs: [{ id: 51, student_name: 'Mika Reyes', station: 'Cabinet Station 1', status: 'success', access_time: '2026-11-10T12:00:00Z' }],
+  cabinet_stations: [{ station: 'Cabinet Station 1', status: 'Available' }],
+}
 const instructor = { id: 12, role: 'instructor', first_name: 'Rae', last_name: 'Santos', instructor_id: 'INS-12', email: 'rae@example.test', is_active: true }
 
 describe('Admin Sections', () => {
   beforeEach(() => {
     api.get.mockImplementation((path, { params } = {}) => {
       if (path === '/sections/') return Promise.resolve({ data: [section] })
+      if (path === '/sections/4/overview/') return Promise.resolve({ data: overview })
       if (path === '/users/' && params?.role === 'student') return Promise.resolve({ data: [{ id: 21, first_name: 'Mika', last_name: 'Reyes', student_id: 'ST-21', section_year_level: '2nd Year', is_active: true, nfc_uid: 'SHOULD_NOT_DISPLAY' }] })
+      if (path === '/activities/' && params?.section === 4) return Promise.resolve({ data: [overview.activities[0]] })
+      if (path === '/submissions/' && params?.section === 4) return Promise.resolve({ data: [overview.recent_submissions[0]] })
+      if (path === '/access-logs/' && params?.user__section === 4) return Promise.resolve({ data: [overview.access_logs[0]] })
       if (path === '/users/') return Promise.resolve({ data: { count: 1, next: null, results: [instructor] } })
       throw new Error(`Unexpected GET ${path}`)
     })
@@ -36,23 +50,51 @@ describe('Admin Sections', () => {
     vi.resetAllMocks()
   })
 
-  it('opens the details drawer above the page and restores background scroll on close', async () => {
+  it('opens the centered section modal, restores scrolling, and supports Escape and reopen', async () => {
     const user = userEvent.setup()
-    render(<Sections />)
+    render(<MemoryRouter><Sections /></MemoryRouter>)
     await user.click((await screen.findAllByRole('button', { name: 'Open actions for Section A' }))[0])
     await user.click((await screen.findAllByRole('menuitem', { name: 'View Details' }))[0])
 
-    const drawer = await screen.findByRole('dialog', { name: 'Section A' })
-    expect(within(drawer).getByText('Section Details')).toBeTruthy()
-    expect(drawer.querySelector('.overflow-y-auto')).toBeTruthy()
+    const dialog = await screen.findByRole('dialog', { name: 'Section Overview' })
+    expect(within(dialog).getByText('Section A · CS-101')).toBeTruthy()
+    expect(dialog.querySelector('.overflow-y-auto')).toBeTruthy()
+    expect(within(dialog).getAllByRole('tab')).toHaveLength(5)
+    expect(api.get).toHaveBeenCalledWith('/sections/4/overview/', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(document.body.style.overflow).toBe('hidden')
-    await user.click(within(drawer).getByRole('button', { name: 'Close section details' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Close dialog' }))
     await waitFor(() => expect(document.body.style.overflow).not.toBe('hidden'))
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Open actions for Section A'))
+    const actionTrigger = screen.getAllByRole('button', { name: 'Open actions for Section A' })[0]
+    await user.click(actionTrigger)
+    await user.click((await screen.findAllByRole('menuitem', { name: 'View Details' }))[0])
+    expect(await screen.findByRole('dialog', { name: 'Section Overview' })).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Section Overview' })).toBeNull())
+  })
+
+  it('shows backend data in all five section tabs', async () => {
+    const user = userEvent.setup()
+    render(<MemoryRouter><Sections /></MemoryRouter>)
+    await user.click((await screen.findAllByRole('button', { name: 'Open actions for Section A' }))[0])
+    await user.click((await screen.findAllByRole('menuitem', { name: 'View Details' }))[0])
+    const dialog = await screen.findByRole('dialog', { name: 'Section Overview' })
+
+    expect(await within(dialog).findByText('8')).toBeTruthy()
+    expect(within(dialog).getByText('Cabinet Station 1')).toBeTruthy()
+    await user.click(within(dialog).getByRole('tab', { name: 'Students' }))
+    expect(await within(dialog).findByText('Mika Reyes')).toBeTruthy()
+    await user.click(within(dialog).getByRole('tab', { name: 'Activities' }))
+    expect(await within(dialog).findByText('Safety Activity')).toBeTruthy()
+    await user.click(within(dialog).getByRole('tab', { name: 'Submissions' }))
+    expect(await within(dialog).findByRole('heading', { name: 'Section Submissions' })).toBeTruthy()
+    await user.click(within(dialog).getByRole('tab', { name: 'Cabinet Access' }))
+    expect(await within(dialog).findByRole('heading', { name: 'Cabinet Access' })).toBeTruthy()
   })
 
   it('opens assignment, loads registered instructors, and refreshes the assigned section', async () => {
     const user = userEvent.setup()
-    render(<Sections />)
+    render(<MemoryRouter><Sections /></MemoryRouter>)
     await user.click((await screen.findAllByRole('checkbox', { name: 'Select Section A' }))[0])
     await user.click(screen.getByRole('button', { name: 'Assign Instructor (1)' }))
 
@@ -71,7 +113,7 @@ describe('Admin Sections', () => {
 
   it('loads only the selected section roster and omits NFC identifiers', async () => {
     const user = userEvent.setup()
-    render(<Sections />)
+    render(<MemoryRouter><Sections /></MemoryRouter>)
 
     await user.click((await screen.findAllByRole('button', { name: 'Show students for Section A' }))[0])
 
@@ -88,7 +130,7 @@ describe('Admin Sections', () => {
       throw new Error(`Unexpected GET ${path}`)
     })
 
-    render(<Sections />)
+    render(<MemoryRouter><Sections /></MemoryRouter>)
 
     expect(await screen.findAllByText('Section B')).toHaveLength(2)
     expect(screen.getByText('2', { selector: 'p' })).toBeTruthy()

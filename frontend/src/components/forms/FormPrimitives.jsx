@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { controlClass } from './formStyles.js'
+import { ModalBody, ModalFooter, ModalHeader, ModalStepper } from '../ModalPrimitives.jsx'
 
 export function InlineFeedback({ type = 'error', children, className = '' }) {
   if (!children) return null
@@ -63,26 +64,7 @@ export function FormSection({ icon: Icon, title, description, children, classNam
 }
 
 export function FormStepper({ steps, currentStep }) {
-  return (
-    <nav aria-label="Form progress" className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
-      <p className="text-sm font-semibold text-[#0B1F3A] sm:hidden">Step {currentStep + 1} of {steps.length}: {steps[currentStep]}</p>
-      <ol className="hidden items-center gap-2 sm:flex">
-        {steps.map((step, index) => {
-          const active = index === currentStep
-          const complete = index < currentStep
-          return (
-            <li key={step} className="flex min-w-0 flex-1 items-center gap-2">
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${active ? 'bg-[#F5B700] text-[#0B1F3A]' : complete ? 'bg-[#0B1F3A] text-white' : 'border border-slate-300 bg-white text-slate-500'}`}>
-                {complete ? <CheckCircle2 className="h-4 w-4" aria-label="Complete" /> : index + 1}
-              </span>
-              <span className={`truncate text-xs font-semibold ${active || complete ? 'text-[#0B1F3A]' : 'text-slate-500'}`}>{step}</span>
-              {index < steps.length - 1 && <span className={`ml-auto h-px flex-1 ${complete ? 'bg-[#0B1F3A]' : 'bg-slate-300'}`} aria-hidden="true" />}
-            </li>
-          )
-        })}
-      </ol>
-    </nav>
-  )
+  return <ModalStepper steps={steps} currentStep={currentStep} ariaLabel="Form progress" />
 }
 
 export function LoadingSpinner({ label = 'Saving' }) {
@@ -102,10 +84,10 @@ export function FormDialog({
   actions,
   headerActions,
   headerIcon,
-  headerClassName = 'border-slate-200 bg-white',
-  titleClassName = 'text-[#0B1F3A]',
-  descriptionClassName = 'text-slate-500',
-  closeButtonClassName = 'border-slate-200 text-slate-600 hover:bg-slate-100 focus:ring-blue-900',
+  headerClassName = 'border-[#082B53] bg-[#082B53]',
+  titleClassName = 'text-white',
+  descriptionClassName = 'text-[#EAF2FB]',
+  closeButtonClassName = 'border-white/30 text-white hover:bg-white/10 hover:text-white focus:ring-[#FFBE0B]',
   asForm = true,
   maxWidth = 'max-w-4xl',
   zIndex = 'z-[var(--tt-layer-modal)]',
@@ -176,26 +158,22 @@ export function FormDialog({
   return createPortal(
     <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-950/65 p-2 sm:p-4`} onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
       <DialogSurface ref={surfaceRef} tabIndex={-1} {...submitProps} className={`flex max-h-[94vh] max-h-[calc(100dvh-1rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-2xl sm:rounded-xl`} role="dialog" aria-modal="true" aria-label={title}>
-        <header className={`sticky top-0 z-20 flex items-start justify-between gap-2 border-b px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 ${headerClassName}`}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              {headerIcon && <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FFBE0B] text-[#082B53]">{headerIcon}</span>}
-              <div className="min-w-0">
-                <h2 className={`break-words text-xl font-bold sm:text-2xl ${titleClassName}`}>{title}</h2>
-                {description && <p className={`mt-1 break-words text-sm ${descriptionClassName}`}>{description}</p>}
-              </div>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {headerActions}
-            <button type="button" onClick={requestClose} disabled={busy} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 disabled:opacity-50 ${closeButtonClassName}`} aria-label="Close dialog">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </header>
+        <ModalHeader
+          title={title}
+          description={description}
+          icon={headerIcon}
+          onClose={requestClose}
+          busy={busy}
+          tone="navy"
+          actions={headerActions}
+          className={headerClassName}
+          titleClassName={titleClassName}
+          descriptionClassName={descriptionClassName}
+          closeButtonClassName={closeButtonClassName}
+        />
         {stepper}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">{children}</div>
-        {actions && <footer className="sticky bottom-0 z-20 border-t border-slate-200 bg-white px-3 py-3 sm:px-6">{actions}</footer>}
+        <ModalBody className="px-3 py-4 sm:px-6 sm:py-5">{children}</ModalBody>
+        {actions && <ModalFooter>{actions}</ModalFooter>}
       </DialogSurface>
     </div>,
     document.body,

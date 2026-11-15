@@ -21,6 +21,7 @@ from .models import (
     InstructorProfile,
     AdminProfile,
     Activity,
+    ActivityAttachment,
     Submission,
     AccessLog,
     AccessLogPhoto,
@@ -556,15 +557,36 @@ class AdminProfileAdmin(admin.ModelAdmin):
             obj.assigned_sections.clear()
 
 
+class ActivityAttachmentInline(admin.TabularInline):
+    model = ActivityAttachment
+    extra = 0
+    fields = ('file', 'original_filename', 'file_size', 'content_type', 'uploaded_at')
+    readonly_fields = ('original_filename', 'file_size', 'content_type', 'uploaded_at')
+    can_delete = True
+    show_change_link = True
+
+
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
-    autocomplete_fields = ('assigned_sections', 'assigned_instructor')
+    inlines = [ActivityAttachmentInline]
+    autocomplete_fields = ('assigned_sections', 'assigned_instructor', 'created_by')
     list_display = ('title', 'created_by', 'assigned_instructor', 'due_date', 'created_at')
-    list_filter = ('created_by', 'due_date')
-    search_fields = ('title', 'description', 'assigned_instructor__first_name', 'assigned_instructor__last_name', 'created_by__first_name', 'created_by__last_name')
+    list_filter = ('created_by', 'due_date', 'status', 'activity_type')
+    search_fields = ('title', 'description', 'instructions', 'assigned_instructor__first_name', 'assigned_instructor__last_name', 'created_by__first_name', 'created_by__last_name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
     date_hierarchy = 'created_at'
+    fieldsets = (
+        ('Overview', {'fields': ('title', 'description', 'instructions', 'activity_type', 'status')}),
+        ('Scheduling', {'fields': ('due_date', 'max_score', 'allow_resubmission')}),
+        ('Assignments', {'fields': ('section', 'assigned_sections', 'assigned_instructor', 'cabinet_station', 'created_by')}),
+        ('Audit', {'fields': ('created_at', 'updated_at')}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
     def formfield_for_manytomany(self, db_field, request, **kwargs):
         field = super().formfield_for_manytomany(db_field, request, **kwargs)
@@ -573,11 +595,12 @@ class ActivityAdmin(admin.ModelAdmin):
         return field
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        if db_field.name == 'assigned_instructor':
+        if db_field.name in {'assigned_instructor', 'created_by'}:
             kwargs['queryset'] = User.objects.filter(role=User.RoleChoices.INSTRUCTOR)
             field = super().formfield_for_foreignkey(db_field, request, **kwargs)
             if field is not None and hasattr(field.widget, 'attrs'):
-                field.widget.attrs.update({'placeholder': 'Choose Instructor...', 'data-placeholder': 'Choose Instructor...'})
+                label = 'Choose Instructor...' if db_field.name == 'assigned_instructor' else 'Choose creator...'
+                field.widget.attrs.update({'placeholder': label, 'data-placeholder': label})
             return field
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 

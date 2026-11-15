@@ -1,10 +1,10 @@
-import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import api from '../../services/api.js'
 import AccessLogPhotoPanel from './AccessLogPhotoPanel.jsx'
 import { formatAccessLogDuration } from './accessLogFormatters.js'
 import StatusBadge from '../StatusBadge.jsx'
-import { X } from 'lucide-react'
+import Modal from '../Modal.jsx'
+import { ShieldCheck } from 'lucide-react'
 
 export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnauthorized }) {
   const resolvedLogId = log?.id ?? logId
@@ -65,21 +65,16 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
     return 'warning'
   }
 
-  return createPortal(
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4">
-      <div className="max-h-[90vh] w-full max-w-[700px] overflow-y-auto rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-xl sm:p-6" role="dialog" aria-modal="true" aria-label="View Access Log">
-        <div className="mb-5 flex items-start justify-between gap-4 rounded-lg border-l-4 border-[#ffc107] bg-[#eef4fa] p-4 sm:p-5">
-          <div>
-            <p className="text-xs font-bold uppercase text-[#526780]">{displayLog.access_type || 'Access event'}</p>
-            <h2 className="mt-1 text-xl font-bold text-[#102a4c] sm:text-2xl">Access Log Details</h2>
-            <p className="mt-1 text-sm text-[#526780]">Event #{displayLog.id || resolvedLogId}</p>
-            <div className="mt-2"><StatusBadge label={displayLog.status || 'Unknown'} tone={statusColor(displayLog.status)} /></div>
-          </div>
-          <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#dbe5f0] bg-white text-[#526780] transition hover:bg-[#f3f6fa] hover:text-[#102a4c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#082b53]" aria-label="Close modal">
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-
+  return (
+      <Modal
+        isOpen={isOpen && Boolean(resolvedLogId)}
+        onClose={onClose}
+        title="Access Log Details"
+        description={`${displayLog.access_type || 'Access event'} · Event #${displayLog.id || resolvedLogId}`}
+        headerIcon={<ShieldCheck size={20} />}
+        headerActions={<StatusBadge label={displayLog.status || 'Unknown'} tone={statusColor(displayLog.status)} />}
+        maxWidth="700px"
+      >
         {formError && (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div>
         )}
@@ -110,13 +105,11 @@ export default function ViewAccessLogModal({ isOpen, logId, log, onClose, onUnau
           <button
             type="button"
             onClick={onClose}
-            className="min-h-10 rounded-lg border border-[#dbe5f0] bg-white px-4 py-2 text-sm font-semibold text-[#102a4c] hover:bg-[#f3f6fa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#082b53]"
+            className="min-h-10 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-[#082B53] hover:bg-slate-50"
           >
             Close
           </button>
         </div>
-      </div>
-    </div>,
-    document.body,
+      </Modal>
   )
 }

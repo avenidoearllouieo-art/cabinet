@@ -121,6 +121,7 @@ export default function App() {
   const [readerContext, setReaderContext] = useState(null)
   const [bridgeConnectionStatus, setBridgeConnectionStatus] = useState('connecting')
   const [workflowLoaded, setWorkflowLoaded] = useState(false)
+  const [workflowBusy, setWorkflowBusy] = useState(false)
   const selectedSession = sessions.find((session) => session.status === 'open' && session.station === selectedStation) || null
   const [serviceStatus, setServiceStatus] = useState(null)
   const [recoveryQueue, setRecoveryQueue] = useState([])
@@ -140,6 +141,20 @@ export default function App() {
   const bridgeErrorRef = useRef('')
   const photoEventIdRef = useRef(null)
   const recoveryAbortControllerRef = useRef(null)
+  const workflowRequestRef = useRef(false)
+  const recoveryStartRef = useRef(false)
+
+  async function runWorkflowCommand(command) {
+    if (workflowRequestRef.current) return null
+    workflowRequestRef.current = true
+    setWorkflowBusy(true)
+    try {
+      return await command()
+    } finally {
+      workflowRequestRef.current = false
+      setWorkflowBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (view !== 'password-recovery' || recoveryPhase !== 'idle') return undefined
@@ -176,10 +191,12 @@ export default function App() {
 
   const beginPasswordRecovery = async (event) => {
     event.preventDefault()
+    if (recoveryStartRef.current) return
     if (!recoveryRequestId) {
       setRecoveryError('Select a password-recovery request first.')
       return
     }
+    recoveryStartRef.current = true
     setRecoveryError('')
     setRecoveryMessage('Contacting the NFC bridge and validating the request…')
     setRecoveryPhase('starting')
@@ -192,6 +209,8 @@ export default function App() {
       setRecoveryPhase('failed')
       setRecoveryMessage('')
       setRecoveryError(error.message || 'Password recovery could not be started.')
+    } finally {
+      recoveryStartRef.current = false
     }
   }
 
@@ -319,7 +338,6 @@ export default function App() {
     fetchCabinetWorkflow()
       .then((data) => {
         if (cancelled) return
-        setBridgeConnectionStatus('connected')
         const stations = (data.stations || []).map((item) => item.name)
         setReaderContext({
           mode: data.mode,
@@ -553,6 +571,10 @@ export default function App() {
       .map((session) => session.station)
   }, [sessions])
   const readerStations = readerContext?.stations || []
+  const bridgeStatusLabel = bridgeConnectionStatus === 'connected'
+    ? 'Connected'
+    : bridgeConnectionStatus === 'unavailable' ? 'Disconnected' : 'Connecting'
+  const bridgeErrorDetail = errorMessage || accessState.message || serviceStatus?.error || ''
 
   function updateStationSession(session) {
     if (!session) return
@@ -660,7 +682,8 @@ export default function App() {
 
     try {
       if (!workflowLoaded) throw new Error('Loading configured stations...')
-      const data = await sendCabinetWorkflow('open', { station })
+      const data = await runWorkflowCommand(() => sendCabinetWorkflow('open', { station }))
+      if (!data) return
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setSelectedStation(data.station)
@@ -699,7 +722,8 @@ export default function App() {
       return
     }
     try {
-      const data = await sendCabinetWorkflow('start_close', { station })
+      const data = await runWorkflowCommand(() => sendCabinetWorkflow('start_close', { station }))
+      if (!data) return
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setSelectedStation(data.station)
@@ -772,6 +796,7 @@ export default function App() {
   }
 
   async function finalizeSession() {
+    if (workflowRequestRef.current) return
     if (pendingAction === 'open') {
       if (!selectedStation || !selectedSession || selectedSession.workflow_state !== 'opening') {
         setErrorMessage('Start an opening workflow for the selected station before opening the cabinet.')
@@ -779,7 +804,8 @@ export default function App() {
         return
       }
       try {
-        const data = await sendCabinetWorkflow('finish_open', { station: selectedStation })
+        const data = await runWorkflowCommand(() => sendCabinetWorkflow('finish_open', { station: selectedStation }))
+        if (!data) return
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
         setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}.`)
@@ -806,7 +832,8 @@ export default function App() {
     }
 
     try {
-      const data = await sendCabinetWorkflow('finish_close', { station: selectedStation })
+      const data = await runWorkflowCommand(() => sendCabinetWorkflow('finish_close', { station: selectedStation }))
+      if (!data) return
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
@@ -821,19 +848,22 @@ export default function App() {
   return (
     <div className="app-root">
       {view === 'home' && (
-        <Screen>
+        <Screen className="home-screen">
           <div className="home-shell">
             <div className="hero-card cabinet-home-card">
               <img className="brand-wordmark" src="/logo1.png" alt="TapTrack" />
               <div className="title-block">
                 <h1 className="title">Cabinet Management</h1>
-                <p className="muted" role="status">
-                  {bridgeConnectionStatus === 'connected'
-                    ? 'Connected to the real NFC bridge.'
-                    : bridgeConnectionStatus === 'unavailable'
-                      ? 'NFC bridge unavailable. Check the NFC service connection.'
-                      : 'Connecting to the NFC bridge…'}
-                </p>
+                <div className={`nfc-indicator is-${bridgeConnectionStatus}`} role="status" aria-live="polite">
+                  <span className={`status-dot ${bridgeConnectionStatus === 'connected' ? 'good' : bridgeConnectionStatus === 'unavailable' ? 'disconnected-dot' : ''}`} />
+                  <strong>NFC {bridgeStatusLabel}</strong>
+                  {bridgeConnectionStatus === 'unavailable' && bridgeErrorDetail && (
+                    <details className="nfc-diagnostics">
+                      <summary>Technical details</summary>
+                      <p>{bridgeErrorDetail}</p>
+                    </details>
+                  )}
+                </div>
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
                 {readerStations.map((station) => {
@@ -848,9 +878,8 @@ export default function App() {
                   )
                 })}
               </div>
-              {accessState.status === 'error' && <p className="muted">{accessState.message}</p>}
               <div className="clock-card">
-                <span className="clock-label">Current time</span>
+                <span className="clock-label">Current date and time</span>
                 <span className="clock-time">{formatDateTime(clock)}</span>
               </div>
             </div>
@@ -866,7 +895,7 @@ export default function App() {
               }}>PASSWORD RECOVERY</button>
               <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
             </div>
-            {errorMessage && <div className="error-banner" role="alert">{errorMessage}</div>}
+            {errorMessage && bridgeConnectionStatus !== 'unavailable' && <div className="error-banner home-error" role="alert">{errorMessage}</div>}
           </div>
         </Screen>
       )}
@@ -1114,10 +1143,10 @@ export default function App() {
                     key={station}
                     className="btn station-button"
                     onClick={() => handleStationSelect(station)}
-                    disabled={Boolean(session && !resuming)}
+                    disabled={workflowBusy || Boolean(session && !resuming)}
                   >
                     <span>{stationLabel(station).toUpperCase()}</span>
-                    <small>{resuming ? 'RESUME OPENING' : session ? 'OCCUPIED' : 'AVAILABLE'}</small>
+                    <small>{workflowBusy ? 'PLEASE WAIT…' : resuming ? 'RESUME OPENING' : session ? 'OCCUPIED' : 'AVAILABLE'}</small>
                   </button>
                 )
               })}
@@ -1148,19 +1177,20 @@ export default function App() {
                       <small>Opened {formatSessionTime(session.openedAt)}</small>
                       <button
                         className="btn primary"
+                        disabled={workflowBusy}
                         onClick={() => session.workflow_state === 'opening'
                           ? resumeOpeningSession(session)
                           : selectSessionToClose(station)}
                       >
                         {session.workflow_state === 'opening'
-                          ? 'RESUME OPENING'
+                          ? workflowBusy ? 'PLEASE WAIT…' : 'RESUME OPENING'
                           : session.workflow_state === 'closing'
-                            ? 'CONTINUE CLOSING'
-                            : `CLOSE ${stationLabel(station).toUpperCase()}`}
+                            ? workflowBusy ? 'PLEASE WAIT…' : 'CONTINUE CLOSING'
+                            : workflowBusy ? 'PLEASE WAIT…' : `CLOSE ${stationLabel(station).toUpperCase()}`}
                       </button>
                     </> : <>
                       <span>No active session</span>
-                      <button className="btn ghost" onClick={() => selectSessionToClose(station)}>CLOSE {stationLabel(station).toUpperCase()}</button>
+                      <button className="btn ghost" onClick={() => selectSessionToClose(station)} disabled={workflowBusy}>{workflowBusy ? 'PLEASE WAIT…' : `CLOSE ${stationLabel(station).toUpperCase()}`}</button>
                     </>}
                   </div>
                 )
@@ -1313,7 +1343,7 @@ export default function App() {
               {pendingAction === 'open'
                 ? <button className="btn ghost" onClick={() => setView('participant-scan')}>BACK</button>
                 : <button className="btn ghost" onClick={() => setView('close-scan')}>BACK TO SCANNING</button>}
-              <button className="btn primary" onClick={finalizeSession}>{pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE ${stationLabel(selectedStation).toUpperCase()}`}</button>
+              <button className="btn primary" onClick={finalizeSession} disabled={workflowBusy}>{workflowBusy ? pendingAction === 'open' ? 'OPENING…' : 'CLOSING…' : pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE ${stationLabel(selectedStation).toUpperCase()}`}</button>
             </div>
           </div>
         </Screen>
@@ -1396,11 +1426,14 @@ export default function App() {
             <p className="muted">Current cabinet state and session history.</p>
             {serviceStatus && (
               <div className="status-card" role="status">
-                <strong>NFC bridge: {serviceStatus.service === 'ready' ? 'Connected' : 'Unavailable'}</strong>
+                <strong>NFC bridge: {serviceStatus.service === 'ready' ? 'Connected' : 'Disconnected'}</strong>
                 {serviceStatus.reader_connected !== undefined && (
                   <p>Physical NFC reader: {serviceStatus.reader_connected ? 'Connected' : 'Waiting for reader'}</p>
                 )}
-                {serviceStatus.error && <p role="alert">{serviceStatus.error}</p>}
+                {serviceStatus.error && <details className="nfc-diagnostics">
+                  <summary>Technical details</summary>
+                  <p>{serviceStatus.error}</p>
+                </details>}
               </div>
             )}
             <div className="status-list">

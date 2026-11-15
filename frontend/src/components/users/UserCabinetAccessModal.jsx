@@ -1,7 +1,7 @@
-import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ChevronLeft, ChevronRight, ShieldCheck } from 'lucide-react'
 import api from '../../services/api.js'
+import Modal from '../Modal.jsx'
 
 function formatDate(value) {
   if (!value) return '—'
@@ -36,14 +36,6 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
   const [hasPrevious, setHasPrevious] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const dialogRef = useRef(null)
-  const closeButtonRef = useRef(null)
-  const onCloseRef = useRef(onClose)
-
-  useEffect(() => {
-    onCloseRef.current = onClose
-  }, [onClose])
-
   useEffect(() => {
     if (!isOpen || !userId) return undefined
 
@@ -73,61 +65,32 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
     return () => { active = false }
   }, [isOpen, userId, page])
 
-  useEffect(() => {
-    if (!isOpen) return undefined
-
-    const previousFocus = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus({ preventScroll: true }), 0)
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        onCloseRef.current?.()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusable = [...(dialogRef.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') || [])]
-        .filter((element) => element.getClientRects().length)
-      if (!focusable.length) {
-        event.preventDefault()
-        dialogRef.current?.focus()
-        return
-      }
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.clearTimeout(focusTimer)
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', handleKeyDown)
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
-    }
-  }, [isOpen])
-
   if (!isOpen) return null
 
-  return createPortal(
-    <div className="fixed inset-0 z-[var(--tt-layer-popover)] flex items-center justify-center bg-slate-950/50 p-2 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
-      <section ref={dialogRef} tabIndex={-1} className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-[#dbe5f0] bg-white shadow-2xl sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="user-access-title">
-        <header className="flex items-start justify-between gap-4 border-b border-[#dbe5f0] border-l-4 border-l-[#ffc107] bg-[#eef4fa] px-4 py-4 sm:px-6">
-          <div className="min-w-0">
-            <h2 id="user-access-title" className="break-words text-lg font-semibold text-slate-900 sm:text-xl">Cabinet Access — {fullName}</h2>
-            <p className="mt-1 text-sm text-slate-500">Access records for this user only.</p>
+  return (
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={`Cabinet Access — ${fullName}`}
+        description="Access records for this user only."
+        headerIcon={<ShieldCheck size={20} />}
+        closeLabel="Close cabinet access history"
+        maxWidth="min(100vw, 1152px)"
+        footer={(
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-500">Page {page}</span>
+            <div className="flex gap-2">
+              <button type="button" disabled={!hasPrevious || loading} onClick={() => setPage((current) => Math.max(1, current - 1))} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm text-[#082B53] disabled:cursor-not-allowed disabled:opacity-50">
+                <ChevronLeft size={16} /> Previous
+              </button>
+              <button type="button" disabled={!hasNext || loading} onClick={() => setPage((current) => current + 1)} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm text-[#082B53] disabled:cursor-not-allowed disabled:opacity-50">
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
-          <button ref={closeButtonRef} type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffc107]" aria-label="Close cabinet access history">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        )}
+      >
+        <div className="space-y-4">
           {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           {loading ? (
             <p className="py-10 text-center text-sm text-slate-500">Loading access history…</p>
@@ -186,20 +149,6 @@ export default function UserCabinetAccessModal({ isOpen, userId, fullName, onClo
             </div>
           ) : null}
         </div>
-
-        <footer className="flex items-center justify-between border-t border-slate-200 px-5 py-3 sm:px-6">
-          <span className="text-xs text-slate-500">Page {page}</span>
-          <div className="flex gap-2">
-            <button type="button" disabled={!hasPrevious || loading} onClick={() => setPage((current) => Math.max(1, current - 1))} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-              <ChevronLeft size={16} /> Previous
-            </button>
-            <button type="button" disabled={!hasNext || loading} onClick={() => setPage((current) => current + 1)} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-              Next <ChevronRight size={16} />
-            </button>
-          </div>
-        </footer>
-      </section>
-    </div>,
-    document.body,
+      </Modal>
   )
 }

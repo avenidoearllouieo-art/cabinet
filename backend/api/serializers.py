@@ -273,6 +273,7 @@ class UserSerializer(serializers.ModelSerializer):
     )
     last_access_status = serializers.SerializerMethodField()
     last_access_time = serializers.SerializerMethodField()
+    nfc_registered = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -302,6 +303,7 @@ class UserSerializer(serializers.ModelSerializer):
             'attendance_percentage',
             'last_access_status',
             'last_access_time',
+            'nfc_registered',
             'created_at',
             'updated_at'
         ]
@@ -340,6 +342,9 @@ class UserSerializer(serializers.ModelSerializer):
             return last_log.access_time.isoformat()
         except Exception:
             return None
+
+    def get_nfc_registered(self, obj):
+        return bool(obj.nfc_uid)
 
     def validate(self, attrs):
         role = attrs.get('role', getattr(self.instance, 'role', User.RoleChoices.STUDENT))

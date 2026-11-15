@@ -38,6 +38,8 @@ describe('InstructorSectionStudents', () => {
     expect(screen.getByText('ST-8')).toBeTruthy()
     expect(screen.queryByText('NFC UID')).toBeNull()
     expect(screen.queryByText('STUDENT-UID-PRIVATE')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit User' })).toBeNull()
+    expect(screen.queryByText('Action')).toBeNull()
     expect(api.get).toHaveBeenCalledWith('/users/', { params: { section: '3', role: 'student', page: 1 } })
     expect(screen.getByRole('searchbox', { name: 'Search students' }).getAttribute('placeholder')).toBe('Search student ID, name, or email')
   })

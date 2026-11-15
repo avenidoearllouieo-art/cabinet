@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 
-export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName, variant = 'default', expandable = false, renderExpandedRow, renderMobileCard, constrainTableHeight = true }) {
+export default function DataTable({ columns, data, rows, loading, onRowClick, showActions = true, emptyMessage = 'No data available', rowClassName, variant = 'default', expandable = false, renderExpandedRow, renderMobileCard, constrainTableHeight = true, tableClassName = 'w-full min-w-[680px] table-auto border-collapse text-xs sm:text-sm', tableWrapperClassName = '' }) {
   const tableData = Array.isArray(data) ? data : Array.isArray(rows) ? rows : []
   const hasData = tableData.length > 0
   const addActionsColumn = showActions && !columns.some((c) => c.key === 'actions')
@@ -141,8 +141,8 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
       </div>
       ) : (
       <div>
-      <div className={`relative overflow-x-auto ${constrainTableHeight ? 'max-h-[600px] overflow-y-auto' : 'overflow-y-visible'}`}>
-      <table className="w-full min-w-[680px] table-auto border-collapse text-xs sm:text-sm">
+      <div className={`relative overflow-x-auto ${tableWrapperClassName || ''} ${constrainTableHeight ? 'max-h-[600px] overflow-y-auto' : 'overflow-y-visible'}`}>
+      <table className={tableClassName}>
         <thead className="bg-[#f7f9fc]">
           <tr>
             {expandable && <th className="w-10 border-b border-[#dfe5eb] bg-[#f7f9fc] px-2 py-3 text-center text-xs font-semibold uppercase text-[#64748b]" aria-label="Expand row">+</th>}

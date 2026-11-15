@@ -121,12 +121,10 @@ describe('Cabinet real NFC bridge mode', () => {
 
     render(<App />)
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('status').some((element) => (
-        element.textContent.includes('NFC bridge unavailable. Check the NFC service connection.')
-      ))).toBe(true)
-    })
-    expect(screen.getByRole('alert').textContent).toContain('NFC bridge unavailable. Check the NFC service connection.')
+    await waitFor(() => expect(screen.getByText('NFC Disconnected')).toBeTruthy())
+    expect(screen.queryByRole('alert')).toBeNull()
+    await userEvent.setup().click(screen.getByText('Technical details'))
+    expect(screen.getByText('NFC bridge unavailable. Check the NFC service connection.')).toBeTruthy()
     expect(screen.queryByLabelText('Mock NFC UID')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Use Pi mock reader' })).toBeNull()
     expect(fetcher).toHaveBeenCalledWith(

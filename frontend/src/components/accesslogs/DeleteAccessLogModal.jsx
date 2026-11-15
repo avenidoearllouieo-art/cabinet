@@ -1,6 +1,6 @@
-import { createPortal } from 'react-dom'
 import { useState } from 'react'
 import api from '../../services/api.js'
+import ConfirmationDialog from '../ConfirmationDialog.jsx'
 
 export default function DeleteAccessLogModal({ isOpen, log, onClose, onUnauthorized, onDeleted }) {
   const resolvedLogId = log?.id
@@ -44,79 +44,17 @@ export default function DeleteAccessLogModal({ isOpen, log, onClose, onUnauthori
 
   if (!isOpen) return null
 
-  return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-[520px] rounded-xl border border-rose-200 bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold text-[#0F172A]">Delete Access Log</h2>
-            <p className="mt-1 text-sm text-[#6B7280]">Are you sure you want to permanently delete this access log?</p>
-          </div>
-          <button type="button" onClick={onClose} className="text-xl font-bold text-[#475569] transition hover:text-[#0F172A]" aria-label="Close modal">
-            ×
-          </button>
-        </div>
-
-        {errorMessage && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errorMessage}
-          </div>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <p className="text-sm font-medium text-slate-700">Username</p>
-            <p className="mt-1 text-sm text-slate-900">{username}</p>
-          </div>
-          <div>
-            <p className="text-sm font-medium text-slate-700">Email</p>
-            <p className="mt-1 text-sm text-slate-900">{userEmail}</p>
-          </div>
-          <div>
-            <p className="text-sm font-medium text-slate-700">Role</p>
-            <p className="mt-1 text-sm text-slate-900">{log?.role || '—'}</p>
-          </div>
-          <div className="sm:col-span-2">
-            <p className="text-sm font-medium text-slate-700">Login Time</p>
-            <p className="mt-1 text-sm text-slate-900">
-              {log?.login_time
-                ? new Intl.DateTimeFormat('en-US', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  }).format(new Date(log.login_time))
-                : '—'}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 rounded-2xl bg-[#F8FAFC] p-4 text-sm text-[#475569]">This action cannot be undone.</div>
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={saving}
-            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60"
-          >
-            {saving && (
-              <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-                <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" className="opacity-75" />
-              </svg>
-            )}
-            Delete Log
-          </button>
-        </div>
+  return (
+    <ConfirmationDialog isOpen={isOpen} title="Delete Access Log" description="Permanently remove this access log." confirmLabel="Delete Log" busyLabel="Deleting..." busy={saving} destructive onConfirm={handleDelete} onCancel={onClose}>
+      <div className="space-y-4">
+        {errorMessage && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{errorMessage}</div>}
+        <dl className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2"><dt className="text-sm font-semibold text-[#082B53]">Username</dt><dd className="mt-1 break-all text-sm text-slate-700">{username}</dd></div>
+          <div><dt className="text-sm font-semibold text-[#082B53]">Email</dt><dd className="mt-1 break-all text-sm text-slate-700">{userEmail}</dd></div>
+          <div><dt className="text-sm font-semibold text-[#082B53]">Role</dt><dd className="mt-1 text-sm text-slate-700">{log?.role || '—'}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-sm font-semibold text-[#082B53]">Login Time</dt><dd className="mt-1 text-sm text-slate-700">{log?.login_time ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(log.login_time)) : '—'}</dd></div>
+        </dl>
       </div>
-    </div>,
-    document.body,
+    </ConfirmationDialog>
   )
 }
