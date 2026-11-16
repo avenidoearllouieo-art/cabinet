@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, CheckCircle2, Download, FileSpreadsheet, FileText, Upload, X } from 'lucide-react'
 import api from '../../services/api.js'
 import { FormDialog } from '../forms/FormPrimitives.jsx'
@@ -15,6 +15,11 @@ function formatError(data) {
 }
 
 export default function UserImportWizard({ isOpen, onClose, onImported }) {
+  if (!isOpen) return null
+  return <UserImportWizardContent onClose={onClose} onImported={onImported} />
+}
+
+function UserImportWizardContent({ onClose, onImported }) {
   const [step, setStep] = useState(0)
   const [role, setRole] = useState('student')
   const [fileFormat, setFileFormat] = useState('xlsx')
@@ -24,17 +29,6 @@ export default function UserImportWizard({ isOpen, onClose, onImported }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef(null)
-
-  useEffect(() => {
-    if (!isOpen) return
-    setStep(0)
-    setRole('student')
-    setFileFormat('xlsx')
-    setFiles([])
-    setPreview(null)
-    setResult(null)
-    setError('')
-  }, [isOpen])
 
   const chooseFiles = (selectedFiles, inputElement) => {
     const accepted = []
@@ -168,7 +162,7 @@ export default function UserImportWizard({ isOpen, onClose, onImported }) {
 
   return (
     <FormDialog
-      isOpen={isOpen}
+      isOpen
       title="Import Users"
       description="Add students or instructors from validated spreadsheets."
       headerIcon={<FileSpreadsheet size={20} />}

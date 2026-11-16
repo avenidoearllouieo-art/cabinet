@@ -76,7 +76,7 @@ describe('access-log photo role views', () => {
   })
 
   it.each([
-    ['Admin', AdminAccessLogs, 501, 'View Access Log'],
+    ['Admin', AdminAccessLogs, 501, 'Access Log Details'],
     ['Instructor', InstructorAccessLogs, 502, 'Cabinet Access Log Details'],
     ['Student', StudentAccessLogs, 503, 'Cabinet Access Log Details'],
   ])('%s displays its own row photo and event details photo', async (role, Page, eventId, dialogName) => {

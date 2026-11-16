@@ -67,4 +67,20 @@ describe('UserImportWizard', () => {
     expect(screen.getByText('Successfully imported')).toBeTruthy()
     expect(imported).toHaveBeenCalledWith({ successfully_imported: 1, skipped: 1, failed: 0, errors: [] })
   })
+
+  it('starts a fresh import workflow when reopened', () => {
+    const onClose = vi.fn()
+    const view = render(<UserImportWizard isOpen onClose={onClose} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import Instructors' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(screen.getByRole('heading', { name: 'Upload Instructor file' })).toBeTruthy()
+
+    view.rerender(<UserImportWizard isOpen={false} onClose={onClose} />)
+    view.rerender(<UserImportWizard isOpen onClose={onClose} />)
+
+    expect(screen.getByRole('heading', { name: 'Choose user type' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Import Students' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Import Instructors' }).getAttribute('aria-pressed')).toBe('false')
+  })
 })

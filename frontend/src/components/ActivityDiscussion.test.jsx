@@ -54,7 +54,9 @@ describe('ActivityDiscussion', () => {
     fireEvent.click(sendButton)
 
     expect(await screen.findByText(savedMessage.message)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'notes.pdf' })).toBeTruthy()
+    expect(screen.getByText('notes.pdf')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open File' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Download' })).toBeTruthy()
     expect(screen.getAllByRole('article')).toHaveLength(2)
     expect(api.post).toHaveBeenCalledTimes(1)
     expect(api.get).toHaveBeenCalledTimes(1)

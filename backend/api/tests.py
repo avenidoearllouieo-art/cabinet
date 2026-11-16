@@ -31,6 +31,97 @@ from .models import AccessLog, AccessLogPhoto, ActivityDiscussion, ActivityDiscu
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
+    def test_render_environment_selects_postgresql_and_secure_persistent_media(self):
+        environment = os.environ.copy()
+        environment.update({
+            'DJANGO_DEBUG': 'false',
+            'DJANGO_SECRET_KEY': 'render-settings-test-secret',
+            'DATABASE_URL': 'postgresql://taptrack:test-password@db.example.com:5432/taptrack',
+            'RENDER_EXTERNAL_HOSTNAME': 'taptrack-api.onrender.com',
+            'DJANGO_CORS_ALLOWED_ORIGINS': 'https://taptrack-ui.onrender.com',
+            'DJANGO_CSRF_TRUSTED_ORIGINS': 'https://taptrack-ui.onrender.com',
+            'DJANGO_MEDIA_ROOT': '/var/data/media',
+            'DJANGO_FILE_UPLOAD_TEMP_DIR': '/var/data/tmp',
+        })
+        script = '''
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+from config import settings
+print(json.dumps({
+    'debug': settings.DEBUG,
+    'secret_key': settings.SECRET_KEY,
+    'database_engine': settings.DATABASES['default']['ENGINE'],
+    'allowed_hosts': settings.ALLOWED_HOSTS,
+    'cors_origins': settings.CORS_ALLOWED_ORIGINS,
+    'csrf_origins': settings.CSRF_TRUSTED_ORIGINS,
+    'media_root': settings.MEDIA_ROOT.as_posix(),
+    'file_upload_temp_dir': settings.FILE_UPLOAD_TEMP_DIR,
+    'ssl_redirect': settings.SECURE_SSL_REDIRECT,
+    'secure_cookies': settings.SESSION_COOKIE_SECURE and settings.CSRF_COOKIE_SECURE,
+    'proxy_ssl_header': settings.SECURE_PROXY_SSL_HEADER,
+    'static_root': str(settings.STATIC_ROOT),
+}))
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', script, str(settings.BASE_DIR)],
+            cwd=settings.BASE_DIR.parent,
+            env=environment,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        configured = json.loads(result.stdout)
+        self.assertFalse(configured['debug'])
+        self.assertEqual(configured['secret_key'], 'render-settings-test-secret')
+        self.assertEqual(configured['database_engine'], 'django.db.backends.postgresql')
+        self.assertIn('taptrack-api.onrender.com', configured['allowed_hosts'])
+        self.assertEqual(configured['cors_origins'], ['https://taptrack-ui.onrender.com'])
+        self.assertEqual(configured['csrf_origins'], ['https://taptrack-ui.onrender.com'])
+        self.assertEqual(configured['media_root'], '/var/data/media')
+        self.assertEqual(configured['file_upload_temp_dir'], '/var/data/tmp')
+        self.assertTrue(configured['ssl_redirect'])
+        self.assertTrue(configured['secure_cookies'])
+        self.assertEqual(configured['proxy_ssl_header'], ['HTTP_X_FORWARDED_PROTO', 'https'])
+        self.assertEqual(configured['static_root'], str(settings.BASE_DIR / 'staticfiles'))
+
+    def test_local_environment_without_database_url_keeps_sqlite(self):
+        environment = os.environ.copy()
+        for name in (
+            'DATABASE_URL',
+            'RENDER_EXTERNAL_HOSTNAME',
+            'DJANGO_MEDIA_ROOT',
+            'DJANGO_FILE_UPLOAD_TEMP_DIR',
+        ):
+            environment.pop(name, None)
+        environment['DJANGO_DEBUG'] = 'true'
+        environment['DJANGO_SECRET_KEY'] = 'local-settings-test-secret'
+        script = '''
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+from config import settings
+print(json.dumps({
+    'database_engine': settings.DATABASES['default']['ENGINE'],
+    'media_root': str(settings.MEDIA_ROOT),
+    'ssl_redirect': settings.SECURE_SSL_REDIRECT,
+}))
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', script, str(settings.BASE_DIR)],
+            cwd=settings.BASE_DIR.parent,
+            env=environment,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        configured = json.loads(result.stdout)
+        self.assertEqual(configured['database_engine'], 'django.db.backends.sqlite3')
+        self.assertEqual(configured['media_root'], str(settings.BASE_DIR / 'media'))
+        self.assertFalse(configured['ssl_redirect'])
+
     def test_allowed_hosts_are_parsed_from_comma_separated_environment_value(self):
         expected_hosts = ['localhost', '127.0.0.1', '192.168.1.43']
         environment = os.environ.copy()

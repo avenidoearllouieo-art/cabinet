@@ -13,35 +13,49 @@ function formatBytes(value) {
 }
 
 export default function FilePreviewModal({ attachment, kind, onClose }) {
-  const [file, setFile] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [contentLoading, setContentLoading] = useState(true)
-  const [error, setError] = useState('')
   const attachmentId = attachment?.id
+  const [previewState, setPreviewState] = useState({
+    attachmentId: null,
+    kind: null,
+    file: null,
+    loading: false,
+    contentLoading: false,
+    error: '',
+  })
+  const hasCurrentPreview = previewState.attachmentId === attachmentId && previewState.kind === kind
+  const file = hasCurrentPreview ? previewState.file : null
+  const loading = attachmentId != null && (!hasCurrentPreview || previewState.loading)
+  const contentLoading = attachmentId != null && (!hasCurrentPreview || previewState.contentLoading)
+  const error = hasCurrentPreview ? previewState.error : ''
 
   useEffect(() => {
-    if (attachmentId == null) {
-      setFile(null)
-      setLoading(false)
-      setContentLoading(false)
-      setError('')
-      return undefined
-    }
+    if (attachmentId == null) return undefined
     let active = true
-    setFile(null)
-    setLoading(true)
-    setContentLoading(true)
-    setError('')
 
     authorizeAcademicFile(kind, attachmentId)
       .then((authorizedFile) => {
-        if (active) setFile(authorizedFile)
+        if (active) {
+          setPreviewState({
+            attachmentId,
+            kind,
+            file: authorizedFile,
+            loading: false,
+            contentLoading: true,
+            error: '',
+          })
+        }
       })
       .catch(() => {
-        if (active) setError('File unavailable. It may have been moved or deleted.')
-      })
-      .finally(() => {
-        if (active) setLoading(false)
+        if (active) {
+          setPreviewState({
+            attachmentId,
+            kind,
+            file: null,
+            loading: false,
+            contentLoading: false,
+            error: 'File unavailable. It may have been moved or deleted.',
+          })
+        }
       })
 
     return () => {
@@ -52,15 +66,24 @@ export default function FilePreviewModal({ attachment, kind, onClose }) {
 
   if (!attachment) return null
 
-  const setReady = () => setContentLoading(false)
+  const updateCurrentPreview = (updates) => {
+    setPreviewState((current) => (
+      current.attachmentId === attachmentId && current.kind === kind
+        ? { ...current, ...updates }
+        : current
+    ))
+  }
+  const setReady = () => updateCurrentPreview({ contentLoading: false })
   const handleContentError = () => {
-    setContentLoading(false)
-    setError('File unavailable. The stored file could not be retrieved.')
+    updateCurrentPreview({
+      contentLoading: false,
+      error: 'File unavailable. The stored file could not be retrieved.',
+    })
   }
   const previewSupported = file?.preview_supported
   const previewType = file?.preview_type
   const previewError = attachmentId == null ? 'File unavailable.' : error
-  const previewLoading = loading && attachmentId != null
+  const previewLoading = loading
   const filename = file?.filename || attachment.filename || attachment.file_name || 'File preview'
   const fileSize = formatBytes(file?.size ?? attachment.size ?? attachment.file_size)
 
