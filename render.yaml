@@ -1,16 +1,11 @@
 services:
   - type: web
-    name: taptrack-api
+    name: taptrack-api-free-test
     runtime: python
     rootDir: .
-    plan: 0.5c-512mb
+    plan: free
     buildCommand: bash backend/build.sh
-    preDeployCommand: python backend/manage.py migrate --noinput
-    startCommand: mkdir -p "${DJANGO_MEDIA_ROOT:-/var/data/media}" "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/var/data/tmp}" && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
-    disk:
-      name: taptrack-media
-      mountPath: /var/data
-      sizeGB: 10
+    startCommand: python backend/manage.py migrate --noinput && mkdir -p "${DJANGO_MEDIA_ROOT:-/tmp/taptrack-media}" "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/tmp/taptrack-tmp}" && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
@@ -18,12 +13,12 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: taptrack-postgres
+          name: taptrack-postgres-free-test
           property: connectionString
       - key: DJANGO_MEDIA_ROOT
-        value: /var/data/media
+        value: /tmp/taptrack-media
       - key: DJANGO_FILE_UPLOAD_TEMP_DIR
-        value: /var/data/tmp
+        value: /tmp/taptrack-tmp
       - key: DJANGO_CORS_ALLOWED_ORIGINS
         sync: false
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
@@ -34,7 +29,7 @@ services:
         sync: false
 
   - type: web
-    name: taptrack-web
+    name: taptrack-web-free-test
     runtime: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
@@ -48,4 +43,5 @@ services:
         sync: false
 
 databases:
-  - name: taptrack-postgres
+  - name: taptrack-postgres-free-test
+    plan: free
