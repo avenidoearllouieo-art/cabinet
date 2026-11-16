@@ -5,7 +5,7 @@ services:
     rootDir: .
     plan: free
     buildCommand: bash backend/build.sh
-    startCommand: python backend/manage.py migrate --noinput && mkdir -p "${DJANGO_MEDIA_ROOT:-/tmp/taptrack-media}" "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/tmp/taptrack-tmp}" && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: mkdir -p "${DJANGO_MEDIA_ROOT:-/tmp/taptrack-media}" "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/tmp/taptrack-tmp}" && python backend/manage.py migrate --noinput && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
