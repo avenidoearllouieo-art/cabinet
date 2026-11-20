@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import AccessPhotoDetails from './components/AccessPhotoDetails'
+import { getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
-import { fetchAccessLogPhoto, getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 import {
   cancelPasswordRecovery,
@@ -131,11 +130,11 @@ export default function App() {
   const [selectedStation, setSelectedStation] = useState(null)
   const [participants, setParticipants] = useState([])
   const [pendingRegistration, setPendingRegistration] = useState(null)
+  const [registrationCountdown, setRegistrationCountdown] = useState(60)
   const [closedSession, setClosedSession] = useState(null)
   const [closingParticipants, setClosingParticipants] = useState([])
   const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
   const [scanFeedback, setScanFeedback] = useState(null)
-  const [scanPhoto, setScanPhoto] = useState(null)
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
   const [motorStatusMessage, setMotorStatusMessage] = useState('Motor dispatch has not been reported for this session.')
   const [errorMessage, setErrorMessage] = useState('')
@@ -162,10 +161,37 @@ export default function App() {
   const bridgePollingRef = useRef(false)
   const bridgeAbortControllerRef = useRef(null)
   const bridgeErrorRef = useRef('')
-  const photoEventIdRef = useRef(null)
   const recoveryAbortControllerRef = useRef(null)
   const workflowRequestRef = useRef(false)
   const recoveryStartRef = useRef(false)
+
+  useEffect(() => {
+    if (!pendingRegistration?.registrationUrl) {
+      setRegistrationCountdown(60)
+      return undefined
+    }
+    setRegistrationCountdown(60)
+    let seconds = 60
+    const intervalId = window.setInterval(() => {
+      seconds -= 1
+      setRegistrationCountdown(seconds)
+      if (seconds <= 0) {
+        window.clearInterval(intervalId)
+        const token = new URL(pendingRegistration.registrationUrl).searchParams.get('token')
+        if (token) {
+          void fetch('/api/cabinet/enrollment/cancel/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ token }),
+            cache: 'no-store',
+          }).catch(() => {})
+        }
+        setPendingRegistration(null)
+        setView('registration-expired')
+      }
+    }, 1000)
+    return () => window.clearInterval(intervalId)
+  }, [pendingRegistration?.registrationUrl])
 
   async function runWorkflowCommand(command) {
     if (workflowRequestRef.current) return null
@@ -319,40 +345,6 @@ export default function App() {
     }
   }, [view, recoveryPhase, recoveryRequestId])
 
-  const loadScanPhoto = useCallback((event) => {
-    const eventId = getDjangoAccessLogEventId(event)
-    if (!eventId) {
-      photoEventIdRef.current = null
-      setScanPhoto({ state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
-      return
-    }
-
-    photoEventIdRef.current = eventId
-    setScanPhoto({ eventId, state: 'pending', label: 'Pending', imageBlob: null, diagnosticError: null })
-    const refreshPhoto = async () => {
-      for (let attempt = 0; attempt < PHOTO_STATUS_ATTEMPTS; attempt += 1) {
-        if (photoEventIdRef.current !== eventId) return
-        try {
-          const photo = await fetchAccessLogPhoto(eventId)
-          if (photoEventIdRef.current !== eventId) return
-          if (photo.state !== 'pending' && photo.captureStatus !== null) {
-            setScanPhoto(photo)
-            return
-          }
-        } catch {
-          // A fresh capture may still be in progress while the status endpoint recovers.
-        }
-        if (attempt + 1 < PHOTO_STATUS_ATTEMPTS) {
-          await new Promise((resolve) => window.setTimeout(resolve, PHOTO_STATUS_RETRY_DELAY_MS))
-        }
-      }
-      if (photoEventIdRef.current === eventId) {
-        setScanPhoto({ eventId, state: 'unavailable', label: 'Unavailable', imageBlob: null, diagnosticError: null })
-      }
-    }
-    void refreshPhoto()
-  }, [])
-
   const requestScanPhotoCapture = useCallback((event) => {
     const eventId = getDjangoAccessLogEventId(event)
     if (!eventId) return
@@ -493,7 +485,6 @@ export default function App() {
       }
 
       requestScanPhotoCapture(event)
-      loadScanPhoto(event)
 
       nfcScanCursorRef.current = eventId
       try {
@@ -568,7 +559,7 @@ export default function App() {
       window.clearInterval(intervalId)
       bridgeAbortControllerRef.current?.abort()
     }
-  }, [view, selectedSession, loadScanPhoto, requestScanPhotoCapture])
+  }, [view, selectedSession, requestScanPhotoCapture])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined
@@ -628,8 +619,6 @@ export default function App() {
     setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
-    setScanPhoto(null)
-    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Ready for the next cabinet session.')
   }
@@ -644,8 +633,6 @@ export default function App() {
     setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
-    setScanPhoto(null)
-    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Choose a station to begin.')
     setView('station-select')
@@ -658,8 +645,6 @@ export default function App() {
     setClosingParticipants([])
     setCloseRejectedStudent('')
     setScanFeedback(null)
-    setScanPhoto(null)
-    photoEventIdRef.current = null
     setErrorMessage('')
     if (!sessions.some((session) => session.status === 'open')) {
       setView('close-select')
@@ -767,11 +752,29 @@ export default function App() {
   function retryCloseScan() {
     setCloseRejectedStudent('')
     setScanFeedback(null)
-    setScanPhoto(null)
-    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage('Tap NFC cards to record closing attendance.')
     setView('close-scan')
+  }
+
+  async function cancelRegistration() {
+    const registrationUrl = pendingRegistration?.registrationUrl
+    const token = registrationUrl ? new URL(registrationUrl).searchParams.get('token') : null
+    if (token) {
+      try {
+        await fetch('/api/cabinet/enrollment/cancel/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ token }),
+          cache: 'no-store',
+        })
+      } catch {
+        // The backend remains the source of truth for session validity.
+      }
+    }
+    setPendingRegistration(null)
+    setRegistrationCountdown(60)
+    resumeParticipantScan({ skipped: true })
   }
 
   function openRegistrationPage() {
@@ -787,8 +790,6 @@ export default function App() {
     setPendingRegistration(null)
     setAccessState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
     setScanFeedback(null)
-    setScanPhoto(null)
-    photoEventIdRef.current = null
     setErrorMessage('')
     setStatusMessage(skipped
       ? `${participants.length} participants ready. The unregistered card was skipped.`
@@ -1023,7 +1024,7 @@ export default function App() {
               <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
               <span>{statusMessage || 'Tap NFC cards to record closing attendance.'}</span>
             </div>
-            <AccessPhotoDetails photo={scanPhoto} />
+            <div className="photo-captured-indicator" role="status">Photo Captured</div>
             <div className="confirm-list">
               <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
               <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
@@ -1089,15 +1090,14 @@ export default function App() {
       {view === 'unregistered-card' && (
         <Screen>
           <div className="panel status-panel">
-            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>NFC CARD NOT REGISTERED</strong></div>
-            <h2>This card is not linked to a student.</h2>
-            <p className="muted">Your scanned participants are saved. Register this card, skip it, or return to scanning.</p>
+            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>ID CARD NOT REGISTERED</strong></div>
+            <h2>This ID card is not linked to a TapTrack account.</h2>
+            <p className="muted">Your added participants are saved. Register this ID card, skip it, or return to card tapping.</p>
             <div className="confirm-list">
               <div className="confirm-row">
                 <span>Participants already scanned</span>
                 <strong>{participants.length}</strong>
               </div>
-              <AccessPhotoDetails photo={scanPhoto} />
               <div className="participant-list">
                 {participants.map((participant) => (
                   <div key={participant.uid} className="participant-card">
@@ -1108,14 +1108,30 @@ export default function App() {
               </div>
             </div>
             {pendingRegistration?.registrationUrl && (
-              <div className="registration-qr">
-                <QRCodeSVG value={pendingRegistration.registrationUrl} size={280} bgColor="#ffffff" fgColor="#002B5B" level="M" />
-              </div>
+              <>
+                <div className="registration-qr">
+                  <QRCodeSVG value={pendingRegistration.registrationUrl} size={280} bgColor="#ffffff" fgColor="#002B5B" level="M" />
+                </div>
+                <p className="muted" role="timer">Registration QR expires in {registrationCountdown} seconds.</p>
+              </>
             )}
             <div className="button-row stacked">
-              <button className="btn primary registration-link" type="button" onClick={openRegistrationPage} disabled={!pendingRegistration?.registrationUrl}>REGISTER THIS CARD</button>
+              <button className="btn primary registration-link" type="button" onClick={openRegistrationPage} disabled={!pendingRegistration?.registrationUrl}>REGISTER ID CARD</button>
+              <button className="btn secondary" type="button" onClick={cancelRegistration}>Cancel Registration</button>
               <button className="btn secondary" onClick={() => resumeParticipantScan({ skipped: true })}>SKIP FOR NOW</button>
-              <button className="btn ghost" onClick={() => resumeParticipantScan()}>BACK TO SCANNING</button>
+              <button className="btn ghost" onClick={() => resumeParticipantScan()}>BACK TO CARD TAPPING</button>
+            </div>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'registration-expired' && (
+        <Screen>
+          <div className="panel status-panel">
+            <h2>Registration Expired</h2>
+            <p className="muted">Your registration session has expired. Tap your ID card again to start a new session.</p>
+            <div className="button-row">
+              <button className="btn primary" type="button" onClick={resetToHome}>Back to Card Tapping</button>
             </div>
           </div>
         </Screen>
@@ -1141,7 +1157,7 @@ export default function App() {
             )}
             <div className="button-row">
               <button className="btn secondary" type="button" onClick={() => setView('unregistered-card')}>BACK TO CARD</button>
-              <button className="btn ghost" type="button" onClick={() => resumeParticipantScan()}>BACK TO SCANNING</button>
+              <button className="btn ghost" type="button" onClick={() => resumeParticipantScan()}>BACK TO CARD TAPPING</button>
             </div>
           </div>
         </Screen>
@@ -1230,8 +1246,8 @@ export default function App() {
               <div className="nfc-ring small-ring">
                 <IconNFC pulse />
               </div>
-              <h2>Scan Group Members</h2>
-              <p className="muted">Tap each registered NFC card.</p>
+              <h2>Tap Your ID Card</h2>
+              <p className="muted">Hold your ID card near the NFC reader to continue.</p>
             </div>
 
             <div className="status-chip">
@@ -1289,7 +1305,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <AccessPhotoDetails photo={scanPhoto} />
+            <div className="photo-captured-indicator" role="status">Photo Captured</div>
             {errorMessage && <div className="error-banner">{errorMessage}</div>}
 
             <div className="panel-card">
@@ -1299,7 +1315,7 @@ export default function App() {
               </div>
               <div className="participant-list">
                 {participants.length === 0 ? (
-                  <div className="empty-state">No participants scanned yet.</div>
+                  <div className="empty-state">No participants added yet.</div>
                 ) : (
                   participants.map((participant, index) => (
                     <div key={`${participant.uid}-${index}`} className="participant-card pop-pill">
@@ -1315,7 +1331,7 @@ export default function App() {
             </div>
 
             <div className="button-row stacked">
-              <div className="scan-prompt" role="status">Tap a student NFC card on the NFC reader…</div>
+              <div className="scan-prompt" role="status">Hold your registered ID card near the reader.</div>
               <div className="button-row inline">
                 <button className="btn secondary" onClick={continueToConfirmation}>CONTINUE</button>
                 <button className="btn ghost" onClick={resetToHome}>CANCEL</button>
@@ -1363,7 +1379,7 @@ export default function App() {
             <div className="button-row">
               {pendingAction === 'open'
                 ? <button className="btn ghost" onClick={() => setView('participant-scan')}>BACK</button>
-                : <button className="btn ghost" onClick={() => setView('close-scan')}>BACK TO SCANNING</button>}
+                : <button className="btn ghost" onClick={() => setView('close-scan')}>BACK TO CARD TAPPING</button>}
               <button className="btn primary" onClick={finalizeSession} disabled={workflowBusy}>{workflowBusy ? pendingAction === 'open' ? 'OPENING…' : 'CLOSING…' : pendingAction === 'open' ? 'OPEN CABINET' : `CLOSE ${stationLabel(selectedStation).toUpperCase()}`}</button>
             </div>
           </div>

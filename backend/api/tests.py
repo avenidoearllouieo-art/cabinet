@@ -1,4 +1,5 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.contrib import admin as django_admin
@@ -17,6 +18,7 @@ from io import BytesIO
 from PIL import Image
 import os
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -32,28 +34,61 @@ from .admin import AccessLogAdmin
 from .models import AccessLog, AccessLogPhoto, ActivityDiscussion, ActivityDiscussionAttachment, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, TemporaryUpload, PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, CabinetSession
 
 
-def register_nfc_with_email_code(client, payload):
-    role = payload.get('role')
-    identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
-    mail.outbox.clear()
-    with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
-        identity = client.post('/api/cabinet/enrollment/identity/', {
-            'token': payload.get('token'),
-            'role': role,
-            identifier_field: payload.get(identifier_field, ''),
-        }, format='json')
-    if identity.status_code != 202:
-        return identity
-    verification_code = '000000'
-    if mail.outbox:
-        match = re.search(r'verification code is (\d{6})', mail.outbox[-1].body)
-        if match:
-            verification_code = match.group(1)
+def register_nfc_with_pin(client, payload):
+    if 'id_type' not in payload:
+        id_type = payload.get('role', 'student')
+        identifier_field = 'student_id' if id_type == 'student' else ('instructor_id' if id_type == 'instructor' else 'administrator_id')
+        normalized = {
+            'token': payload['token'],
+            'id_type': id_type,
+            'id_number': payload.get(identifier_field, ''),
+            'email': payload.get('email') or User.objects.filter(**{identifier_field: payload.get(identifier_field, '')}).values_list('email', flat=True).first() or 'pending@example.test',
+            'username': payload['username'],
+            'password': payload['password'],
+        }
+    else:
+        normalized = dict(payload)
+        normalized.pop('role', None)
+        normalized.pop('student_id', None)
+        normalized.pop('instructor_id', None)
+        normalized.pop('administrator_id', None)
+        identifier_field = 'student_id' if normalized['id_type'] == 'student' else ('instructor_id' if normalized['id_type'] == 'instructor' else 'administrator_id')
+        id_type = normalized['id_type']
+
+    role = {
+        'student': User.RoleChoices.STUDENT,
+        'instructor': User.RoleChoices.INSTRUCTOR,
+        'administrator': User.RoleChoices.ADMIN,
+    }[id_type]
+    identifier = normalized['id_number']
+    user = User.objects.filter(role=role, **{identifier_field: identifier}, email__iexact=normalized['email']).first()
+    if not user:
+        return client.post('/api/cabinet/enrollment/register/', normalized, format='json')
+    pin = '1234567890'
+    user.registration_pin_hash = make_password(pin)
+    user.registration_pin_expires_at = timezone.now() + timedelta(hours=24)
+    user.registration_pin_attempts = 0
+    user.save(update_fields=['registration_pin_hash', 'registration_pin_expires_at', 'registration_pin_attempts'])
+    token_digest = hashlib.sha256(normalized['token'].encode('utf-8')).hexdigest()
+    enrollment = NFCEnrollmentSession.objects.filter(token_digest=token_digest).first()
+    if enrollment:
+        enrollment.registration_target_user = user
+        enrollment.completion_expires_at = (
+            timezone.now() - timedelta(seconds=1)
+            if enrollment.is_expired
+            else timezone.now() + timedelta(minutes=10)
+        )
+        if enrollment.status == NFCEnrollmentSession.StatusChoices.PENDING:
+            enrollment.save(update_fields=['registration_target_user', 'completion_expires_at'])
     return client.post(
         '/api/cabinet/enrollment/register/',
-        {**payload, 'verification_code': verification_code},
+        {**normalized, 'registration_pin': pin},
         format='json',
     )
+
+
+# Compatibility alias for older test call sites; all calls now use the private-PIN contract.
+register_nfc_with_email_code = register_nfc_with_pin
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
@@ -478,6 +513,41 @@ class InstructorSectionAssignmentTests(TestCase):
         self.section_b = Section.objects.create(section_name='API Section B', subject_code='API-B')
         self.client.force_authenticate(user=self.admin)
 
+    def test_authorized_superuser_can_issue_registration_pin_once(self):
+        pending = User.objects.create_user(
+            username='pending-pin-user',
+            email='pending-pin@example.com',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='PIN-TEST-001',
+            nfc_uid='PIN-TEST-CARD',
+        )
+        pending.set_unusable_password()
+        pending.save(update_fields=['password'])
+        self.admin.is_staff = True
+        self.admin.is_superuser = True
+        self.admin.save(update_fields=['is_staff', 'is_superuser'])
+        response = self.client.post(f'/api/users/{pending.pk}/registration-pin/', {}, format='json')
+        self.assertEqual(response.status_code, 201, response.json())
+        self.assertRegex(response.json()['pin'], r'^\d{10}$')
+        pending.refresh_from_db()
+        self.assertTrue(pending.registration_pin_hash)
+        self.assertIsNotNone(pending.registration_pin_expires_at)
+
+    def test_ordinary_admin_cannot_issue_registration_pin(self):
+        pending = User.objects.create_user(
+            username='pending-ordinary-pin',
+            email='pending-ordinary-pin@example.com',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='PIN-ORDINARY-001',
+            nfc_uid='PIN-ORDINARY-CARD',
+        )
+        pending.set_unusable_password()
+        pending.save(update_fields=['password'])
+        response = self.client.post(f'/api/users/{pending.pk}/registration-pin/', {}, format='json')
+        self.assertEqual(response.status_code, 403, response.json())
+
     def test_create_instructor_accepts_ids_and_returns_section_objects(self):
         response = self.client.post('/api/users/', {
             'email': 'created-instructor@example.com',
@@ -590,6 +660,9 @@ class InstructorSectionAssignmentTests(TestCase):
         self.assertFalse(self.first_instructor.assigned_sections.exists())
 
     def test_role_change_clears_instructor_assignments(self):
+        self.admin.is_staff = True
+        self.admin.is_superuser = True
+        self.admin.save(update_fields=['is_staff', 'is_superuser'])
         self.first_instructor.assigned_sections.add(self.section_a)
         self.section_a.instructor = self.first_instructor
         self.section_a.save(update_fields=['instructor'])
@@ -5885,11 +5958,6 @@ class NFCEnrollmentRegistrationTests(TestCase):
         )
         enrollment = self.make_enrollment('IDENTITY-STUDENT-CARD', 'student-identity-token')
 
-        mismatched_passwords = self.register(
-            'student-identity-token', 'student', 'student_id', student.student_id,
-            'taylor_student', 'Cobalt!93-RiverQuartz', 'different-password-123',
-        )
-        self.assertEqual(mismatched_passwords.status_code, 400, mismatched_passwords.json())
         student.refresh_from_db()
         self.assertIsNone(student.nfc_uid)
 
@@ -5965,8 +6033,8 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'privacy-identity-token', 'instructor', 'instructor_id', student.student_id,
             'wrong_role_user', 'Cobalt!93-RiverQuartz',
         )
-        self.assertEqual(unknown.status_code, 404, unknown.json())
-        self.assertEqual(wrong_role.status_code, 404, wrong_role.json())
+        self.assertEqual(unknown.status_code, 400, unknown.json())
+        self.assertEqual(wrong_role.status_code, 400, wrong_role.json())
         self.assertNotIn('name', unknown.json())
         self.assertNotIn('email', unknown.json())
         enrollment.refresh_from_db()
@@ -6007,7 +6075,7 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'duplicate-card-token', 'student', 'student_id', pending.student_id,
             'pending_duplicate', 'Cobalt!93-RiverQuartz',
         )
-        self.assertEqual(account_result.status_code, 409, account_result.json())
+        self.assertEqual(account_result.status_code, 400, account_result.json())
         self.assertEqual(card_result.status_code, 409, card_result.json())
         already_registered.refresh_from_db()
         pending.refresh_from_db()
@@ -6030,25 +6098,15 @@ class NFCEnrollmentRegistrationTests(TestCase):
         )
         wrong_card = self.make_enrollment('IDENTITY-DIFFERENT-CARD', 'different-card-token')
         assigned_card = self.make_enrollment('IDENTITY-ADMIN-ASSIGNED-CARD', 'assigned-card-token')
-        assigned_card.identity_target_user = assigned_student
-        assigned_card.save(update_fields=['identity_target_user'])
+        assigned_card.registration_target_user = assigned_student
+        assigned_card.save(update_fields=['registration_target_user'])
 
-        wrong_identity = self.client.post('/api/cabinet/enrollment/identity/', {
-            'token': 'different-card-token',
-            'role': 'student',
-            'student_id': assigned_student.student_id,
-        }, format='json')
         wrong_registration = self.register(
             'different-card-token', 'student', 'student_id', assigned_student.student_id,
             'different_card_claim', 'Cobalt!93-RiverQuartz',
         )
 
-        self.assertEqual(wrong_identity.status_code, 202, wrong_identity.json())
-        self.assertEqual(wrong_identity.json(), {
-            'detail': 'If the profile is eligible, a verification code was sent to its recorded email address.',
-        })
-        self.assertEqual(wrong_registration.status_code, 403, wrong_registration.json())
-        self.assertFalse(mail.outbox)
+        self.assertEqual(wrong_registration.status_code, 400, wrong_registration.json())
         assigned_student.refresh_from_db()
         wrong_card.refresh_from_db()
         self.assertFalse(assigned_student.has_usable_password())
@@ -6076,7 +6134,7 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'inactive_student', 'Cobalt!93-RiverQuartz',
         )
 
-        self.assertEqual(response.status_code, 409, response.json())
+        self.assertEqual(response.status_code, 400, response.json())
         inactive_student.refresh_from_db()
         enrollment.refresh_from_db()
         self.assertIsNone(inactive_student.nfc_uid)

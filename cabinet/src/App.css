@@ -251,6 +251,21 @@
 .icon-lg { width: 78px; height: 78px; }
 .icon-md { width: 56px; height: 56px; }
 
+.photo-captured-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin: 8px auto;
+  padding: 8px 16px;
+  border: 1px solid rgba(22, 128, 60, 0.25);
+  border-radius: 8px;
+  background: #f0f8f2;
+  color: #166b35;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
 .registration-qr {
   display: inline-flex;
   margin: 8px auto 18px;
@@ -342,7 +357,7 @@
   border-radius: 12px;
   cursor: pointer;
   font: inherit;
-  font-size: 1.08rem;
+  font-size: 1.125rem;
   font-weight: 750;
   transition: transform 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
   touch-action: manipulation;

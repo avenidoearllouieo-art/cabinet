@@ -11,18 +11,18 @@ import {
 } from '../forms/FormPrimitives.jsx'
 import { controlClass } from '../forms/formStyles.js'
 
-const steps = ['Personal information', 'Role & academics', 'NFC Access & Registration', 'Review']
+const steps = ['Personal information', 'Role & academics', 'ID Card & Registration', 'Review']
 const roles = [
-  { value: 'student', label: 'Student', description: 'Learner assigned to one section', icon: GraduationCap },
-  { value: 'instructor', label: 'Instructor', description: 'Teaching staff with section access', icon: Presentation },
-  { value: 'admin', label: 'Administrator', description: 'Full TapTrack administration', icon: ShieldCheck },
+  { value: 'student', label: 'Student', description: 'Learner assigned to an academic section.', icon: GraduationCap },
+  { value: 'instructor', label: 'Instructor', description: 'Teaching staff with section access.', icon: Presentation },
+  { value: 'admin', label: 'Administrator', description: 'Authorized personnel responsible for system management.', icon: ShieldCheck },
 ]
-const blankForm = () => ({ student_id: '', instructor_id: '', admin_id: '', email: '', first_name: '', last_name: '', role: 'student', section: '', assigned_sections: [], nfc_uid: '', is_active: true })
+const blankForm = () => ({ student_id: '', instructor_id: '', administrator_id: '', email: '', first_name: '', last_name: '', role: 'student', section: '', assigned_sections: [], nfc_uid: '', is_active: true })
 const sectionName = (section) => section?.section_name || section?.name || section?.title || `Section ${section?.id ?? ''}`
 const sectionId = (section) => section?.id ?? section?.section_id
 const snapshot = (form) => JSON.stringify(form)
 
-export default function UserFormWorkflow({ isOpen, userId, user, initialRole = 'student', onClose, onUnauthorized, onSaved, mode = 'create' }) {
+export default function UserFormWorkflow({ isOpen, userId, user, initialRole = 'student', canProvisionAdministrators = false, onClose, onUnauthorized, onSaved, mode = 'create' }) {
   const resolvedId = user?.id ?? userId
   const editing = mode === 'edit'
   const [step, setStep] = useState(0)
@@ -55,7 +55,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       const response = await api.get(`/users/${id}/`)
       const data = response.data || {}
       const loaded = {
-        student_id: data.student_id || '', instructor_id: data.instructor_id || '', admin_id: data.role === 'admin' ? data.username || '' : '',
+        student_id: data.student_id || '', instructor_id: data.instructor_id || '', administrator_id: data.administrator_id || '',
         email: data.email || '', first_name: data.first_name || '', last_name: data.last_name || '',
         role: data.role || 'student', section: sectionId(data.section) ?? data.section ?? '',
         assigned_sections: Array.isArray(data.assigned_sections) ? data.assigned_sections.map((section) => sectionId(section) ?? section).filter(Boolean) : [],
@@ -74,7 +74,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
   useEffect(() => {
     if (!isOpen) return
     const timeoutId = window.setTimeout(() => {
-      const clean = { ...blankForm(), role: initialRole || 'student' }
+      const clean = { ...blankForm(), role: initialRole === 'admin' && !canProvisionAdministrators ? 'student' : initialRole || 'student' }
       setStep(0)
       setForm(clean)
       setInitialForm(clean)
@@ -85,7 +85,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       if (editing && resolvedId) loadUser(resolvedId)
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [isOpen, editing, resolvedId, initialRole, loadSections, loadUser])
+  }, [isOpen, editing, resolvedId, initialRole, canProvisionAdministrators, loadSections, loadUser])
 
   const update = (field) => (event) => {
     const value = event?.target ? (event.target.type === 'checkbox' ? event.target.checked : event.target.value) : event
@@ -115,6 +115,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
     if (currentStep === 1) {
       if (form.role === 'student' && !form.student_id.trim()) nextErrors.student_id = 'Enter a student ID.'
       if (form.role === 'instructor' && !form.instructor_id.trim()) nextErrors.instructor_id = 'Enter an instructor ID.'
+      if (form.role === 'admin' && !form.administrator_id.trim()) nextErrors.administrator_id = 'Enter an administrator ID.'
       if (form.role === 'student' && !form.section) nextErrors.section = 'Choose the student’s section.'
     }
     setErrors((current) => ({ ...current, ...nextErrors }))
@@ -129,6 +130,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
     const values = {
       student_id: form.role === 'student' ? form.student_id || null : null,
       instructor_id: form.role === 'instructor' ? form.instructor_id || null : null,
+      administrator_id: form.role === 'admin' ? form.administrator_id || null : null,
       email: form.email, first_name: form.first_name, last_name: form.last_name,
       role: form.role, section: form.role === 'student' ? form.section || null : null,
       assigned_sections: form.role === 'instructor' ? form.assigned_sections : [],
@@ -139,6 +141,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
     Object.entries(values).forEach(([field, value]) => {
       const initialValue = field === 'student_id' ? (initialForm.role === 'student' ? initialForm.student_id || null : null)
         : field === 'instructor_id' ? (initialForm.role === 'instructor' ? initialForm.instructor_id || null : null)
+          : field === 'administrator_id' ? (initialForm.role === 'admin' ? initialForm.administrator_id || null : null)
           : field === 'section' ? (initialForm.role === 'student' ? initialForm.section || null : null)
             : field === 'assigned_sections' ? (initialForm.role === 'instructor' ? initialForm.assigned_sections : [])
               : field === 'nfc_uid' ? initialForm.nfc_uid || null : initialForm[field]
@@ -173,7 +176,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       if (data && typeof data === 'object') {
         setErrors(data)
         setFormError(typeof data.detail === 'string' ? data.detail : 'Some fields need your attention.')
-        const fieldToStep = { first_name: 0, last_name: 0, email: 0, student_id: 1, instructor_id: 1, section: 1, assigned_sections: 1, role: 1, nfc_uid: 2 }
+        const fieldToStep = { first_name: 0, last_name: 0, email: 0, student_id: 1, instructor_id: 1, administrator_id: 1, section: 1, assigned_sections: 1, role: 1, nfc_uid: 2 }
         const firstField = Object.keys(data).find((field) => fieldToStep[field] !== undefined)
         if (firstField) setStep(fieldToStep[firstField])
       } else setFormError(`Failed to ${editing ? 'update' : 'create'} user. Please try again.`)
@@ -183,9 +186,9 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
   }
 
   const selectedSections = useMemo(() => sections.filter((section) => form.assigned_sections.includes(sectionId(section))), [sections, form.assigned_sections])
-  const selectableRoles = editing ? roles : roles.filter((role) => role.value !== 'admin')
-  const idLabel = form.role === 'student' ? 'Student ID' : form.role === 'instructor' ? 'Instructor ID' : 'Admin ID'
-  const idValue = form.role === 'student' ? form.student_id : form.role === 'instructor' ? form.instructor_id : form.admin_id
+  const selectableRoles = roles.filter((role) => role.value !== 'admin' || canProvisionAdministrators)
+  const idLabel = form.role === 'student' ? 'Student ID' : form.role === 'instructor' ? 'Instructor ID' : 'Administrator ID'
+  const idValue = form.role === 'student' ? form.student_id : form.role === 'instructor' ? form.instructor_id : form.administrator_id
   const dirty = snapshot(form) !== snapshot(initialForm)
 
   return <>
@@ -211,9 +214,9 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
           <FormSection icon={UserRound} title="Role and academic information" description="Choose the role first; only relevant fields are shown.">
             <fieldset><legend className="mb-2 text-sm font-semibold text-slate-700">Role <span className="text-rose-600">*</span></legend><div className="grid grid-cols-1 gap-3 md:grid-cols-3">{selectableRoles.map(({ value, label, description, icon: Icon }) => { const selected = form.role === value; return <button key={value} type="button" onClick={() => selectRole(value)} aria-pressed={selected} className={`min-h-24 rounded-xl border p-4 text-left transition focus:outline-none focus:ring-2 focus:ring-blue-900 ${selected ? 'border-[#F5B700] bg-amber-50 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50'}`}><Icon className={`h-5 w-5 ${selected ? 'text-blue-900' : 'text-slate-500'}`} /><span className="mt-2 block text-sm font-bold text-[#0B1F3A]">{label}</span><span className="mt-1 block text-xs text-slate-500">{description}</span></button> })}</div></fieldset>
             <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
-              {form.role === 'admin'
-                ? <FormField label="Administrator username" optional helper="Login credentials are managed by the administrator account owner.">{({ id }) => <input id={id} value={idValue} readOnly className={controlClass(false)} />}</FormField>
-                : <FormField label={idLabel} required error={errors[form.role === 'student' ? 'student_id' : 'instructor_id']}>{({ id, describedBy, invalid }) => <input id={id} value={idValue} onChange={update(form.role === 'student' ? 'student_id' : 'instructor_id')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>}
+              <FormField label={idLabel} required error={errors[form.role === 'student' ? 'student_id' : form.role === 'instructor' ? 'instructor_id' : 'administrator_id']}>
+                {({ id, describedBy, invalid }) => <input id={id} value={idValue} onChange={update(form.role === 'student' ? 'student_id' : form.role === 'instructor' ? 'instructor_id' : 'administrator_id')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} placeholder={`Enter ${idLabel.toLowerCase()} number`} />}
+              </FormField>
               {form.role === 'student' && <FormField label="Section" required error={errors.section}>{({ id, describedBy, invalid }) => <select id={id} value={form.section} onChange={update('section')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Select a section</option>{sections.map((section) => <option key={sectionId(section)} value={sectionId(section)}>{sectionName(section)}</option>)}</select>}</FormField>}
               {form.role === 'instructor' && <FormField label="Assigned sections" optional error={errors.assigned_sections} className="md:col-span-2">{({ describedBy, invalid }) => <div className={`max-h-52 overflow-y-auto rounded-xl border bg-white p-2 ${invalid ? 'border-rose-400' : 'border-slate-300'}`} aria-describedby={describedBy}>{loadingSections ? <p className="p-3 text-sm text-slate-500">Loading sections…</p> : sections.map((section) => { const id = sectionId(section); return <label key={id} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><input type="checkbox" checked={form.assigned_sections.includes(id)} onChange={() => toggleSection(id)} className="h-5 w-5 rounded border-slate-300 text-blue-900 focus:ring-blue-900" />{sectionName(section)}</label> })}</div>}</FormField>}
             </div>

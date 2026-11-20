@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { MoreVertical, Eye, Edit2, Wifi, KeyRound, UserRoundCheck, UserRoundX, Trash2 } from 'lucide-react'
+import { MoreVertical, Eye, Edit2, Wifi, KeyRound, ShieldCheck, UserRoundCheck, UserRoundX, Trash2 } from 'lucide-react'
 import AnchoredMenu from './AnchoredMenu.jsx'
 
-export default function ActionsMenu({ user, onAction, protectedAccount = false }) {
+export default function ActionsMenu({ user, onAction, protectedAccount = false, canIssueRegistrationPins = false }) {
   const [open, setOpen] = useState(false)
   if (!user) return null
 
@@ -45,6 +45,7 @@ export default function ActionsMenu({ user, onAction, protectedAccount = false }
       {menuItem('view', 'View Profile', Eye)}
       {menuItem('edit', 'Edit User', Edit2)}
       {menuItem('assign_nfc', user.nfc_uid ? 'Change NFC UID' : 'Assign NFC UID', Wifi)}
+      {canIssueRegistrationPins && user.registration_status === 'pending_registration' && menuItem('issue_registration_pin', 'Issue Registration PIN', ShieldCheck)}
       {user.role === 'student' && menuItem('reset_password', 'Reset Password', KeyRound)}
       <div className="my-1 border-t border-slate-100" role="separator" />
       {menuItem(user.is_active ? 'deactivate' : 'activate', user.is_active ? 'Deactivate Account' : 'Activate Account', user.is_active ? UserRoundX : UserRoundCheck, { disabled: protectedAccount })}

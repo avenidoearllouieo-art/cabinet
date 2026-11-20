@@ -27,6 +27,7 @@ from .models import (
     ActivityDiscussion,
     ActivityAnnouncement,
     PasswordResetRequest,
+    PrivilegedUserAuditEvent,
 )
 from .file_uploads import uploaded_file_name, validate_student_submission_files, validate_uploaded_files
 
@@ -308,6 +309,8 @@ class UserSerializer(serializers.ModelSerializer):
             'instructor_id',
             'id',
             'student_id',
+            'administrator_id',
+            'administrator_id',
             'username',
             'first_name',
             'last_name',
@@ -388,15 +391,30 @@ class UserSerializer(serializers.ModelSerializer):
                 'assigned_sections': 'Only instructors can be assigned to sections.'
             })
         credential_fields = {'username', 'password'}.intersection(attrs)
+        request = self.context.get('request')
+        actor = getattr(request, 'user', None)
+        can_provision_admin = bool(
+            actor and actor.is_authenticated
+            and (actor.is_superuser or actor.has_perm('api.provision_administrator'))
+        )
         if self.instance is None:
-            if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR):
-                raise serializers.ValidationError({'role': 'Add student and instructor profiles here; administrator accounts are provisioned separately.'})
+            if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR, User.RoleChoices.ADMIN):
+                raise serializers.ValidationError({'role': 'Choose a supported account role.'})
+            if role == User.RoleChoices.ADMIN and not can_provision_admin:
+                raise serializers.ValidationError({'role': 'Only a privileged administrator can provision administrator accounts.'})
             if credential_fields:
                 raise serializers.ValidationError({'credentials': 'Users create their username and password during NFC registration.'})
             if not attrs.get('email'):
                 raise serializers.ValidationError({'email': 'An email address is required for registration verification.'})
+            if role == User.RoleChoices.ADMIN and not attrs.get('administrator_id'):
+                raise serializers.ValidationError({'administrator_id': 'Administrator ID is required.'})
         elif credential_fields:
             raise serializers.ValidationError({'credentials': 'Users manage login credentials through registration and account-security flows.'})
+        if self.instance is not None and role != self.instance.role:
+            if not (actor and actor.is_authenticated and actor.role == User.RoleChoices.ADMIN):
+                raise serializers.ValidationError({'role': 'Only an administrator can change account roles.'})
+            if role == User.RoleChoices.ADMIN and not can_provision_admin:
+                raise serializers.ValidationError({'role': 'Only a privileged administrator can promote administrator accounts.'})
         return attrs
 
     def to_representation(self, instance):
@@ -421,19 +439,50 @@ class UserSerializer(serializers.ModelSerializer):
         validated_data['username'] = f'pending_{secrets.token_hex(16)}'
         user = super().create(validated_data)
         user.set_unusable_password()
-        user.save(update_fields=['password'])
+        update_fields = ['password']
+        if user.role == User.RoleChoices.ADMIN:
+            user.is_staff = True
+            update_fields.append('is_staff')
+        user.save(update_fields=update_fields)
         if user.role == User.RoleChoices.INSTRUCTOR:
             sync_instructor_sections(user, assigned_sections)
+        elif user.role == User.RoleChoices.ADMIN:
+            PrivilegedUserAuditEvent.objects.create(
+                actor=getattr(self.context.get('request'), 'user', None),
+                target_user=user,
+                event_type=PrivilegedUserAuditEvent.EventType.ADMIN_CREATED,
+                new_role=user.role,
+            )
         return user
 
     @transaction.atomic
     def update(self, instance, validated_data):
         assigned_sections = validated_data.pop('assigned_sections', serializers.empty)
-        password = validated_data.pop('password', None)
+        actor = getattr(self.context.get('request'), 'user', None)
+        old_role = instance.role
+        old_active = instance.is_active
         user = super().update(instance, validated_data)
-        if password:
-            user.set_password(password)
-            user.save()
+        if old_role != user.role:
+            if old_role == User.RoleChoices.ADMIN or user.role == User.RoleChoices.ADMIN:
+                PrivilegedUserAuditEvent.objects.create(
+                    actor=actor,
+                    target_user=user,
+                    event_type=PrivilegedUserAuditEvent.EventType.ROLE_CHANGED,
+                    previous_role=old_role,
+                    new_role=user.role,
+                )
+        if old_active != user.is_active and user.role == User.RoleChoices.ADMIN:
+            PrivilegedUserAuditEvent.objects.create(
+                actor=actor,
+                target_user=user,
+                event_type=(
+                    PrivilegedUserAuditEvent.EventType.ADMIN_ACTIVATED
+                    if user.is_active
+                    else PrivilegedUserAuditEvent.EventType.ADMIN_DEACTIVATED
+                ),
+                previous_role=old_role,
+                new_role=user.role,
+            )
         if user.role == User.RoleChoices.INSTRUCTOR:
             if assigned_sections is not serializers.empty:
                 sync_instructor_sections(user, assigned_sections)
@@ -466,6 +515,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'username': self.user.username,
             'email': self.user.email,
             'role': self.user.role,
+            'is_superuser': self.user.is_superuser,
+            'can_provision_administrators': bool(
+                self.user.is_superuser or self.user.has_perm('api.provision_administrator')
+            ),
+            'can_issue_registration_pins': bool(
+                self.user.is_superuser or self.user.has_perm('api.issue_registration_pin')
+            ),
         }
         self.expected_role = expected_role
         return data
@@ -576,39 +632,23 @@ class PasswordResetTokenValidationSerializer(serializers.Serializer):
 
 class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
     token = serializers.CharField(required=True, allow_blank=False, write_only=True)
-    verification_code = serializers.RegexField(r'^\d{6}$', required=True, write_only=True)
-    username = serializers.CharField(required=True, allow_blank=False, max_length=150)
-    role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR])
-    student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
-    instructor_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    id_type = serializers.ChoiceField(choices=['student', 'instructor', 'administrator'])
+    id_number = serializers.CharField(required=True, allow_blank=False, max_length=50, trim_whitespace=False)
+    email = serializers.EmailField(required=True)
+    registration_pin = serializers.RegexField(r'^\d{10}$', required=True, write_only=True)
+    username = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        max_length=150,
+        validators=User._meta.get_field('username').validators,
+    )
     password = serializers.CharField(required=True, write_only=True, min_length=8)
-    confirm_password = serializers.CharField(required=True, write_only=True, min_length=8)
 
     def validate(self, attrs):
-        role = attrs.get('role', User.RoleChoices.STUDENT)
-        if role == User.RoleChoices.STUDENT and not attrs.get('student_id', '').strip():
-            raise serializers.ValidationError({'student_id': 'Student ID is required for student enrollment.'})
-        if role == User.RoleChoices.INSTRUCTOR and not attrs.get('instructor_id', '').strip():
-            raise serializers.ValidationError({'instructor_id': 'Instructor ID is required for instructor enrollment.'})
-        if attrs['password'] != attrs['confirm_password']:
-            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
-        return attrs
-
-
-class NFCEnrollmentIdentitySerializer(serializers.Serializer):
-    token = serializers.CharField(required=True, allow_blank=False, write_only=True)
-    role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR])
-    student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
-    instructor_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
-
-    def validate(self, attrs):
-        role = attrs['role']
-        identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
-        identifier = attrs.get(identifier_field, '').strip()
-        if not identifier:
-            label = 'Student ID' if role == User.RoleChoices.STUDENT else 'Instructor ID'
-            raise serializers.ValidationError({identifier_field: f'{label} is required.'})
-        attrs[identifier_field] = identifier
+        if not attrs['id_number'].strip():
+            raise serializers.ValidationError({'id_number': 'ID number is required.'})
+        attrs['id_number'] = attrs['id_number'].strip()
+        attrs['email'] = attrs['email'].strip()
         return attrs
 
 

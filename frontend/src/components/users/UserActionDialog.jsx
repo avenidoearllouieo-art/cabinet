@@ -5,12 +5,13 @@ const actionLabels = {
   activate: { title: 'Activate account', confirm: 'Activate account' },
   deactivate: { title: 'Deactivate account', confirm: 'Deactivate account' },
   delete: { title: 'Delete account', confirm: 'Delete account' },
+  issue_registration_pin: { title: 'Issue Registration PIN', confirm: 'Issue PIN' },
   bulk_activate: { title: 'Activate selected accounts', confirm: 'Activate accounts' },
   bulk_deactivate: { title: 'Deactivate selected accounts', confirm: 'Deactivate accounts' },
   bulk_delete: { title: 'Delete selected accounts', confirm: 'Delete accounts' },
 }
 
-export default function UserActionDialog({ action, user, count = 0, busy = false, error = '', onClose, onConfirm }) {
+export default function UserActionDialog({ action, user, count = 0, busy = false, error = '', issuedPin = '', onClose, onConfirm }) {
   const [nfcUid, setNfcUid] = useState(user?.nfc_uid || '')
   const [replacementConfirmed, setReplacementConfirmed] = useState(false)
   const [validationError, setValidationError] = useState('')
@@ -19,6 +20,7 @@ export default function UserActionDialog({ action, user, count = 0, busy = false
 
   const isNfc = action === 'assign_nfc'
   const isRecovery = action === 'reset_password'
+  const isPin = action === 'issue_registration_pin'
   const bulkAction = action.startsWith('bulk_')
   const config = actionLabels[action]
   const displayName = `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || user?.username || 'this user'
@@ -36,8 +38,8 @@ export default function UserActionDialog({ action, user, count = 0, busy = false
     onConfirm?.()
   }
 
-  const title = isNfc ? 'Assign NFC UID' : isRecovery ? 'Password recovery' : config.title
-  const confirmLabel = isNfc ? 'Save NFC UID' : isRecovery ? 'Open Forgot Password' : config.confirm
+  const title = isNfc ? 'Assign NFC UID' : isRecovery ? 'Password recovery' : isPin ? 'Issue Registration PIN' : config.title
+  const confirmLabel = isNfc ? 'Save NFC UID' : isRecovery ? 'Open Forgot Password' : isPin ? 'Issue PIN' : config.confirm
 
   return (
     <Modal
@@ -60,7 +62,17 @@ export default function UserActionDialog({ action, user, count = 0, busy = false
         {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         {validationError && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{validationError}</p>}
 
-        {isNfc ? (
+        {isPin ? (
+          issuedPin ? (
+            <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <p className="font-semibold text-amber-950">Registration PIN issued</p>
+              <p className="text-sm text-amber-900">Give this PIN to the intended account owner through a private channel. It will not be shown again.</p>
+              <p className="select-all rounded-md border border-amber-400 bg-white px-4 py-3 text-center font-mono text-2xl font-bold tracking-widest text-[#082B53]">{issuedPin}</p>
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-slate-700">Issue a cryptographically random, single-use PIN for {displayName}. The account must be pending, active, and have an assigned NFC UID.</p>
+          )
+        ) : isNfc ? (
           <>
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
               <p className="font-semibold text-slate-800">{displayName}</p>

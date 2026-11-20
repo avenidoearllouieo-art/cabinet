@@ -203,16 +203,7 @@ describe('Cabinet photo scan integration', () => {
 
     await waitFor(() => expect(screen.getAllByText(`${station} Student`).length).toBeGreaterThanOrEqual(2))
     expect(await screen.findByText('Participants scanned: 1')).toBeTruthy()
-    expect(within(await screen.findByLabelText('Access photo details')).getByText('Pending')).toBeTruthy()
-    expect(screen.getByText('Photo capture is pending.')).toBeTruthy()
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
-      `/api/access-logs/${djangoEventId}/photo/`,
-      expect.objectContaining({
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: expect.not.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
-      }),
-    ))
+    expect(screen.getByText('Photo Captured')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       'http://localhost:3000/nfc-bridge/photo/capture',
@@ -233,14 +224,10 @@ describe('Cabinet photo scan integration', () => {
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText('STATION 1').closest('button'))
 
-    expect(await screen.findByRole('img', { name: 'Captured access event' })).toBeTruthy()
+    expect(await screen.findByText('Photo Captured')).toBeTruthy()
     expect(fetcher).toHaveBeenCalledWith(
       'http://localhost:3000/nfc-bridge/photo/capture',
       expect.objectContaining({ body: JSON.stringify({ event_id: djangoEventId }) }),
-    )
-    expect(fetcher).toHaveBeenCalledWith(
-      `/api/access-logs/${djangoEventId}/photo/image/`,
-      expect.objectContaining({ method: 'GET', cache: 'no-store' }),
     )
   })
 
@@ -313,7 +300,7 @@ describe('Cabinet photo scan integration', () => {
     await user.click(screen.getByText('STATION 1').closest('button'))
 
     await waitFor(() => expect(container.querySelector('.registration-qr svg')).toBeTruthy())
-    await user.click(await screen.findByRole('button', { name: 'REGISTER THIS CARD' }))
+    await user.click(await screen.findByRole('button', { name: 'REGISTER ID CARD' }))
     const registrationFrame = screen.getByTitle('NFC card registration')
     expect(registrationFrame.getAttribute('src')).toBe(registrationUrl)
     expect(screen.getByRole('link', { name: /open registration in this cabinet window/i }).getAttribute('href')).toBe(registrationUrl)
@@ -332,15 +319,7 @@ describe('Cabinet photo scan integration', () => {
     await waitFor(() => expect(screen.getAllByText('Closed by').length).toBe(2))
     const closedCountRow = screen.getAllByText('Closed by')[0].closest('.confirm-row')
     expect(within(closedCountRow).getByText('1')).toBeTruthy()
-    expect(within(await screen.findByLabelText('Access photo details')).getByText('Pending')).toBeTruthy()
-    expect(fetcher).toHaveBeenCalledWith(
-      '/api/access-logs/5202/photo/',
-      expect.objectContaining({
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: expect.not.objectContaining({ 'X-TapTrack-Mock-Mode': 'true' }),
-      }),
-    )
+    expect(screen.getByText('Photo Captured')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 

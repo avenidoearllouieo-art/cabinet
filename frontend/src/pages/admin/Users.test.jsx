@@ -33,16 +33,22 @@ describe('Users directory', () => {
     const firstPage = Array.from({ length: 20 }, (_, index) => directoryUser(index + 1, index % 2 ? 'student' : 'instructor', index !== 2))
     firstPage[0] = directoryUser(1, 'admin', true)
     const lastPage = [{ ...directoryUser(21, 'student', false), profile_image_url: 'https://storage.example/student-21.jpg' }]
-    api.get.mockImplementation((_url, { params }) => Promise.resolve({
+    api.get.mockImplementation((url, options = {}) => {
+      if (url === '/users/provisioning-permissions/') {
+        return Promise.resolve({ data: { can_provision_administrators: true, can_issue_registration_pins: true } })
+      }
+      const params = options.params || { page: 1 }
+      return Promise.resolve({
       data: params.page === 1
         ? { count: 21, next: 'http://localhost/api/users/?page=2', results: firstPage }
         : { count: 21, next: null, results: lastPage },
-    }))
+      })
+    })
 
     localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
     render(<MemoryRouter><Users /></MemoryRouter>)
 
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3))
     expect(screen.getAllByText('AR').length).toBeGreaterThan(0)
     expect(await screen.findByText('Page 1 of 2')).toBeTruthy()
 

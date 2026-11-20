@@ -53,6 +53,7 @@ describe('UserFormWorkflow', () => {
       role: 'student',
       student_id: 'STU-009',
       section: '1',
+      administrator_id: null,
       assigned_sections: [],
       instructor_id: null,
       nfc_uid: 'CARD-NEW-001',

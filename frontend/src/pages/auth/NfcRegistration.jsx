@@ -1,23 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { Eye, EyeOff } from 'lucide-react'
 import api from '../../services/api'
 import { getRegistrationSubmissionError, getRegistrationValidationError } from './registrationErrors'
-import { NFC_REGISTRATION_FIELDS } from './registrationForm'
 
-const MISSING_TOKEN_MESSAGE = 'Please tap your NFC card at the TapTrack Cabinet first.'
-const fieldClass = 'min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-[#082B53] focus:ring-2 focus:ring-[#082B53]/20 disabled:bg-slate-100'
+const MISSING_TOKEN_MESSAGE = 'Please tap your ID card at the TapTrack Cabinet first.'
+const fieldClass = 'min-h-12 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-lg text-slate-900 outline-none focus:border-[#082B53] focus:ring-2 focus:ring-[#082B53]/20 disabled:bg-slate-100'
 
 export default function NfcRegistration() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')?.trim()
   const [state, setState] = useState(() => ({ status: token ? 'loading' : 'missing', error: '' }))
-  const [role, setRole] = useState('')
-  const [identifier, setIdentifier] = useState('')
-  const [form, setForm] = useState({ verification_code: '', username: '', password: '', confirm_password: '' })
+  const [expiresAt, setExpiresAt] = useState(null)
+  const [secondsRemaining, setSecondsRemaining] = useState(null)
+  const [idType, setIdType] = useState('')
+  const [form, setForm] = useState({ id_number: '', email: '', username: '', password: '', registration_pin: '' })
+  const [showPassword, setShowPassword] = useState(false)
+  const [pinStep, setPinStep] = useState(false)
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [identityCodeSent, setIdentityCodeSent] = useState(false)
-  const [notice, setNotice] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -25,10 +26,13 @@ export default function NfcRegistration() {
 
     api.get('/cabinet/enrollment/validate/', { params: { token } })
       .then((response) => {
-        if (!cancelled) setState({
-          status: response.data.valid ? 'valid' : 'invalid',
-          error: response.data.valid ? '' : response.data.error || 'TapTrack could not validate this registration link.',
-        })
+        if (cancelled) return
+        if (!response.data.valid) {
+          setState({ status: 'invalid', error: response.data.error || 'This registration session has expired or is no longer valid.' })
+          return
+        }
+        setExpiresAt(response.data.completion_expires_at || response.data.expires_at)
+        setState({ status: 'valid', error: '' })
       })
       .catch((error) => {
         if (!cancelled) setState({ status: 'invalid', error: getRegistrationValidationError(error) })
@@ -37,60 +41,53 @@ export default function NfcRegistration() {
     return () => { cancelled = true }
   }, [token])
 
+  useEffect(() => {
+    if (!expiresAt) return undefined
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+      setSecondsRemaining(remaining)
+      if (remaining === 0) setState({ status: 'invalid', error: 'Registration session expired. Please return to the cabinet and tap your ID card again.' })
+    }
+    tick()
+    const interval = window.setInterval(tick, 1000)
+    return () => window.clearInterval(interval)
+  }, [expiresAt])
+
   function updateField(event) {
     const { name, value } = event.target
     setForm((current) => ({ ...current, [name]: value }))
   }
 
-  function updateRole(event) {
-    setRole(event.target.value)
-    setIdentifier('')
-    setIdentityCodeSent(false)
-    setNotice('')
-    setForm({ verification_code: '', username: '', password: '', confirm_password: '' })
+  function updateIdType(nextType) {
+    setIdType(nextType)
+    setForm((current) => ({ ...current, id_number: '' }))
+    setPinStep(false)
     setState((current) => ({ ...current, error: '' }))
   }
 
-  async function requestIdentityCode() {
-    if (!role || !identifier.trim()) return
-    setBusy(true)
-    setNotice('')
-    setState((current) => ({ ...current, error: '' }))
-    const identifierField = role === 'student' ? 'student_id' : 'instructor_id'
-
-    try {
-      const response = await api.post('/cabinet/enrollment/identity/', {
-        token,
-        role,
-        [identifierField]: identifier.trim(),
-      })
-      setIdentityCodeSent(true)
-      setNotice(response.data.detail || 'If the profile is eligible, a verification code was sent to its recorded email address.')
-    } catch (error) {
-      setState((current) => ({ ...current, error: getRegistrationSubmissionError(error) }))
-    } finally {
-      setBusy(false)
-    }
+  function continueToPin(event) {
+    event.preventDefault()
+    if (!idType || !form.id_number.trim() || !form.email.trim() || !form.username.trim() || !form.password) return
+    setPinStep(true)
   }
 
   async function submitRegistration(event) {
     event.preventDefault()
-    if (!identityCodeSent) {
-      await requestIdentityCode()
+    if (!pinStep) {
+      continueToPin(event)
       return
     }
-
     setBusy(true)
-    setNotice('')
     setState((current) => ({ ...current, error: '' }))
-    const identifierField = role === 'student' ? 'student_id' : 'instructor_id'
-
     try {
       const response = await api.post('/cabinet/enrollment/register/', {
         token,
-        role,
-        [identifierField]: identifier.trim(),
-        ...form,
+        id_type: idType === 'administrator' ? 'administrator' : idType,
+        id_number: form.id_number.trim(),
+        email: form.email.trim(),
+        username: form.username.trim(),
+        password: form.password,
+        registration_pin: form.registration_pin,
       })
       setResult(response.data)
       setState({ status: 'completed', error: '' })
@@ -106,7 +103,7 @@ export default function NfcRegistration() {
       <section className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-[#d6e0ec] bg-white shadow-sm">
         <header className="border-b-4 border-[#FFBE0B] bg-[#082B53] px-5 py-5 text-white sm:px-8">
           <p className="text-xs font-bold uppercase">TapTrack</p>
-          <h1 className="mt-1 text-xl font-bold sm:text-2xl">NFC Card Registration</h1>
+          <h1 className="mt-1 text-xl font-bold sm:text-2xl">Complete Your Registration</h1>
         </header>
         <div className="space-y-6 p-5 sm:p-8">
           {state.status === 'loading' && <p className="text-base font-semibold" role="status">Checking NFC registration session...</p>}
@@ -118,102 +115,92 @@ export default function NfcRegistration() {
           )}
           {state.status === 'invalid' && (
             <>
-              <h2 className="text-lg font-bold">NFC registration unavailable</h2>
-              <p className="leading-7 text-slate-600">{state.error}</p>
+              <h2 className="text-lg font-bold">Registration Expired</h2>
+              <p className="leading-7 text-slate-600">{state.error || 'Registration session expired. Please return to the cabinet and tap your ID card again.'}</p>
+              <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.history.back()}>
+                Back to Card Tapping
+              </button>
             </>
           )}
           {state.status === 'valid' && (
             <>
-              <p className="leading-7 text-slate-600">Register the unassigned NFC card to your existing TapTrack account.</p>
+              {secondsRemaining !== null && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="timer">
+                  Registration session: {Math.floor(secondsRemaining / 60)}:{String(secondsRemaining % 60).padStart(2, '0')}
+                </p>
+              )}
               {state.error && <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">{state.error}</p>}
-              {notice && <p className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900" role="status">{notice}</p>}
-              <form className="grid gap-4" onSubmit={submitRegistration}>
-                <section aria-labelledby="role-step-title" className="space-y-3">
-                  <h2 id="role-step-title" className="text-base font-bold text-[#082B53]">Register As</h2>
-                  <fieldset disabled={identityCodeSent} className="grid grid-cols-2 gap-3">
-                    <legend className="sr-only">Role</legend>
-                    {['student', 'instructor'].map((option) => (
-                      <label key={option} className={`flex min-h-12 cursor-pointer items-center gap-2 rounded-md border px-3 py-3 font-semibold capitalize ${role === option ? 'border-[#082B53] bg-[#EAF2FB] text-[#082B53]' : 'border-slate-300'}`}>
-                        <input type="radio" name="role" value={option} checked={role === option} onChange={updateRole} required />
-                        {option}
+              <form className="grid gap-5" onSubmit={submitRegistration}>
+                <section aria-labelledby="id-type-title" className="space-y-3">
+                  <h2 id="id-type-title" className="text-lg font-bold text-[#082B53]">Select Your ID Type</h2>
+                  <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <legend className="sr-only">ID type</legend>
+                    {[
+                      ['student', 'Student ID'],
+                      ['instructor', 'Instructor ID'],
+                      ['administrator', 'Administrator ID'],
+                    ].map(([value, label]) => (
+                      <label key={value} className={`flex min-h-16 cursor-pointer items-center justify-center rounded-md border px-3 py-3 text-center text-base font-bold ${idType === value ? 'border-[#082B53] bg-[#EAF2FB] text-[#082B53]' : 'border-slate-300 bg-white'}`}>
+                        <input type="radio" name="id_type" value={value} checked={idType === value} onChange={() => updateIdType(value)} className="sr-only" />
+                        {label}
                       </label>
                     ))}
                   </fieldset>
                 </section>
 
-                {role && (
-                  <label className="grid gap-1 text-sm font-semibold">
-                    {role === 'student' ? 'Student ID' : 'Instructor ID'}
-                    <input
-                      className={fieldClass}
-                      autoComplete="off"
-                      disabled={identityCodeSent}
-                      maxLength={50}
-                      value={identifier}
-                      onChange={(event) => setIdentifier(event.target.value)}
-                      required
-                    />
-                  </label>
-                )}
-
-                {identityCodeSent && (
+                {idType && !pinStep && (
                   <>
-                    <label className="grid gap-1 text-sm font-semibold">
-                      Email verification code
-                      <input
-                        className={fieldClass}
-                        autoComplete="one-time-code"
-                        inputMode="numeric"
-                        maxLength={6}
-                        minLength={6}
-                        name="verification_code"
-                        pattern="[0-9]{6}"
-                        value={form.verification_code}
-                        onChange={updateField}
-                        required
-                      />
+                    <label className="grid gap-2 text-base font-semibold">
+                      {idType === 'student' ? 'Student ID Number' : idType === 'instructor' ? 'Instructor ID Number' : 'Administrator ID Number'}
+                      <input name="id_number" className={fieldClass} value={form.id_number} onChange={updateField} placeholder={idType === 'student' ? 'Enter your student ID number' : idType === 'instructor' ? 'Enter your instructor ID number' : 'Enter your administrator ID number'} required />
                     </label>
-                    {NFC_REGISTRATION_FIELDS.map((field) => (
-                      <label className="grid gap-1 text-sm font-semibold" key={field.name}>
-                        {field.label}
-                        <input
-                          className={fieldClass}
-                          autoComplete={field.autoComplete}
-                          maxLength={field.maxLength}
-                          minLength={field.minLength}
-                          name={field.name}
-                          type={field.type}
-                          value={form[field.name]}
-                          onChange={updateField}
-                          required
-                        />
-                      </label>
-                    ))}
-                    <button
-                      type="button"
-                      className="min-h-10 justify-self-start text-sm font-semibold text-[#082B53] underline underline-offset-2"
-                      onClick={() => {
-                        setIdentityCodeSent(false)
-                        setNotice('')
-                        setForm({ verification_code: '', username: '', password: '', confirm_password: '' })
-                      }}
-                    >
-                      Use a different account
+                    <label className="grid gap-2 text-base font-semibold">
+                      Email Address
+                      <input name="email" type="email" className={fieldClass} value={form.email} onChange={updateField} placeholder="Enter your registered email address" autoComplete="email" required />
+                    </label>
+                    <label className="grid gap-2 text-base font-semibold">
+                      Username
+                      <input name="username" className={fieldClass} value={form.username} onChange={updateField} placeholder="Create your username" autoComplete="username" maxLength={150} required />
+                    </label>
+                    <label className="grid gap-2 text-base font-semibold">
+                      Password
+                      <div className="relative">
+                        <input name="password" type={showPassword ? 'text' : 'password'} className={`${fieldClass} pr-14`} value={form.password} onChange={updateField} placeholder="Create a strong password" autoComplete="new-password" minLength={8} required />
+                        <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((value) => !value)} className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-md text-[#082B53]">
+                          {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                        </button>
+                      </div>
+                    </label>
+                    <p className="text-sm leading-6 text-slate-600">Use at least 8 characters, including uppercase, lowercase, a number, and a symbol.</p>
+                    <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Only register an ID card that belongs to you.</p>
+                    <button className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white disabled:opacity-50" type="submit" disabled={busy || secondsRemaining === 0}>
+                      Continue with Private PIN
                     </button>
                   </>
                 )}
 
-                <button className="min-h-12 w-full rounded-md bg-[#082B53] px-4 py-3 font-bold text-white hover:bg-[#123e6b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFBE0B] disabled:opacity-50" type="submit" disabled={busy || !role || !identifier.trim()}>
-                  {busy ? identityCodeSent ? 'Registering...' : 'Sending code...' : identityCodeSent ? 'Complete Registration' : 'Email Verification Code'}
-                </button>
+                {pinStep && (
+                  <section className="grid gap-4 rounded-md border border-[#d6e0ec] bg-[#F8FAFC] p-4" aria-labelledby="pin-title">
+                    <h2 id="pin-title" className="text-lg font-bold text-[#082B53]">Private Registration PIN</h2>
+                    <p className="text-sm leading-6 text-slate-600">Enter the PIN issued privately by an authorized administrator. It is never included in this QR code.</p>
+                    <label className="grid gap-2 text-base font-semibold">
+                      Registration PIN
+                      <input name="registration_pin" type="password" inputMode="numeric" pattern="[0-9]{10}" minLength={10} maxLength={10} className={fieldClass} value={form.registration_pin} onChange={updateField} autoComplete="one-time-code" required />
+                    </label>
+                    <button className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white disabled:opacity-50" type="submit" disabled={busy || secondsRemaining === 0}>
+                      {busy ? 'Registering...' : 'Complete Registration'}
+                    </button>
+                    <button type="button" className="min-h-11 text-base font-semibold text-[#082B53]" onClick={() => setPinStep(false)}>Back to account details</button>
+                  </section>
+                )}
               </form>
             </>
           )}
           {state.status === 'completed' && (
             <section className="space-y-4" aria-labelledby="success-title">
               <div className="border-l-4 border-[#FFBE0B] bg-[#EAF2FB] p-4">
-                <h2 id="success-title" className="text-xl font-bold text-[#082B53]">NFC Registration Successful</h2>
-                <p className="mt-1 text-sm text-slate-700">Django confirmed that the NFC card was linked to this account.</p>
+                <h2 id="success-title" className="text-2xl font-bold text-[#082B53]">Registration Successful</h2>
+                <p className="mt-1 text-base text-slate-700">Your TapTrack account has been created and your ID card is now registered.</p>
               </div>
               <dl className="grid grid-cols-1 gap-3 rounded-md border border-slate-200 p-4 sm:grid-cols-2">
                 <ReadOnlyItem label="Account Name" value={result?.name} />
@@ -221,8 +208,8 @@ export default function NfcRegistration() {
                 <ReadOnlyItem label={result?.role === 'instructor' ? 'Instructor ID' : 'Student ID'} value={result?.instructor_id || result?.student_id} />
                 <ReadOnlyItem label="NFC Card" value={result?.nfc_registered ? 'Registered' : 'Not confirmed'} />
               </dl>
-              <button type="button" className="min-h-11 rounded-md bg-[#082B53] px-5 py-2.5 font-bold text-white hover:bg-[#123e6b]" onClick={() => window.history.back()}>
-                Back to Cabinet
+              <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.location.assign('/login')}>
+                Continue to Login
               </button>
             </section>
           )}

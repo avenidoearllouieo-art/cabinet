@@ -109,6 +109,7 @@ class User(AbstractUser):
     # requirements in `clean()` below.
     student_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
     instructor_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    administrator_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
     email = models.EmailField(unique=True)
     role = models.CharField(
         max_length=20,
@@ -125,6 +126,17 @@ class User(AbstractUser):
     # NFC UID must be globally unique. Keep DB nullable for migration
     # safety but enforce presence for roles that access the cabinet.
     nfc_uid = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    registration_pin_hash = models.CharField(max_length=128, blank=True, default='')
+    registration_pin_expires_at = models.DateTimeField(null=True, blank=True)
+    registration_pin_attempts = models.PositiveSmallIntegerField(default=0)
+    registration_pin_issued_at = models.DateTimeField(null=True, blank=True)
+    registration_pin_issued_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='registration_pins_issued',
+    )
     # Many-to-many assigned sections for instructors. Keep existing
     # Section.instructor FK for backward compatibility.
     assigned_sections = models.ManyToManyField(Section, related_name='assigned_instructors', blank=True)
@@ -148,10 +160,7 @@ class User(AbstractUser):
 
     def clean(self):
         # Students may await NFC enrollment; staff cabinet roles require a UID.
-        if self.role == self.RoleChoices.ADMIN or (
-            self.role == self.RoleChoices.INSTRUCTOR
-            and not getattr(self, '_allow_unassigned_nfc_for_import', False)
-        ):
+        if self.role == self.RoleChoices.INSTRUCTOR and not getattr(self, '_allow_unassigned_nfc_for_import', False):
             if not self.nfc_uid:
                 raise ValidationError({'nfc_uid': 'NFC UID is required for users with this role.'})
 
@@ -160,6 +169,8 @@ class User(AbstractUser):
             raise ValidationError({'student_id': 'Student ID is required for student users.'})
         if self.role == self.RoleChoices.INSTRUCTOR and not self.instructor_id:
             raise ValidationError({'instructor_id': 'Instructor ID is required for instructor users.'})
+        if self.role == self.RoleChoices.ADMIN and not self.administrator_id:
+            raise ValidationError({'administrator_id': 'Administrator ID is required for administrator users.'})
 
         # NFC uniqueness is enforced at DB level (unique=True), but validate
         # at model-clean time to provide friendlier errors before DB save.
@@ -172,6 +183,55 @@ class User(AbstractUser):
 
     class Meta:
         ordering = ['last_name', 'first_name']
+        permissions = [
+            ('provision_administrator', 'Can provision administrator accounts'),
+            ('issue_registration_pin', 'Can issue registration PINs'),
+        ]
+
+
+class PrivilegedUserAuditEvent(models.Model):
+    class EventType(models.TextChoices):
+        ADMIN_CREATED = 'administrator_created', 'Administrator created'
+        ROLE_CHANGED = 'role_changed', 'User role changed'
+        ADMIN_ACTIVATED = 'administrator_activated', 'Administrator activated'
+        ADMIN_DEACTIVATED = 'administrator_deactivated', 'Administrator deactivated'
+        REGISTRATION_PIN_ISSUED = 'registration_pin_issued', 'Registration PIN issued'
+
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='privileged_actions_performed',
+    )
+    target_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='privileged_actions_received',
+    )
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    previous_role = models.CharField(max_length=20, blank=True, default='')
+    new_role = models.CharField(max_length=20, blank=True, default='')
+    enrollment = models.ForeignKey(
+        'NFCEnrollmentSession',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='privileged_audit_events',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError('Privileged user audit events are append-only.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('Privileged user audit events are append-only.')
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['target_user', 'created_at'])]
 
 
 class Activity(models.Model):
@@ -778,12 +838,14 @@ class NFCEnrollmentSession(models.Model):
         CANCELLED = 'cancelled', 'Cancelled'
 
     nfc_uid = models.CharField(max_length=100)
+    device_id = models.CharField(max_length=100, blank=True, default='')
     station = models.CharField(max_length=100, blank=True, default='')
     cabinet_name = models.CharField(max_length=100, blank=True, default='')
     token_digest = models.CharField(max_length=64, unique=True)
     token_hash = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.PENDING)
     expires_at = models.DateTimeField()
+    completion_expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     completed_by = models.ForeignKey(
@@ -793,16 +855,13 @@ class NFCEnrollmentSession(models.Model):
         blank=True,
         related_name='nfc_enrollment_sessions',
     )
-    identity_target_user = models.ForeignKey(
+    registration_target_user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='pending_nfc_identity_checks',
     )
-    identity_code_hash = models.CharField(max_length=128, blank=True, default='')
-    identity_code_expires_at = models.DateTimeField(null=True, blank=True)
-    identity_code_attempts = models.PositiveSmallIntegerField(default=0)
     def set_token(self, token):
         self.token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
         self.token_hash = make_password(token)
@@ -812,7 +871,8 @@ class NFCEnrollmentSession(models.Model):
 
     @property
     def is_expired(self):
-        return timezone.now() >= self.expires_at
+        deadline = self.completion_expires_at or self.expires_at
+        return timezone.now() >= deadline
 
     class Meta:
         ordering = ['-created_at']

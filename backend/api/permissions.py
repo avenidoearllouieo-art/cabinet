@@ -164,3 +164,13 @@ class NFCEnrollmentRateThrottle(AnonRateThrottle):
 
     def get_rate(self):
         return self.rate
+
+
+from rest_framework.throttling import UserRateThrottle
+
+
+class RegistrationPinIssuanceThrottle(UserRateThrottle):
+    rate = '5/hour'
+
+    def get_rate(self):
+        return self.rate
