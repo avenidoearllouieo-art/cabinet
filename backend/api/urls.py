@@ -37,6 +37,10 @@ from .views import (
     AdminUserImportConfirmView,
     AcademicFilePreviewAuthorizeView,
     AcademicFilePreviewContentView,
+    StudentMultipartUploadStartView,
+    StudentMultipartUploadPartView,
+    StudentMultipartUploadCompleteView,
+    StudentMultipartUploadAbortView,
 )
 
 router = DefaultRouter()
@@ -53,6 +57,10 @@ router.register(r'activity-discussions', ActivityDiscussionViewSet, basename='ac
 router.register(r'activity-announcements', ActivityAnnouncementViewSet, basename='activityannouncement')
 
 urlpatterns = [
+    path('student/multipart-uploads/', StudentMultipartUploadStartView.as_view(), name='student_multipart_upload_start'),
+    path('student/multipart-uploads/<uuid:session_id>/parts/<int:part_number>/', StudentMultipartUploadPartView.as_view(), name='student_multipart_upload_part'),
+    path('student/multipart-uploads/<uuid:session_id>/complete/', StudentMultipartUploadCompleteView.as_view(), name='student_multipart_upload_complete'),
+    path('student/multipart-uploads/<uuid:session_id>/abort/', StudentMultipartUploadAbortView.as_view(), name='student_multipart_upload_abort'),
     path('file-previews/<str:kind>/<int:attachment_id>/authorize/', AcademicFilePreviewAuthorizeView.as_view(), name='academic_file_preview_authorize'),
     path('file-previews/<str:kind>/<int:attachment_id>/content/', AcademicFilePreviewContentView.as_view(), name='academic_file_preview_content'),
     path('users/import/template/', AdminUserImportTemplateView.as_view(), name='admin_user_import_template'),

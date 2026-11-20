@@ -16,6 +16,7 @@ const formatDate = (dateValue) => {
   const date = new Date(dateValue)
   return Number.isNaN(date.getTime()) ? String(dateValue) : date.toLocaleString()
 }
+const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
 
 const formatAction = (action) => {
   const value = String(action || '').toLowerCase()
@@ -269,11 +270,10 @@ export default function UserDrawer({ user, onClose, onAction }) {
                 <div>
                   <span className="font-semibold text-slate-900">Section:</span> {user.section_name || user.section || '—'}
                 </div>
-                {(user.section_program || user.section_year_level || user.section_academic_year) && (
+                {(user.section_year_level || user.section_academic_year) && (
                   <>
-                    {user.section_program && <div><span className="font-semibold text-slate-900">Program:</span> {user.section_program}</div>}
                     {user.section_year_level && <div><span className="font-semibold text-slate-900">Year level:</span> {user.section_year_level}</div>}
-                    {user.section_academic_year && <div><span className="font-semibold text-slate-900">Academic year:</span> {user.section_academic_year}</div>}
+                    {user.section_academic_year && <div><span className="font-semibold text-slate-900">Academic year:</span> {formatAcademicYear(user.section_academic_year)}</div>}
                   </>
                 )}
               </div>

@@ -40,6 +40,12 @@ class BackendEnvironmentLoadingTests(SimpleTestCase):
             'RENDER_EXTERNAL_HOSTNAME': 'taptrack-api.onrender.com',
             'DJANGO_CORS_ALLOWED_ORIGINS': 'https://taptrack-ui.onrender.com',
             'DJANGO_CSRF_TRUSTED_ORIGINS': 'https://taptrack-ui.onrender.com',
+            'DJANGO_MEDIA_STORAGE_BACKEND': 's3',
+            'AWS_STORAGE_BUCKET_NAME': 'taptrack-test-bucket',
+            'AWS_ACCESS_KEY_ID': 'test-access-key',
+            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+            'AWS_S3_REGION_NAME': 'ap-southeast-1',
+            'AWS_S3_ENDPOINT_URL': 'https://objects.example.test',
             'DJANGO_MEDIA_ROOT': '/var/data/media',
             'DJANGO_FILE_UPLOAD_TEMP_DIR': '/var/data/tmp',
         })
@@ -48,6 +54,8 @@ import json
 import sys
 sys.path.insert(0, sys.argv[1])
 from config import settings
+from django.core.files.storage import storages
+default_storage = storages['default']
 print(json.dumps({
     'debug': settings.DEBUG,
     'secret_key': settings.SECRET_KEY,
@@ -56,6 +64,12 @@ print(json.dumps({
     'cors_origins': settings.CORS_ALLOWED_ORIGINS,
     'csrf_origins': settings.CSRF_TRUSTED_ORIGINS,
     'media_root': settings.MEDIA_ROOT.as_posix(),
+    'media_storage_backend': settings.MEDIA_STORAGE_BACKEND,
+    'default_storage': settings.STORAGES['default']['BACKEND'],
+    'storage_bucket': settings.AWS_STORAGE_BUCKET_NAME,
+    'storage_endpoint': settings.AWS_S3_ENDPOINT_URL,
+    'storage_class': type(default_storage).__name__,
+    'storage_is_private': default_storage.default_acl is None and default_storage.querystring_auth,
     'file_upload_temp_dir': settings.FILE_UPLOAD_TEMP_DIR,
     'ssl_redirect': settings.SECURE_SSL_REDIRECT,
     'secure_cookies': settings.SESSION_COOKIE_SECURE and settings.CSRF_COOKIE_SECURE,
@@ -80,6 +94,12 @@ print(json.dumps({
         self.assertEqual(configured['cors_origins'], ['https://taptrack-ui.onrender.com'])
         self.assertEqual(configured['csrf_origins'], ['https://taptrack-ui.onrender.com'])
         self.assertEqual(configured['media_root'], '/var/data/media')
+        self.assertEqual(configured['media_storage_backend'], 's3')
+        self.assertEqual(configured['default_storage'], 'storages.backends.s3.S3Storage')
+        self.assertEqual(configured['storage_bucket'], 'taptrack-test-bucket')
+        self.assertEqual(configured['storage_endpoint'], 'https://objects.example.test')
+        self.assertEqual(configured['storage_class'], 'S3Storage')
+        self.assertTrue(configured['storage_is_private'])
         self.assertEqual(configured['file_upload_temp_dir'], '/var/data/tmp')
         self.assertTrue(configured['ssl_redirect'])
         self.assertTrue(configured['secure_cookies'])
@@ -93,9 +113,16 @@ print(json.dumps({
             'RENDER_EXTERNAL_HOSTNAME',
             'DJANGO_MEDIA_ROOT',
             'DJANGO_FILE_UPLOAD_TEMP_DIR',
+            'DJANGO_MEDIA_STORAGE_BACKEND',
+            'AWS_STORAGE_BUCKET_NAME',
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_S3_REGION_NAME',
+            'AWS_S3_ENDPOINT_URL',
         ):
             environment.pop(name, None)
         environment['DJANGO_DEBUG'] = 'true'
+        environment['DJANGO_MEDIA_STORAGE_BACKEND'] = 'filesystem'
         environment['DJANGO_SECRET_KEY'] = 'local-settings-test-secret'
         script = '''
 import json
@@ -121,6 +148,44 @@ print(json.dumps({
         self.assertEqual(configured['database_engine'], 'django.db.backends.sqlite3')
         self.assertEqual(configured['media_root'], str(settings.BASE_DIR / 'media'))
         self.assertFalse(configured['ssl_redirect'])
+
+    def test_missing_tigris_configuration_falls_back_to_filesystem_when_debug_is_false(self):
+        environment = os.environ.copy()
+        for name in (
+            'DJANGO_MEDIA_STORAGE_BACKEND',
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_STORAGE_BUCKET_NAME',
+            'AWS_S3_ENDPOINT_URL',
+            'AWS_S3_REGION_NAME',
+        ):
+            environment.pop(name, None)
+        environment.update({
+            'DJANGO_DEBUG': 'false',
+            'DJANGO_SECRET_KEY': 'filesystem-fallback-test-secret',
+        })
+        script = '''
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+from config import settings
+print(json.dumps({
+    'media_storage_backend': settings.MEDIA_STORAGE_BACKEND,
+    'default_storage': settings.STORAGES['default']['BACKEND'],
+}))
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', script, str(settings.BASE_DIR)],
+            cwd=settings.BASE_DIR.parent,
+            env=environment,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        configured = json.loads(result.stdout)
+        self.assertEqual(configured['media_storage_backend'], 'filesystem')
+        self.assertEqual(configured['default_storage'], 'django.core.files.storage.FileSystemStorage')
 
     def test_allowed_hosts_are_parsed_from_comma_separated_environment_value(self):
         expected_hosts = ['localhost', '127.0.0.1', '192.168.1.43']
@@ -509,6 +574,27 @@ class InstructorSectionAssignmentTests(TestCase):
         self.assertFalse(self.first_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
         self.assertTrue(self.second_instructor.assigned_sections.filter(pk=self.section_a.pk).exists())
 
+    def test_section_create_and_edit_do_not_require_program_or_overwrite_legacy_value(self):
+        self.section_a.program = 'BSCS'
+        self.section_a.save(update_fields=['program'])
+
+        created = self.client.post('/api/sections/', {
+            'section_name': 'Program-free section',
+            'year_level': '2nd Year',
+            'academic_year': '2026–2027',
+        }, format='json')
+        updated = self.client.patch(f'/api/sections/{self.section_a.pk}/', {
+            'academic_year': '2027–2028',
+        }, format='json')
+
+        self.assertEqual(created.status_code, 201, created.json())
+        self.assertEqual(created.json()['program'], '')
+        self.assertEqual(created.json()['academic_year'], '2026–2027')
+        self.assertEqual(updated.status_code, 200, updated.json())
+        self.section_a.refresh_from_db()
+        self.assertEqual(self.section_a.program, 'BSCS')
+        self.assertEqual(self.section_a.academic_year, '2027–2028')
+
     def test_bulk_section_assignment_updates_owner_relationships(self):
         self.section_a.instructor = self.first_instructor
         self.section_a.save(update_fields=['instructor'])
@@ -599,10 +685,12 @@ class ActivityDiscussionAccessTests(TestCase):
         self.owned_activity = Activity.objects.create(
             title='Owned discussion activity',
             created_by=self.instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         self.assigned_activity = Activity.objects.create(
             title='Assigned discussion activity',
             created_by=self.other_instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         self.assigned_activity.assigned_sections.add(self.section)
         self.unrelated_activity = Activity.objects.create(
@@ -684,6 +772,7 @@ class ActivityDiscussionAccessTests(TestCase):
             title='Student section discussion activity',
             section=self.section,
             created_by=self.instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         visible = ActivityDiscussion.objects.create(
             activity=student_activity,
@@ -694,6 +783,7 @@ class ActivityDiscussionAccessTests(TestCase):
         assigned_activity = Activity.objects.create(
             title='M2M assigned discussion activity',
             created_by=self.instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         assigned_activity.assigned_sections.add(self.section)
         assigned_visible = ActivityDiscussion.objects.create(
@@ -807,6 +897,75 @@ class ActivityCreationTests(TestCase):
         self.assertEqual(activity.created_by, self.instructor)
         self.assertEqual(activity.instructions, '<p>Read the brief carefully.</p>')
         self.assertTrue(activity.assigned_sections.filter(section_id__in=[self.section_a.section_id, self.section_b.section_id]).count() == 2)
+
+    def test_activity_is_created_as_private_draft_until_explicit_publish(self):
+        student = User.objects.create_user(
+            username='draft-activity-student',
+            email='draft-activity-student@example.com',
+            password='secret123',
+            role=User.RoleChoices.STUDENT,
+            student_id='DRAFT-ACTIVITY-STUDENT',
+            section=self.section_a,
+        )
+        self.client.force_authenticate(user=self.instructor)
+
+        created = self.client.post('/api/activities/', {
+            'title': 'Explicit publication activity',
+            'assigned_sections': [self.section_a.pk],
+        }, format='json')
+
+        self.assertEqual(created.status_code, 201, created.json())
+        self.assertEqual(created.json()['status'], Activity.StatusChoices.DRAFT)
+        activity_id = created.json()['id']
+        self.assertFalse(Notification.objects.filter(student=student, notification_type=Notification.TypeChoices.ACTIVITY).exists())
+
+        self.client.force_authenticate(user=student)
+        self.assertEqual(self.client.get(f'/api/activities/{activity_id}/').status_code, 404)
+        self.assertNotIn(activity_id, {item['id'] for item in self.client.get('/api/activities/').json()['results']})
+        submission = self.client.post('/api/submissions/', {
+            'activity': activity_id,
+            'file': SimpleUploadedFile('draft-work.pdf', b'%PDF-1.4\ndraft'),
+        }, format='multipart')
+        self.assertEqual(submission.status_code, 403)
+
+        self.client.force_authenticate(user=self.instructor)
+        published = self.client.patch(f'/api/activities/{activity_id}/', {'status': 'Published'}, format='json')
+        self.assertEqual(published.status_code, 200, published.json())
+        self.assertEqual(published.json()['status'], Activity.StatusChoices.PUBLISHED)
+        self.assertTrue(Notification.objects.filter(student=student, notification_type=Notification.TypeChoices.ACTIVITY).exists())
+        self.client.force_authenticate(user=student)
+        self.assertEqual(self.client.get(f'/api/activities/{activity_id}/').status_code, 200)
+
+    def test_assigned_student_count_includes_all_sections_without_duplicates(self):
+        User.objects.create_user(
+            username='activity-count-student-a',
+            email='activity-count-student-a@example.com',
+            password='secret123',
+            role=User.RoleChoices.STUDENT,
+            student_id='ACTIVITY-COUNT-A',
+            section=self.section_a,
+        )
+        User.objects.create_user(
+            username='activity-count-student-b',
+            email='activity-count-student-b@example.com',
+            password='secret123',
+            role=User.RoleChoices.STUDENT,
+            student_id='ACTIVITY-COUNT-B',
+            section=self.section_b,
+        )
+        activity = Activity.objects.create(
+            title='Multi-section count',
+            section=self.section_a,
+            created_by=self.instructor,
+        )
+        activity.assigned_sections.set([self.section_a, self.section_b])
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.get('/api/activities/')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        result = next(item for item in response.json()['results'] if item['id'] == activity.pk)
+        self.assertEqual(result['assigned_student_count'], 2)
 
     def test_instructor_can_create_academic_activity_without_cabinet_station(self):
         self.client.force_authenticate(user=self.instructor)
@@ -1387,16 +1546,28 @@ class StudentActivityAccessTests(TestCase):
             title='Legacy section activity',
             section=self.section,
             created_by=self.instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         self.assigned_activity = Activity.objects.create(
             title='M2M assigned activity',
             created_by=self.instructor,
+            status=Activity.StatusChoices.PUBLISHED,
         )
         self.assigned_activity.assigned_sections.add(self.section)
         self.unrelated_activity = Activity.objects.create(
             title='Unrelated activity',
             section=self.other_section,
             created_by=self.instructor,
+        )
+        self.draft_activity = Activity.objects.create(
+            title='Private draft activity',
+            section=self.section,
+            created_by=self.instructor,
+        )
+        self.draft_submission = Submission.objects.create(
+            activity=self.draft_activity,
+            student=self.student,
+            file=SimpleUploadedFile('draft-work.pdf', b'%PDF-1.4\ndraft'),
         )
         self.client.force_authenticate(user=self.student)
 
@@ -1413,6 +1584,10 @@ class StudentActivityAccessTests(TestCase):
         self.assertEqual(self.client.get(f'/api/activities/{self.unrelated_activity.pk}/').status_code, 404)
         self.assertEqual(stats.status_code, 200, stats.json())
         self.assertEqual(stats.json()['total_activities'], 2)
+        submission_list = self.client.get('/api/submissions/')
+        self.assertEqual(submission_list.status_code, 200, submission_list.json())
+        self.assertNotIn(self.draft_submission.pk, {item['id'] for item in submission_list.json()['results']})
+        self.assertTrue(Submission.objects.filter(pk=self.draft_submission.pk).exists())
         self.assertEqual(dashboard.status_code, 200, dashboard.json())
         self.assertEqual(dashboard.json()['total_activities'], 2)
         self.assertEqual(
@@ -1476,6 +1651,33 @@ class StudentActivityAccessTests(TestCase):
         self.assertTrue(update_response.json()['files'][0]['name'].startswith('work'))
         self.assertIsNone(update_response.json()['files'][0]['url'])
         self.assertEqual(update_response.json()['files'][0]['preview_kind'], 'submission_file')
+
+    def test_completed_tigris_temporary_upload_is_linked_without_copying_object(self):
+        uploaded = TemporaryUpload.objects.create(
+            user=self.student,
+            activity=self.assigned_activity,
+            original_filename='defense.mp4',
+            file_size=512 * 1024 * 1024,
+            content_type='video/mp4',
+            file=SimpleUploadedFile('defense.mp4', b'\x00\x00\x00\x18ftypisom-placeholder'),
+        )
+        stored_key = uploaded.file.name
+        self.assertTrue(stored_key.startswith(f'submissions/videos/{self.student.pk}/'))
+        self.client.force_authenticate(user=self.student)
+
+        response = self.client.post('/api/submissions/', {
+            'activity': self.assigned_activity.pk,
+            'temp_upload_ids': [uploaded.pk],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        submission = Submission.objects.get(pk=response.json()['id'])
+        attachment = submission.attachments.get()
+        self.assertEqual(attachment.file.name, stored_key)
+        self.assertEqual(attachment.original_filename, 'defense.mp4')
+        self.assertEqual(attachment.file_size, 512 * 1024 * 1024)
+        self.assertTrue(attachment.file.storage.exists(stored_key))
+        self.assertFalse(TemporaryUpload.objects.filter(pk=uploaded.pk).exists())
 
     def test_student_uploads_are_limited_to_assigned_activities_and_matching_submissions(self):
         invalid_activity_upload = self.client.post('/api/student/submissions/upload', {
@@ -1705,7 +1907,7 @@ class StudentActivityAccessTests(TestCase):
         }, format='multipart')
 
         self.assertEqual(response.status_code, 400, response.json())
-        self.assertIn('do not match', ' '.join(response.json()['file']))
+        self.assertIn('do not match', ' '.join(response.json()['files']))
         self.assertFalse(TemporaryUpload.objects.filter(user=self.student).exists())
         self.assertEqual(os.listdir(media_directory.name), [])
 
@@ -1981,12 +2183,13 @@ class ProfileAdminFormTests(TestCase):
 
     def test_submission_admin_student_field_filters_students(self):
         from django.contrib import admin
-        from .admin import SubmissionAdmin
+        from .admin import SubmissionAdmin, SubmissionAttachmentInline
         from .models import Submission, User
 
         admin_instance = SubmissionAdmin(Submission, admin.site)
         field = admin_instance.formfield_for_foreignkey(Submission._meta.get_field('student'), None)
         self.assertEqual(field.queryset.filter(role=User.RoleChoices.STUDENT).count(), field.queryset.count())
+        self.assertIn(SubmissionAttachmentInline, SubmissionAdmin.inlines)
 
 
 class TimezoneConfigurationTests(SimpleTestCase):

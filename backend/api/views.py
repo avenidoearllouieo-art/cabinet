@@ -16,7 +16,7 @@ from .permissions import (
 )
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 from rest_framework.decorators import action
@@ -31,8 +31,10 @@ from django.urls import reverse
 from django.utils.cache import patch_cache_control
 from django.utils.http import content_disposition_header
 from django.conf import settings
+from django.core.cache import cache
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
+from botocore.exceptions import ClientError
 from PIL import Image, UnidentifiedImageError
 from urllib.parse import quote
 import hashlib
@@ -40,7 +42,7 @@ import mimetypes
 import os
 import re
 
-from .models import Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, ActivityDiscussion, ActivityDiscussionAttachment, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, ActivityAnnouncement
+from .models import Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, ActivityDiscussion, ActivityDiscussionAttachment, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, MultipartUploadSession, ActivityAnnouncement
 from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession
 from .student_import import (
     MAX_IMPORT_FILE_BYTES,
@@ -80,7 +82,20 @@ from .serializers import (
     AccessLogPhotoReadSerializer,
 )
 from .discussion_serializers import ActivityDiscussionSerializer
-from .file_uploads import validate_student_submission_files, validate_uploaded_files
+from .file_uploads import (
+    MAX_STUDENT_SUBMISSION_BYTES,
+    MAX_STUDENT_SUBMISSION_FILES,
+    validate_student_submission_files,
+    validate_uploaded_files,
+)
+from .tigris_uploads import (
+    abort_multipart_session,
+    abort_expired_multipart_sessions,
+    complete_multipart_session,
+    create_multipart_session,
+    get_tigris_client,
+    presign_upload_part,
+)
 from .excel_exports import branded_excel_response, format_duration
 from django.contrib.auth.password_validation import validate_password
 import secrets
@@ -123,6 +138,28 @@ def create_temporary_uploads(user, activity, uploaded_files):
             upload.delete()
         raise
     return created
+
+
+def get_student_submission_usage(user, activity, request_data=None):
+    existing_files, removal_errors = get_existing_submission_files_for_upload(user, activity, request_data or {})
+    if removal_errors:
+        return None, None, removal_errors
+    uploads = list(TemporaryUpload.objects.filter(user=user, activity=activity))
+    pending_sessions = list(MultipartUploadSession.objects.filter(
+        user=user,
+        activity=activity,
+        status=MultipartUploadSession.StatusChoices.INITIATED,
+        expires_at__gt=timezone.now(),
+    ))
+    try:
+        total_size = sum(file.size for file in existing_files)
+        total_size += sum(upload.file_size or upload.file.size for upload in uploads)
+        total_size += sum(session.file_size for session in pending_sessions)
+    except (OSError, ValueError, ClientError):
+        return None, None, {'detail': ['Existing submission file sizes could not be verified.']}
+    total_count = len(existing_files) + len(uploads) + len(pending_sessions)
+    return total_count, total_size, {}
+
 
 def get_existing_submission_files_for_upload(user, activity, request_data):
     raw_removed_ids = (
@@ -177,6 +214,40 @@ def get_existing_submission_files_for_upload(user, activity, request_data):
     if has_unattached_primary_file and not remove_primary_file:
         existing_files.append(submission.file)
     return existing_files, {}
+
+
+def store_student_temporary_uploads(user, activity, uploaded_files, request_data):
+    uploaded_files = list(uploaded_files)
+    with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
+        existing_files = []
+        if activity:
+            count, total_size, usage_errors = get_student_submission_usage(user, activity, request_data)
+            if usage_errors:
+                return [], usage_errors, status.HTTP_503_SERVICE_UNAVAILABLE
+            uploaded_size = sum(int(uploaded_file.size) for uploaded_file in uploaded_files)
+            if count + len(uploaded_files) > MAX_STUDENT_SUBMISSION_FILES:
+                return [], {'files': [f'A submission can contain at most {MAX_STUDENT_SUBMISSION_FILES} files.']}, status.HTTP_400_BAD_REQUEST
+            if total_size + uploaded_size > MAX_STUDENT_SUBMISSION_BYTES:
+                return [], {'files': ['Combined submission files exceed the configured total size limit.']}, status.HTTP_400_BAD_REQUEST
+            existing_files, removal_errors = get_existing_submission_files_for_upload(user, activity, request_data)
+            if removal_errors:
+                return [], removal_errors, status.HTTP_400_BAD_REQUEST
+            existing_files.extend(
+                upload.file
+                for upload in TemporaryUpload.objects.filter(user=user, activity=activity)
+            )
+
+        upload_errors = validate_student_submission_files(uploaded_files, existing_files)
+        if upload_errors:
+            return [], {'files': upload_errors}, status.HTTP_400_BAD_REQUEST
+        uploads = create_temporary_uploads(user, activity, uploaded_files)
+        for upload, uploaded_file in zip(uploads, uploaded_files):
+            upload.original_filename = os.path.basename(str(uploaded_file.name or '').replace('\\', '/'))[:255]
+            upload.file_size = int(uploaded_file.size)
+            upload.content_type = str(uploaded_file.content_type or '')
+            upload.save(update_fields=['original_filename', 'file_size', 'content_type'])
+        return uploads, {}, None
 
 def omit_response_fields(data, field_names):
     if isinstance(data, dict):
@@ -685,6 +756,43 @@ def academic_file_cookie_name(kind, attachment_id):
     return f'taptrack_file_preview_{kind}_{attachment_id}'
 
 
+def academic_file_presigned_urls(file_field, filename, content_type):
+    storage = file_field.storage
+    bucket_name = getattr(storage, 'bucket_name', None)
+    connection = getattr(storage, 'connection', None)
+    if not bucket_name or connection is None:
+        return None
+    client = connection.meta.client
+    key = storage._normalize_name(file_field.name)
+    common_params = {
+        'Bucket': bucket_name,
+        'Key': key,
+        'ResponseContentType': content_type,
+        'ResponseCacheControl': 'private, no-store',
+    }
+    expires_in = settings.AWS_QUERYSTRING_EXPIRE
+    return {
+        'content_url': client.generate_presigned_url(
+            'get_object',
+            Params={
+                **common_params,
+                'ResponseContentDisposition': content_disposition_header(False, filename),
+            },
+            ExpiresIn=expires_in,
+            HttpMethod='GET',
+        ),
+        'download_url': client.generate_presigned_url(
+            'get_object',
+            Params={
+                **common_params,
+                'ResponseContentDisposition': content_disposition_header(True, filename),
+            },
+            ExpiresIn=expires_in,
+            HttpMethod='GET',
+        ),
+    }
+
+
 class AcademicFilePreviewAuthorizeView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -694,33 +802,38 @@ class AcademicFilePreviewAuthorizeView(APIView):
         if not academic_file_is_authorized(request.user, kind, activity, submission):
             raise Http404
         if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
-            raise Http404
+            raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
         filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
+        signed_urls = academic_file_presigned_urls(file_field, filename, content_type)
         content_url = reverse('academic_file_preview_content', args=[kind, attachment_id])
-        cookie_name = academic_file_cookie_name(kind, attachment_id)
-        token = signing.dumps({
-            'user_id': request.user.pk,
-            'kind': kind,
-            'attachment_id': attachment_id,
-        }, salt=ACADEMIC_FILE_PREVIEW_SALT)
-        response = Response({
+        payload = {
             'filename': filename,
             'size': size,
             'content_type': content_type,
             'preview_type': preview_type,
             'preview_supported': preview_type != 'unsupported',
-            'content_url': content_url,
-            'download_url': f'{content_url}?download=1',
-        })
-        response.set_cookie(
-            cookie_name,
-            token,
-            max_age=ACADEMIC_FILE_PREVIEW_MAX_AGE,
-            httponly=True,
-            secure=request.is_secure(),
-            samesite='Lax',
-            path=content_url.rsplit('/', 1)[0] + '/',
-        )
+            **(signed_urls or {
+                'content_url': content_url,
+                'download_url': f'{content_url}?download=1',
+            }),
+        }
+        response = Response(payload)
+        if not signed_urls:
+            cookie_name = academic_file_cookie_name(kind, attachment_id)
+            token = signing.dumps({
+                'user_id': request.user.pk,
+                'kind': kind,
+                'attachment_id': attachment_id,
+            }, salt=ACADEMIC_FILE_PREVIEW_SALT)
+            response.set_cookie(
+                cookie_name,
+                token,
+                max_age=ACADEMIC_FILE_PREVIEW_MAX_AGE,
+                httponly=True,
+                secure=request.is_secure(),
+                samesite='None' if request.is_secure() else 'Lax',
+                path=content_url.rsplit('/', 1)[0] + '/',
+            )
         patch_cache_control(response, private=True, no_store=True)
         return response
 
@@ -754,6 +867,31 @@ def stream_file_range(file_field, start, length):
     return iterator()
 
 
+def open_storage_object(file_field, byte_range=None):
+    storage = file_field.storage
+    bucket_name = getattr(storage, 'bucket_name', None)
+    connection = getattr(storage, 'connection', None)
+    if not bucket_name or connection is None:
+        return None
+
+    key = storage._normalize_name(file_field.name)
+    request = {'Bucket': bucket_name, 'Key': key}
+    if byte_range:
+        request['Range'] = f'bytes={byte_range[0]}-{byte_range[1]}'
+    return connection.meta.client.get_object(**request)['Body']
+
+
+def stream_storage_object(body):
+    try:
+        while True:
+            chunk = body.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        body.close()
+
+
 class AcademicFilePreviewContentView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -771,7 +909,7 @@ class AcademicFilePreviewContentView(APIView):
         if not academic_file_is_authorized(user, kind, activity, submission):
             raise Http404
         if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
-            raise Http404
+            raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
 
         filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
         requested_download = request.query_params.get('download') == '1'
@@ -797,11 +935,14 @@ class AcademicFilePreviewContentView(APIView):
                 response['Content-Range'] = f'bytes */{size}'
                 return response
             length = end - start + 1
-            response = StreamingHttpResponse(stream_file_range(file_field, start, length), status=status.HTTP_206_PARTIAL_CONTENT, content_type=content_type)
+            body = open_storage_object(file_field, (start, end))
+            stream = stream_storage_object(body) if body else stream_file_range(file_field, start, length)
+            response = StreamingHttpResponse(stream, status=status.HTTP_206_PARTIAL_CONTENT, content_type=content_type)
             response['Content-Range'] = f'bytes {start}-{end}/{size}'
             response['Content-Length'] = str(length)
         else:
-            response = FileResponse(file_field.open('rb'), content_type=content_type)
+            body = open_storage_object(file_field)
+            response = StreamingHttpResponse(stream_storage_object(body), content_type=content_type) if body else FileResponse(file_field.open('rb'), content_type=content_type)
             response['Content-Length'] = str(size)
 
         response['Content-Disposition'] = content_disposition_header(as_attachment, filename)
@@ -811,6 +952,159 @@ class AcademicFilePreviewContentView(APIView):
         response['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'self'; sandbox"
         patch_cache_control(response, private=True, no_store=True)
         return response
+
+
+def get_owned_multipart_session(request, session_id):
+    session = MultipartUploadSession.objects.filter(pk=session_id, user=request.user).first()
+    if not session:
+        raise Http404
+    if session.status != MultipartUploadSession.StatusChoices.INITIATED:
+        raise PermissionDenied('This multipart upload session is no longer active.')
+    if session.expires_at <= timezone.now():
+        raise PermissionDenied('This multipart upload session has expired. Start a new upload.')
+    if not student_can_access_activity(request.user, session.activity):
+        raise Http404
+    return session
+
+
+def multipart_upload_response(upload, session_id=None):
+    return {
+        'id': upload.pk,
+        'temp_upload_id': upload.pk,
+        'upload_session_id': str(session_id) if session_id else None,
+        'name': upload.original_filename or os.path.basename(upload.file.name),
+        'filename': upload.original_filename or os.path.basename(upload.file.name),
+        'size': upload.file_size,
+        'content_type': upload.content_type,
+        'uploaded_at': upload.uploaded_at,
+        'preview_kind': 'submission_file',
+    }
+
+
+class StudentMultipartUploadStartView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+
+    def post(self, request, *args, **kwargs):
+        activity_id = request.data.get('activity')
+        filename = request.data.get('filename')
+        try:
+            file_size = int(request.data.get('file_size'))
+        except (TypeError, ValueError):
+            return Response({'file_size': ['Provide the video size in bytes.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        activity = Activity.objects.filter(pk=activity_id).first()
+        if not activity or not student_can_access_activity(request.user, activity):
+            raise Http404
+        if activity.due_date and activity.due_date < timezone.now() and not activity.allow_resubmission:
+            return Response({'detail': 'The deadline has passed and late submissions are not allowed.'}, status=status.HTTP_403_FORBIDDEN)
+        if settings.MEDIA_STORAGE_BACKEND != 's3':
+            return Response({'detail': 'Direct multipart upload requires configured Tigris storage.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            if cache.add('taptrack-tigris-multipart-cleanup', True, timeout=3600):
+                abort_expired_multipart_sessions()
+        except Exception:
+            logger.exception('Could not clean expired Tigris multipart sessions before starting a new upload')
+
+        with transaction.atomic():
+            User.objects.select_for_update().get(pk=request.user.pk)
+            pending_sessions = list(MultipartUploadSession.objects.filter(
+                user=request.user,
+                activity=activity,
+                status=MultipartUploadSession.StatusChoices.INITIATED,
+                expires_at__gt=timezone.now(),
+            ))
+            if len(pending_sessions) >= 2:
+                return Response({'detail': 'Finish or cancel an existing video upload before starting another.'}, status=status.HTTP_409_CONFLICT)
+            existing_count, existing_size, usage_errors = get_student_submission_usage(request.user, activity, request.data)
+            if usage_errors:
+                return Response(usage_errors, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if existing_count >= MAX_STUDENT_SUBMISSION_FILES:
+                return Response({'files': [f'A submission can contain at most {MAX_STUDENT_SUBMISSION_FILES} files.']}, status=status.HTTP_400_BAD_REQUEST)
+            if existing_size + file_size > MAX_STUDENT_SUBMISSION_BYTES:
+                return Response({'files': ['Combined submission files exceed the configured total size limit.']}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                session = create_multipart_session(request.user, activity, filename, file_size)
+            except ValueError as error:
+                return Response({'file': [str(error)]}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception:
+                logger.exception('Could not initiate a multipart upload for student %s and activity %s', request.user.pk, activity.pk)
+                return Response({'detail': 'Tigris could not start the video upload. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({
+            'upload_id': str(session.pk),
+            'part_size': session.part_size,
+            'total_parts': session.total_parts,
+            'expires_at': session.expires_at,
+            'filename': session.original_filename,
+            'file_size': session.file_size,
+        }, status=status.HTTP_201_CREATED)
+
+
+class StudentMultipartUploadPartView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+
+    def post(self, request, session_id, part_number, *args, **kwargs):
+        session = get_owned_multipart_session(request, session_id)
+        try:
+            url = presign_upload_part(session, part_number)
+        except ValueError as error:
+            return Response({'part_number': [str(error)]}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Could not authorize multipart part for session %s', session.pk)
+            return Response({'detail': 'Tigris could not authorize this video part. Please retry.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'url': url, 'expires_in': settings.TAPTRACK_PRESIGNED_PART_URL_TTL})
+
+
+class StudentMultipartUploadCompleteView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+
+    def post(self, request, session_id, *args, **kwargs):
+        session = MultipartUploadSession.objects.filter(pk=session_id, user=request.user).first()
+        if not session:
+            raise Http404
+        if session.status == MultipartUploadSession.StatusChoices.COMPLETED and session.temporary_upload_id:
+            return Response(multipart_upload_response(session.temporary_upload, session.pk))
+        if session.status != MultipartUploadSession.StatusChoices.INITIATED or session.expires_at <= timezone.now():
+            return Response({'detail': 'This multipart upload session is no longer active.'}, status=status.HTTP_409_CONFLICT)
+        if not student_can_access_activity(request.user, session.activity):
+            raise Http404
+        existing_count, existing_size, usage_errors = get_student_submission_usage(request.user, session.activity)
+        if usage_errors:
+            return Response(usage_errors, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if existing_count > MAX_STUDENT_SUBMISSION_FILES or existing_size > MAX_STUDENT_SUBMISSION_BYTES:
+            return Response({'detail': 'This upload would exceed the configured submission count or size limit.'}, status=status.HTTP_409_CONFLICT)
+        try:
+            upload = complete_multipart_session(session, request.data.get('parts'))
+        except ValueError as error:
+            return Response({'detail': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Could not verify completed multipart upload session %s', session.pk)
+            return Response({'detail': 'The uploaded video could not be verified. No submission file was created.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(multipart_upload_response(upload, session.pk), status=status.HTTP_201_CREATED)
+
+
+class StudentMultipartUploadAbortView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsStudentRole]
+
+    def post(self, request, session_id, *args, **kwargs):
+        session = MultipartUploadSession.objects.filter(pk=session_id, user=request.user).first()
+        if not session:
+            raise Http404
+        if session.status == MultipartUploadSession.StatusChoices.ABORTED:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        if session.status != MultipartUploadSession.StatusChoices.INITIATED:
+            return Response({'detail': 'Only an active upload can be aborted.'}, status=status.HTTP_409_CONFLICT)
+        try:
+            abort_multipart_session(session)
+        except Exception:
+            logger.exception('Could not abort multipart upload session %s', session.pk)
+            return Response({'detail': 'Tigris could not abort this upload. It will be removed by multipart cleanup.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def get_custom_user_import(role, uploaded_file):
@@ -1316,7 +1610,11 @@ def get_activity_students(activity):
 
 
 def student_can_access_activity(student, activity):
-    if student.role != User.RoleChoices.STUDENT or not student.section_id:
+    if (
+        student.role != User.RoleChoices.STUDENT
+        or not student.section_id
+        or str(activity.status or '').casefold() != Activity.StatusChoices.PUBLISHED.casefold()
+    ):
         return False
     return (
         activity.section_id == student.section_id
@@ -1510,9 +1808,20 @@ class ActivityViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         base_qs = Activity.objects.select_related('created_by', 'section').prefetch_related('attachments')
+        assigned_students = User.objects.filter(
+            role=User.RoleChoices.STUDENT,
+        ).filter(
+            Q(section_id=models.OuterRef('section_id'))
+            | Q(section__assigned_activities=models.OuterRef('pk')),
+        ).order_by().values('role').annotate(
+            total=models.Count('pk', distinct=True),
+        ).values('total')[:1]
         annotated_qs = base_qs.annotate(
             submitted_students_count=models.Count('submissions__student', distinct=True),
-            assigned_student_count=models.Count('section__users', distinct=True),
+            assigned_student_count=models.functions.Coalesce(
+                models.Subquery(assigned_students, output_field=models.IntegerField()),
+                models.Value(0),
+            ),
         )
 
         if user.role == 'admin':
@@ -1538,7 +1847,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
                 return Activity.objects.none()
             return annotated_qs.filter(
                 Q(section=user.section) | Q(assigned_sections=user.section),
-            ).distinct()
+            ).filter(status__iexact=Activity.StatusChoices.PUBLISHED).distinct()
         return Activity.objects.none()
 
     @action(detail=False, methods=['get'])
@@ -1549,6 +1858,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
         assigned_qs = Activity.objects.filter(
             Q(section=user.section) | Q(assigned_sections=user.section),
+            status__iexact=Activity.StatusChoices.PUBLISHED,
         ).distinct() if user.section else Activity.objects.none()
         submission_qs = Submission.objects.filter(student=user)
         submitted_activity_ids = submission_qs.values_list('activity_id', flat=True).distinct()
@@ -1579,28 +1889,30 @@ class ActivityViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         self._validate_instructor_activity_sections(serializer)
         activity = serializer.save(created_by=self.request.user)
-        for student in get_activity_students(activity):
-            create_student_notification(
-                student,
-                'New activity assigned',
-                f'New activity available: {activity.title}.',
-                Notification.TypeChoices.ACTIVITY,
-                f'activity-created-{activity.id}-{student.id}',
-                '/student/activities',
-            )
+        if activity.status == Activity.StatusChoices.PUBLISHED:
+            for student in get_activity_students(activity):
+                create_student_notification(
+                    student,
+                    'New activity assigned',
+                    f'New activity available: {activity.title}.',
+                    Notification.TypeChoices.ACTIVITY,
+                    f'activity-created-{activity.id}-{student.id}',
+                    '/student/activities',
+                )
 
     def perform_update(self, serializer):
         self._validate_instructor_activity_sections(serializer)
         activity = serializer.save()
-        for student in get_activity_students(activity):
-            create_student_notification(
-                student,
-                'Activity updated',
-                f'{activity.title} has been updated by your instructor.',
-                Notification.TypeChoices.ACTIVITY,
-                f'activity-update-{activity.id}-{student.id}-{activity.updated_at.isoformat()}',
-                '/student/activities',
-            )
+        if activity.status == Activity.StatusChoices.PUBLISHED:
+            for student in get_activity_students(activity):
+                create_student_notification(
+                    student,
+                    'Activity updated',
+                    f'{activity.title} has been updated by your instructor.',
+                    Notification.TypeChoices.ACTIVITY,
+                    f'activity-update-{activity.id}-{student.id}-{activity.updated_at.isoformat()}',
+                    '/student/activities',
+                )
 
     def _validate_instructor_activity_sections(self, serializer):
         user = self.request.user
@@ -1717,6 +2029,7 @@ class ActivityDiscussionViewSet(viewsets.ModelViewSet):
         if user.role == User.RoleChoices.STUDENT and user.section_id:
             return Activity.objects.filter(
                 Q(section_id=user.section_id) | Q(assigned_sections__section_id=user.section_id),
+                status__iexact=Activity.StatusChoices.PUBLISHED,
             ).distinct()
         return Activity.objects.none()
 
@@ -1783,6 +2096,7 @@ class ActivityAnnouncementViewSet(viewsets.ModelViewSet):
                 return ActivityAnnouncement.objects.none()
             return queryset.filter(
                 Q(activity__section=user.section) | Q(activity__assigned_sections=user.section),
+                activity__status__iexact=Activity.StatusChoices.PUBLISHED,
             ).distinct()
         return ActivityAnnouncement.objects.none()
 
@@ -1913,7 +2227,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
                 ).select_related('student', 'activity').distinct()
             return Submission.objects.filter(self._instructor_submission_filters()).select_related('student', 'activity').distinct()
         elif user.role == 'student':
-            return Submission.objects.filter(student=user).select_related('activity')
+            return Submission.objects.filter(student=user).exclude(
+                activity__status__iexact=Activity.StatusChoices.DRAFT,
+            ).select_related('activity')
         else:
             return Submission.objects.none()
 
@@ -2130,8 +2446,9 @@ class TemporaryUploadViewSet(viewsets.ModelViewSet):
         data = [
             {
                 'id': up.id,
-                'name': up.file.name.split('/')[-1],
-                'size': up.file.size if hasattr(up.file, 'size') else None,
+                'name': up.original_filename or up.file.name.split('/')[-1],
+                'size': up.file_size or (up.file.size if hasattr(up.file, 'size') else None),
+                'content_type': up.content_type,
                 'uploaded_at': up.uploaded_at,
                 'url': None,
             }
@@ -2150,25 +2467,17 @@ class TemporaryUploadViewSet(viewsets.ModelViewSet):
                 activity = None
         if not file:
             return Response({'detail': 'File is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        existing_files = []
-        if activity:
-            existing_files, removal_errors = get_existing_submission_files_for_upload(
-                request.user, activity, request.data,
-            )
-            if removal_errors:
-                return Response(removal_errors, status=status.HTTP_400_BAD_REQUEST)
-            existing_files.extend(
-                upload.file
-                for upload in self.get_queryset().filter(activity=activity)
-            )
-        upload_errors = validate_student_submission_files([file], existing_files)
+        uploads, upload_errors, error_status = store_student_temporary_uploads(
+            request.user, activity, [file], request.data,
+        )
         if upload_errors:
-            return Response({'file': upload_errors}, status=status.HTTP_400_BAD_REQUEST)
-        up = create_temporary_uploads(request.user, activity, [file])[0]
+            return Response(upload_errors, status=error_status)
+        up = uploads[0]
         data = {
             'id': up.id,
-            'name': up.file.name.split('/')[-1],
-            'size': up.file.size if hasattr(up.file, 'size') else None,
+            'name': up.original_filename or up.file.name.split('/')[-1],
+            'size': up.file_size,
+            'content_type': up.content_type,
             'uploaded_at': up.uploaded_at,
             'url': None,
         }
@@ -2224,11 +2533,17 @@ class StudentSubmissionUpload(APIView):
             return Response({'files': upload_errors}, status=status.HTTP_400_BAD_REQUEST)
 
         uploads = create_temporary_uploads(request.user, activity, files)
+        for upload, uploaded_file in zip(uploads, files):
+            upload.original_filename = os.path.basename(str(uploaded_file.name or '').replace('\\', '/'))[:255]
+            upload.file_size = int(uploaded_file.size)
+            upload.content_type = str(uploaded_file.content_type or '')
+            upload.save(update_fields=['original_filename', 'file_size', 'content_type'])
         results = [
             {
                 'id': up.id,
-                'name': up.file.name.split('/')[-1],
-                'size': up.file.size if hasattr(up.file, 'size') else None,
+                'name': up.original_filename or up.file.name.split('/')[-1],
+                'size': up.file_size,
+                'content_type': up.content_type,
                 'uploaded_at': up.uploaded_at,
                 'url': None,
             }
@@ -3822,6 +4137,7 @@ class DashboardStatisticsView(APIView):
         elif user.role == 'student':
             assigned_qs = Activity.objects.filter(
                 Q(section=user.section) | Q(assigned_sections=user.section),
+                status__iexact=Activity.StatusChoices.PUBLISHED,
             ).distinct() if user.section else Activity.objects.none()
             submission_qs = Submission.objects.filter(student=user)
             total_activities = assigned_qs.count()

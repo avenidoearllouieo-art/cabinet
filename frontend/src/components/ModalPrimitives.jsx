@@ -39,7 +39,7 @@ export function ModalHeader({
       <div className="flex min-w-0 items-center gap-3">
         {icon && <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FFBE0B] text-[#082B53]">{icon}</span>}
         <div className="min-w-0">
-          <h2 id={titleId} className={`break-words text-xl font-bold sm:text-2xl ${styles.title} ${titleClassName}`}>{title}</h2>
+          <h2 id={titleId} title={title} className={`break-words text-xl font-bold sm:text-2xl ${styles.title} ${titleClassName}`}>{title}</h2>
           {description && <p className={`mt-1 break-words text-sm ${styles.description} ${descriptionClassName}`}>{description}</p>}
         </div>
       </div>

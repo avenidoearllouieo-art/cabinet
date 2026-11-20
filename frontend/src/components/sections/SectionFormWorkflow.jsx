@@ -4,13 +4,15 @@ import api from '../../services/api.js'
 import { controlClass } from '../forms/formStyles.js'
 import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../forms/FormPrimitives.jsx'
 
-const blank = () => ({ subject_code: '', section_name: '', program: '', year_level: '', academic_year: '', instructor: '', status: 'Active' })
+const academicYears = ['2026–2027', '2027–2028']
+const blank = () => ({ subject_code: '', section_name: '', year_level: '', academic_year: '', instructor: '', status: 'Active' })
 
 export default function SectionFormWorkflow({ isOpen, sectionId, section, onClose, onUnauthorized, onSaved, mode = 'create' }) {
   const resolvedId = section?.id ?? sectionId
   const editing = mode === 'edit'
   const [form, setForm] = useState(blank())
   const [initialForm, setInitialForm] = useState(blank())
+  const [legacyProgram, setLegacyProgram] = useState('')
   const [instructors, setInstructors] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -26,7 +28,8 @@ export default function SectionFormWorkflow({ isOpen, sectionId, section, onClos
       setInstructors(Array.isArray(instructorsResponse.data) ? instructorsResponse.data : instructorsResponse.data.results || [])
       if (sectionResponse) {
         const data = sectionResponse.data || {}
-        const loaded = { subject_code: data.subject_code || '', section_name: data.section_name || '', program: data.program || '', year_level: data.year_level || '', academic_year: data.academic_year || '', instructor: data.instructor || '', status: data.status || 'Active' }
+        const loaded = { subject_code: data.subject_code || '', section_name: data.section_name || '', year_level: data.year_level || '', academic_year: data.academic_year || '', instructor: data.instructor || '', status: data.status || 'Active' }
+        setLegacyProgram(data.program || '')
         setForm(loaded)
         setInitialForm(loaded)
       }
@@ -44,6 +47,7 @@ export default function SectionFormWorkflow({ isOpen, sectionId, section, onClos
       const clean = blank()
       setForm(clean)
       setInitialForm(clean)
+      setLegacyProgram('')
       setErrors({})
       setFormError('')
       loadForm()
@@ -59,7 +63,7 @@ export default function SectionFormWorkflow({ isOpen, sectionId, section, onClos
   const handleSubmit = async (event) => {
     event.preventDefault()
     if (saving) return
-    const required = ['subject_code', 'section_name', 'program', 'year_level']
+    const required = ['subject_code', 'section_name', 'year_level']
     const nextErrors = Object.fromEntries(required.filter((field) => !form[field]).map((field) => [field, 'This field is required.']))
     if (Object.keys(nextErrors).length) return setErrors(nextErrors)
     if (editing && !resolvedId) return setFormError('Missing section id.')
@@ -72,7 +76,7 @@ export default function SectionFormWorkflow({ isOpen, sectionId, section, onClos
       let response
       if (editing) {
         try { response = await api.patch(`/sections/${resolvedId}/`, payload) }
-        catch (error) { if (error.response?.status === 405) response = await api.put(`/sections/${resolvedId}/`, values); else throw error }
+        catch (error) { if (error.response?.status === 405) response = await api.put(`/sections/${resolvedId}/`, { ...values, program: legacyProgram }); else throw error }
       } else response = await api.post('/sections/', values)
       onSaved?.(response.data)
       onClose?.()
@@ -90,9 +94,8 @@ export default function SectionFormWorkflow({ isOpen, sectionId, section, onClos
         <FormSection icon={BookOpen} title="Section details" description="Use the official code and academic grouping."><div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <FormField label="Subject Code" required error={errors.subject_code}>{({ id, describedBy, invalid }) => <input id={id} value={form.subject_code} onChange={update('subject_code')} placeholder="e.g., CS-101" aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
           <FormField label="Section name" required error={errors.section_name}>{({ id, describedBy, invalid }) => <input id={id} value={form.section_name} onChange={update('section_name')} placeholder="e.g., A" aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
-          <FormField label="Program" required error={errors.program}>{({ id, describedBy, invalid }) => <select id={id} value={form.program} onChange={update('program')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Select program</option><option value="BSIT">BSIT</option><option value="BSCS">BSCS</option><option value="BSIS">BSIS</option><option value="Other">Other</option></select>}</FormField>
           <FormField label="Year level" required error={errors.year_level}>{({ id, describedBy, invalid }) => <select id={id} value={form.year_level} onChange={update('year_level')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Select year level</option><option value="1st Year">1st Year</option><option value="2nd Year">2nd Year</option><option value="3rd Year">3rd Year</option><option value="4th Year">4th Year</option></select>}</FormField>
-          <FormField label="Academic year" optional error={errors.academic_year}>{({ id, describedBy, invalid }) => <input id={id} value={form.academic_year} onChange={update('academic_year')} placeholder="e.g., 2026-2027" aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)} />}</FormField>
+          <FormField label="Academic year" optional error={errors.academic_year} helper={form.academic_year && !academicYears.includes(form.academic_year) ? `Saved value “${form.academic_year}” is retained until you choose a new year.` : undefined}>{({ id, describedBy, invalid }) => <select id={id} value={academicYears.includes(form.academic_year) ? form.academic_year : ''} onChange={update('academic_year')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Select academic year</option>{academicYears.map((year) => <option key={year} value={year}>{year}</option>)}</select>}</FormField>
         </div></FormSection>
         <FormSection icon={UserRound} title="Ownership and status" description="Assign an instructor now or leave it unassigned."><div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <FormField label="Instructor" optional error={errors.instructor}>{({ id, describedBy, invalid }) => <select id={id} value={form.instructor} onChange={update('instructor')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="">Unassigned</option>{instructors.map((instructor) => <option key={instructor.id} value={instructor.id}>{`${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || instructor.username}</option>)}</select>}</FormField>

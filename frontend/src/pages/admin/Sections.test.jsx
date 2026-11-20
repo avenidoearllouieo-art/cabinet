@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
 import Sections from './Sections.jsx'
 
-vi.mock('../../services/api.js', () => ({ default: { get: vi.fn(), patch: vi.fn() } }))
+vi.mock('../../services/api.js', () => ({ default: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }))
 
 const section = {
   id: 4,
@@ -13,6 +13,7 @@ const section = {
   subject_code: 'CS-101',
   program: 'BSCS',
   year_level: '2nd Year',
+  academic_year: '2026-2027',
   status: 'Active',
   student_count: 12,
   activity_count: 3,
@@ -135,5 +136,41 @@ describe('Admin Sections', () => {
     expect(await screen.findAllByText('Section B')).toHaveLength(2)
     expect(screen.getByText('2', { selector: 'p' })).toBeTruthy()
     expect(api.get).toHaveBeenCalledWith('/sections/', { params: { page: 2 } })
+  })
+
+  it('uses the two academic-year filters and creates sections without a Program field', async () => {
+    api.get.mockImplementation((path) => {
+      if (path === '/sections/') return Promise.resolve({ data: [section, { ...section, id: 5, section_name: 'Section B', academic_year: '2027–2028' }] })
+      if (path === '/users/?role=instructor') return Promise.resolve({ data: [] })
+      throw new Error(`Unexpected GET ${path}`)
+    })
+    api.post.mockResolvedValue({ data: { ...section, id: 6, section_name: 'Section C', academic_year: '2026–2027' } })
+    const user = userEvent.setup()
+    render(<MemoryRouter><Sections /></MemoryRouter>)
+
+    const yearFilter = await screen.findByRole('combobox', { name: 'Filter academic year' })
+    expect(Array.from(yearFilter.options).map((option) => option.textContent)).toEqual([
+      'All academic years', '2026–2027', '2027–2028',
+    ])
+    expect(screen.queryByText('Program')).toBeNull()
+    await user.selectOptions(yearFilter, '2026–2027')
+    expect(screen.getByText('1 result')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Add Section' }))
+    await screen.findByRole('dialog', { name: 'Add Section' })
+    const academicYear = screen.getByRole('combobox', { name: 'Academic year' })
+    expect(Array.from(academicYear.options).map((option) => option.textContent)).toEqual([
+      'Select academic year', '2026–2027', '2027–2028',
+    ])
+    expect(screen.queryByLabelText('Program')).toBeNull()
+    await user.type(screen.getByLabelText(/Subject Code/), 'CS-303')
+    await user.type(screen.getByLabelText(/Section name/), 'C')
+    await user.selectOptions(screen.getByLabelText(/Year level/), '3rd Year')
+    await user.selectOptions(academicYear, '2026–2027')
+    await user.click(screen.getByRole('button', { name: 'Create section' }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    expect(api.post.mock.calls[0][1]).not.toHaveProperty('program')
+    expect(api.post.mock.calls[0][1].academic_year).toBe('2026–2027')
   })
 })

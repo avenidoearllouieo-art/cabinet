@@ -23,6 +23,7 @@ from .models import (
     Activity,
     ActivityAttachment,
     Submission,
+    SubmissionAttachment,
     AccessLog,
     AccessLogPhoto,
     CabinetSession,
@@ -566,6 +567,14 @@ class ActivityAttachmentInline(admin.TabularInline):
     show_change_link = True
 
 
+class SubmissionAttachmentInline(admin.TabularInline):
+    model = SubmissionAttachment
+    extra = 0
+    fields = ('file', 'original_filename', 'file_size', 'content_type', 'uploaded_at')
+    readonly_fields = ('original_filename', 'file_size', 'content_type', 'uploaded_at')
+    can_delete = True
+
+
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
     inlines = [ActivityAttachmentInline]
@@ -607,6 +616,7 @@ class ActivityAdmin(admin.ModelAdmin):
 
 @admin.register(Submission)
 class SubmissionAdmin(admin.ModelAdmin):
+    inlines = [SubmissionAttachmentInline]
     autocomplete_fields = ('student',)
     list_display = ('activity', 'student', 'submitted_at', 'updated_at')
     list_filter = ('activity', 'student')

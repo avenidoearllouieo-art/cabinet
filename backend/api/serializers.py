@@ -1,4 +1,5 @@
 import mimetypes
+import os
 
 from django.utils import timezone
 from django.db import transaction
@@ -6,6 +7,7 @@ from django.db.models import Q
 from rest_framework import serializers
 from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile, TemporaryUploadedFile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from botocore.exceptions import ClientError
 from .models import (
     Section,
     User,
@@ -23,7 +25,7 @@ from .models import (
     ActivityAnnouncement,
     PasswordResetRequest,
 )
-from .file_uploads import validate_student_submission_files, validate_uploaded_files
+from .file_uploads import uploaded_file_name, validate_student_submission_files, validate_uploaded_files
 
 
 class AccessLogPhotoReadSerializer(serializers.Serializer):
@@ -113,6 +115,7 @@ class SectionSerializer(serializers.ModelSerializer):
     )
     instructor_name = serializers.SerializerMethodField()
     student_count = serializers.SerializerMethodField()
+    program = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Section
@@ -538,7 +541,7 @@ class ActivityAttachmentSerializer(serializers.ModelSerializer):
             return obj.file_size
         try:
             return obj.file.size
-        except (OSError, ValueError):
+        except (OSError, ValueError, ClientError):
             return None
 
     def get_content_type(self, obj):
@@ -569,13 +572,16 @@ class SubmissionAttachmentSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'file_name', 'file_size', 'download_url', 'uploaded_at']
 
     def get_file_name(self, obj):
-        return obj.file.name.split('/')[-1]
+        return obj.original_filename or obj.file.name.split('/')[-1]
 
     def get_file(self, obj):
         return None
 
     def get_file_size(self, obj):
-        return obj.file.size
+        try:
+            return obj.file_size or obj.file.size
+        except (OSError, ValueError, ClientError):
+            return None
 
     def get_download_url(self, obj):
         return None
@@ -695,8 +701,7 @@ class ActivitySerializer(serializers.ModelSerializer):
             return None
 
         attachment = ActivityAttachment(activity=activity, file=uploaded_file)
-        original_name = getattr(uploaded_file, 'name', '') or getattr(uploaded_file, 'filename', '') or ''
-        attachment.original_filename = original_name.split('/')[-1]
+        attachment.original_filename = uploaded_file_name(uploaded_file)
         attachment.file_size = getattr(uploaded_file, 'size', 0) or getattr(uploaded_file, '_size', 0) or 0
         attachment.content_type = getattr(uploaded_file, 'content_type', '') or ''
         try:
@@ -1058,9 +1063,9 @@ class SubmissionSerializer(serializers.ModelSerializer):
                     attachment_names.add(at.file.name)
                     data.append({
                         'id': at.id,
-                        'name': at.file.name.split('/')[-1],
-                        'size': at.file.size if hasattr(at.file, 'size') else None,
-                        'content_type': mimetypes.guess_type(at.file.name)[0] or '',
+                        'name': at.original_filename or at.file.name.split('/')[-1],
+                        'size': at.file_size or (at.file.size if hasattr(at.file, 'size') else None),
+                        'content_type': at.content_type or mimetypes.guess_type(at.file.name)[0] or '',
                         'preview_kind': 'submission',
                         'url': None,
                     })
@@ -1071,9 +1076,9 @@ class SubmissionSerializer(serializers.ModelSerializer):
             try:
                 data.append({
                     'id': obj.pk,
-                    'name': obj.file.name.split('/')[-1],
-                    'size': obj.file.size if hasattr(obj.file, 'size') else None,
-                    'content_type': mimetypes.guess_type(obj.file.name)[0] or '',
+                    'name': obj.original_filename or obj.file.name.split('/')[-1],
+                    'size': obj.file_size or (obj.file.size if hasattr(obj.file, 'size') else None),
+                    'content_type': obj.content_type or mimetypes.guess_type(obj.file.name)[0] or '',
                     'preview_kind': 'submission_file',
                     'url': None,
                 })
@@ -1089,30 +1094,39 @@ class SubmissionSerializer(serializers.ModelSerializer):
                 source_storage = upload.file.storage
                 source_name = upload.file.name
                 attachment = SubmissionAttachment(submission=submission)
+                reuse_object = source_name.startswith('submissions/') and source_storage is attachment.file.storage
                 try:
-                    attachment.file.save(source_name.rsplit('/', 1)[-1], upload.file, save=False)
+                    if reuse_object:
+                        attachment.file.name = source_name
+                        attachment.file._committed = True
+                    else:
+                        attachment.file.save(source_name.rsplit('/', 1)[-1], upload.file, save=False)
+                    attachment.original_filename = upload.original_filename or os.path.basename(source_name)
+                    attachment.file_size = upload.file_size or upload.file.size
+                    attachment.content_type = upload.content_type or mimetypes.guess_type(attachment.original_filename)[0] or ''
                     attachment.save()
                 except Exception:
-                    if attachment.file and attachment.file.name:
+                    if attachment.file and attachment.file.name and not reuse_object:
                         attachment.file.storage.delete(attachment.file.name)
                     raise
-                created_attachments.append(attachment)
-                source_files.append((upload, source_storage, source_name))
+                created_attachments.append((attachment, reuse_object))
+                source_files.append((upload, source_storage, source_name, not reuse_object))
 
             if created_attachments and not submission.file:
-                submission.file = created_attachments[0].file
+                submission.file = created_attachments[0][0].file
                 submission.save(update_fields=['file'])
         except Exception:
-            for attachment in created_attachments:
-                if attachment.file and attachment.file.name:
+            for attachment, reuse_object in created_attachments:
+                if attachment.file and attachment.file.name and not reuse_object:
                     attachment.file.storage.delete(attachment.file.name)
                 attachment.delete()
             raise
 
-        for upload, source_storage, source_name in source_files:
+        for upload, source_storage, source_name, delete_source in source_files:
             try:
                 upload.file.close()
-                source_storage.delete(source_name)
+                if delete_source:
+                    source_storage.delete(source_name)
                 upload.delete()
             except Exception:
                 continue
@@ -1126,6 +1140,11 @@ class SubmissionSerializer(serializers.ModelSerializer):
         if temp_ids:
             temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
 
+        direct_file = validated_data.get('file')
+        if direct_file is not None:
+            validated_data['original_filename'] = uploaded_file_name(direct_file)
+            validated_data['file_size'] = int(direct_file.size)
+            validated_data['content_type'] = str(getattr(direct_file, 'content_type', '') or '')
         submission = super().create(validated_data)
         if temp_files:
             self._copy_temporary_uploads(submission, temp_files)
@@ -1148,6 +1167,12 @@ class SubmissionSerializer(serializers.ModelSerializer):
         temp_files = []
         if temp_ids:
             temp_files = list(TemporaryUpload.objects.filter(id__in=temp_ids, user=self.context['request'].user))
+
+        direct_file = validated_data.get('file')
+        if direct_file is not None:
+            validated_data['original_filename'] = uploaded_file_name(direct_file)
+            validated_data['file_size'] = int(direct_file.size)
+            validated_data['content_type'] = str(getattr(direct_file, 'content_type', '') or '')
 
         submission = super().update(instance, validated_data)
 

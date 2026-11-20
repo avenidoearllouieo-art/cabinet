@@ -56,8 +56,9 @@ export default function AcademicFileAttachments({ attachments = [], kind, emptyM
     try {
       const file = await authorizeAcademicFile(fileKind, id)
       downloadAuthorizedFile(file)
-    } catch {
-      setDownloadErrors((current) => ({ ...current, [id]: 'File unavailable. It may have been moved or deleted.' }))
+    } catch (error) {
+      const message = error.response?.data?.detail
+      setDownloadErrors((current) => ({ ...current, [id]: typeof message === 'string' ? message : 'The file could not be downloaded. Check your access or ask the owner to upload it again.' }))
     } finally {
       setDownloadingId(null)
     }

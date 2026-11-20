@@ -9,6 +9,7 @@ import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from 
 import { controlClass } from '../../components/forms/formStyles.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
+const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
 
 const publishProfileUpdate = (nextProfile) => {
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -253,9 +254,8 @@ export default function StudentProfile() {
         </div>
         <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <ProfileFact label="Section" value={profile?.section_name} />
-          <ProfileFact label="Program" value={profile?.section_program} />
           <ProfileFact label="Year Level" value={profile?.section_year_level} />
-          <ProfileFact label="Academic Year" value={profile?.section_academic_year} />
+          <ProfileFact label="Academic Year" value={formatAcademicYear(profile?.section_academic_year)} />
         </dl>
       </section>
 

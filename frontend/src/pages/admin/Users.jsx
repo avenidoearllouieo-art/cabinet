@@ -410,6 +410,7 @@ export default function Users() {
             data={visibleUsers}
             loading={loading}
             showActions={false}
+            expandable
             variant="users"
             constrainTableHeight={false}
             emptyMessage={filteredUsers.length ? 'No users match your filters.' : 'No users found.'}
@@ -434,8 +435,12 @@ export default function Users() {
                     <dt className="text-slate-500">Email</dt><dd className="min-w-0 break-all text-right text-slate-700">{row.email || '—'}</dd>
                     <dt className="text-slate-500">User ID</dt><dd className="min-w-0 break-all text-right text-slate-700">{row.student_id || row.instructor_id || row.id}</dd>
                   </dl>
-                  <button type="button" aria-expanded={expanded} onClick={toggleExpanded} className="ml-6 mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Hide details' : 'More details'}</button>
-                  {expanded && <dl className="ml-6 mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md bg-slate-50 p-2 text-xs"><dt className="text-slate-500">System ID</dt><dd className="break-all text-right">{row.id}</dd><dt className="text-slate-500">Last login</dt><dd className="text-right">{row.last_login ? new Date(row.last_login).toLocaleString() : '—'}</dd></dl>}
+                  <button type="button" aria-expanded={expanded} aria-controls={`user-details-${getUserId(row)}`} onClick={toggleExpanded} className="ml-6 mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Less details' : 'More details'}</button>
+                  <div id={`user-details-${getUserId(row)}`} aria-hidden={!expanded} className={`ml-6 grid transition-[grid-template-rows,opacity] duration-200 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                    <div className="min-h-0 overflow-hidden">
+                      <dl className="mt-2 grid grid-cols-[minmax(4.5rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md bg-slate-50 p-2 text-xs"><dt className="text-slate-500">System ID</dt><dd className="min-w-0 break-all text-right">{row.id}</dd><dt className="text-slate-500">Last login</dt><dd className="min-w-0 break-words text-right">{row.last_login ? new Date(row.last_login).toLocaleString() : '—'}</dd></dl>
+                    </div>
+                  </div>
                   <button type="button" onClick={() => handleRowAction('view', row)} className="ml-6 mt-2 min-h-9 rounded-md border border-slate-200 px-3 text-xs font-semibold text-[#002B5B] hover:bg-slate-50">View Profile</button>
                 </div>
               )

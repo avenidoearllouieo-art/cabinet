@@ -16,6 +16,7 @@ const tabs = [
 const emptyResults = []
 
 const displayValue = (value) => value === null || value === undefined || String(value).trim() === '' ? 'Not recorded' : String(value)
+const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
 const displayCount = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? 'Not available' : Number(value)
 const sectionIdOf = (section) => section?.section_id ?? section?.id
 
@@ -36,9 +37,8 @@ function SectionInfo({ section, stations }) {
   const details = [
     ['Section name', section.section_name],
     ['Section code', section.subject_code],
-    ['Program', section.program],
     ['Year level', section.year_level],
-    ['Academic year', section.academic_year],
+    ['Academic year', formatAcademicYear(section.academic_year)],
     ['Assigned instructor', section.instructor_name],
     ...(cabinet ? [['Assigned cabinet', cabinet]] : []),
   ]

@@ -51,7 +51,6 @@ export default function DeleteSectionModal({ isOpen, section, onClose, onUnautho
         <dl className="grid gap-3 sm:grid-cols-2">
           <div><dt className="text-sm font-semibold text-[#082B53]">Subject Code</dt><dd className="mt-1 text-sm text-slate-700">{subjectCode}</dd></div>
           <div><dt className="text-sm font-semibold text-[#082B53]">Section Name</dt><dd className="mt-1 text-sm text-slate-700">{sectionName}</dd></div>
-          <div><dt className="text-sm font-semibold text-[#082B53]">Program</dt><dd className="mt-1 text-sm text-slate-700">{section?.program || '—'}</dd></div>
           <div><dt className="text-sm font-semibold text-[#082B53]">Year Level</dt><dd className="mt-1 text-sm text-slate-700">{section?.year_level || '—'}</dd></div>
         </dl>
       </div>

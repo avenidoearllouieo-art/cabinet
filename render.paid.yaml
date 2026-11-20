@@ -6,7 +6,7 @@ services:
     plan: 0.5c-512mb
     buildCommand: bash backend/build.sh
     preDeployCommand: python backend/manage.py migrate --noinput
-    startCommand: mkdir -p "${DJANGO_MEDIA_ROOT:-/var/data/media}" "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/var/data/tmp}" && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: mkdir -p "${DJANGO_FILE_UPLOAD_TEMP_DIR:-/var/data/tmp}" && gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
     disk:
       name: taptrack-media
       mountPath: /var/data
@@ -20,7 +20,31 @@ services:
         fromDatabase:
           name: taptrack-postgres
           property: connectionString
-      - key: DJANGO_MEDIA_ROOT
+      - key: DJANGO_MEDIA_STORAGE_BACKEND
+        value: s3
+      - key: AWS_STORAGE_BUCKET_NAME
+        value: taptrack-files
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_REGION_NAME
+        value: auto
+      - key: AWS_S3_ENDPOINT_URL
+        value: https://t3.storage.dev
+      - key: AWS_S3_ADDRESSING_STYLE
+        value: virtual
+      - key: TAPTRACK_MAX_STUDENT_VIDEO_BYTES
+        value: "5368709120"
+      - key: TAPTRACK_MAX_STUDENT_SUBMISSION_BYTES
+        value: "10737418240"
+      - key: TAPTRACK_MULTIPART_PART_SIZE
+        value: "33554432"
+      - key: TAPTRACK_MULTIPART_SESSION_TTL
+        value: "86400"
+      - key: TAPTRACK_PRESIGNED_PART_URL_TTL
+        value: "900"
+      - key: DJANGO_LEGACY_MEDIA_ROOT
         value: /var/data/media
       - key: DJANGO_FILE_UPLOAD_TEMP_DIR
         value: /var/data/tmp

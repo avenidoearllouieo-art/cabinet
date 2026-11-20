@@ -222,9 +222,46 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+TIGRIS_STORAGE_SETTINGS = {
+    'AWS_ACCESS_KEY_ID': os.environ.get('AWS_ACCESS_KEY_ID'),
+    'AWS_SECRET_ACCESS_KEY': os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    'AWS_STORAGE_BUCKET_NAME': os.environ.get('AWS_STORAGE_BUCKET_NAME'),
+    'AWS_S3_ENDPOINT_URL': os.environ.get('AWS_S3_ENDPOINT_URL'),
+    'AWS_S3_REGION_NAME': os.environ.get('AWS_S3_REGION_NAME'),
+}
+TIGRIS_STORAGE_CONFIGURED = all(TIGRIS_STORAGE_SETTINGS.values())
+MEDIA_STORAGE_BACKEND = os.environ.get(
+    'DJANGO_MEDIA_STORAGE_BACKEND',
+    's3' if TIGRIS_STORAGE_CONFIGURED else 'filesystem',
+).strip().lower()
+if MEDIA_STORAGE_BACKEND not in {'filesystem', 's3'}:
+    raise ImproperlyConfigured('DJANGO_MEDIA_STORAGE_BACKEND must be either filesystem or s3.')
+
+if MEDIA_STORAGE_BACKEND == 's3':
+    missing_storage_settings = [name for name, value in TIGRIS_STORAGE_SETTINGS.items() if not value]
+    if missing_storage_settings:
+        raise ImproperlyConfigured(
+            'Tigris media storage requires: ' + ', '.join(missing_storage_settings) + '.'
+        )
+    AWS_STORAGE_BUCKET_NAME = TIGRIS_STORAGE_SETTINGS['AWS_STORAGE_BUCKET_NAME']
+    AWS_ACCESS_KEY_ID = TIGRIS_STORAGE_SETTINGS['AWS_ACCESS_KEY_ID']
+    AWS_SECRET_ACCESS_KEY = TIGRIS_STORAGE_SETTINGS['AWS_SECRET_ACCESS_KEY']
+    AWS_S3_REGION_NAME = TIGRIS_STORAGE_SETTINGS['AWS_S3_REGION_NAME']
+    AWS_S3_ENDPOINT_URL = TIGRIS_STORAGE_SETTINGS['AWS_S3_ENDPOINT_URL']
+    AWS_S3_ADDRESSING_STYLE = os.environ.get('AWS_S3_ADDRESSING_STYLE', 'virtual')
+    AWS_DEFAULT_ACL = None
+    AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = 600
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'private, no-store'}
+    default_storage_backend = 'storages.backends.s3.S3Storage'
+else:
+    default_storage_backend = 'django.core.files.storage.FileSystemStorage'
+
 STORAGES = {
     'default': {
-        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        'BACKEND': default_storage_backend,
     },
     'staticfiles': {
         'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
@@ -236,6 +273,17 @@ MEDIA_ROOT = Path(os.environ.get('DJANGO_MEDIA_ROOT') or BASE_DIR / 'media')
 # Keep large multipart uploads on disk instead of retaining them in process memory.
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DJANGO_FILE_UPLOAD_MAX_MEMORY_SIZE', 2 * 1024 * 1024))
 FILE_UPLOAD_TEMP_DIR = os.environ.get('DJANGO_FILE_UPLOAD_TEMP_DIR') or None
+TAPTRACK_MAX_STUDENT_VIDEO_BYTES = int(os.environ.get('TAPTRACK_MAX_STUDENT_VIDEO_BYTES', 5 * 1024 ** 3))
+TAPTRACK_MAX_STUDENT_SUBMISSION_BYTES = int(os.environ.get('TAPTRACK_MAX_STUDENT_SUBMISSION_BYTES', 10 * 1024 ** 3))
+TAPTRACK_MULTIPART_PART_SIZE = int(os.environ.get('TAPTRACK_MULTIPART_PART_SIZE', 32 * 1024 * 1024))
+TAPTRACK_MULTIPART_SESSION_TTL = int(os.environ.get('TAPTRACK_MULTIPART_SESSION_TTL', 24 * 60 * 60))
+TAPTRACK_PRESIGNED_PART_URL_TTL = int(os.environ.get('TAPTRACK_PRESIGNED_PART_URL_TTL', 900))
+if TAPTRACK_MAX_STUDENT_VIDEO_BYTES <= 0 or TAPTRACK_MAX_STUDENT_SUBMISSION_BYTES <= 0:
+    raise ImproperlyConfigured('TapTrack upload limits must be positive byte counts.')
+if TAPTRACK_MULTIPART_PART_SIZE < 5 * 1024 * 1024:
+    raise ImproperlyConfigured('TAPTRACK_MULTIPART_PART_SIZE must be at least 5 MiB.')
+if not 60 <= TAPTRACK_PRESIGNED_PART_URL_TTL <= 3600:
+    raise ImproperlyConfigured('TAPTRACK_PRESIGNED_PART_URL_TTL must be between 60 and 3600 seconds.')
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', not DEBUG)

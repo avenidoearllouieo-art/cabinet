@@ -33,6 +33,7 @@ describe('Admin Activities', () => {
     api.get.mockImplementation((path) => {
       if (path === '/activities/') return Promise.resolve({ data: { count: 1, next: null, results: [activity] } })
       if (path === '/activities/1/') return Promise.resolve({ data: activity })
+      if (path === '/sections/') return Promise.resolve({ data: [{ id: 2, section_name: 'Section A' }] })
       throw new Error(`Unexpected GET ${path}`)
     })
 
@@ -45,8 +46,13 @@ describe('Admin Activities', () => {
     expect(screen.queryByRole('menuitem', { name: /Edit|Duplicate|Assign Sections|Close Activity|Archive|Delete/ })).toBeNull()
     fireEvent.click(screen.getByRole('menuitem', { name: 'View' }))
 
+    expect(await screen.findByRole('dialog', { name: 'Systems Lab' })).toBeTruthy()
+    expect(screen.getByText('Activity Overview')).toBeTruthy()
+    expect(screen.getByText('Description and Instructions')).toBeTruthy()
+    expect(screen.getByText('Assigned Students and Submission Progress')).toBeTruthy()
+    expect(screen.getByText('Attached Files')).toBeTruthy()
     expect(await screen.findAllByText('No deadline')).toHaveLength(2)
-    expect(screen.getByText('Maximum Score')).toBeTruthy()
+    expect(screen.getByText('Maximum score')).toBeTruthy()
     expect(screen.getAllByText('Rae Santos')).toHaveLength(2)
   })
 })

@@ -10,6 +10,7 @@ import { controlClass } from '../../components/forms/formStyles.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
 const emptyProfileForm = { first_name: '', last_name: '', instructor_id: '', username: '', email: '', contact_number: '' }
+const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
 
 const publishProfileUpdate = (nextProfile) => {
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -271,9 +272,8 @@ export default function InstructorProfile() {
                 <h3 className="font-semibold text-slate-900">{section.section_name || 'Section not recorded'}</h3>
                 {section.subject_code && <p className="mt-0.5 text-xs font-medium text-slate-500">{section.subject_code}</p>}
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <div><dt className="text-xs text-slate-500">Program</dt><dd className="mt-1 font-medium text-slate-700">{section.program || 'Not recorded'}</dd></div>
                   <div><dt className="text-xs text-slate-500">Year level</dt><dd className="mt-1 font-medium text-slate-700">{section.year_level || 'Not recorded'}</dd></div>
-                  {section.academic_year && <div className="col-span-2"><dt className="text-xs text-slate-500">Academic year</dt><dd className="mt-1 font-medium text-slate-700">{section.academic_year}</dd></div>}
+                  {section.academic_year && <div className="col-span-2"><dt className="text-xs text-slate-500">Academic year</dt><dd className="mt-1 font-medium text-slate-700">{formatAcademicYear(section.academic_year)}</dd></div>}
                 </dl>
               </article>
             ))}

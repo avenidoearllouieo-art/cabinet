@@ -45,15 +45,16 @@ export default function FilePreviewModal({ attachment, kind, onClose }) {
           })
         }
       })
-      .catch(() => {
+      .catch((requestError) => {
         if (active) {
+          const message = requestError.response?.data?.detail
           setPreviewState({
             attachmentId,
             kind,
             file: null,
             loading: false,
             contentLoading: false,
-            error: 'File unavailable. It may have been moved or deleted.',
+            error: typeof message === 'string' ? message : 'The file could not be opened. Check your access or ask the owner to upload it again.',
           })
         }
       })
@@ -77,7 +78,7 @@ export default function FilePreviewModal({ attachment, kind, onClose }) {
   const handleContentError = () => {
     updateCurrentPreview({
       contentLoading: false,
-      error: 'File unavailable. The stored file could not be retrieved.',
+      error: 'The stored file could not be retrieved. It may have been deleted, or storage may be temporarily unavailable.',
     })
   }
   const previewSupported = file?.preview_supported
@@ -130,15 +131,15 @@ export default function FilePreviewModal({ attachment, kind, onClose }) {
             </div>
           )}
           {file && previewType === 'video' && !previewError && (
-            <video src={file.content_url} controls playsInline preload="metadata" onLoadedMetadata={setReady} onCanPlay={setReady} onError={handleContentError} className="mx-auto max-h-[78dvh] w-full rounded-lg bg-black" />
+            <video src={file.content_url} crossOrigin="anonymous" controls playsInline preload="metadata" onLoadedMetadata={setReady} onCanPlay={setReady} onError={handleContentError} className="mx-auto max-h-[78dvh] w-full rounded-lg bg-black" />
           )}
           {file && previewType === 'audio' && !previewError && (
             <div className="flex min-h-52 items-center justify-center">
-              <audio src={file.content_url} controls preload="metadata" onLoadedMetadata={setReady} onError={handleContentError} className="w-full max-w-2xl" />
+              <audio src={file.content_url} crossOrigin="anonymous" controls preload="metadata" onLoadedMetadata={setReady} onError={handleContentError} className="w-full max-w-2xl" />
             </div>
           )}
           {file && previewType === 'image' && !previewError && (
-            <img src={file.content_url} alt={file.filename} onLoad={setReady} onError={handleContentError} className="mx-auto max-h-[78dvh] max-w-full object-contain" />
+            <img src={file.content_url} crossOrigin="anonymous" alt={file.filename} onLoad={setReady} onError={handleContentError} className="mx-auto max-h-[78dvh] max-w-full object-contain" />
           )}
           {file && ['pdf', 'text'].includes(previewType) && !previewError && (
             <iframe src={file.content_url} title={file.filename} onLoad={setReady} className="h-[78dvh] min-h-72 w-full rounded-lg border border-slate-300 bg-white" />

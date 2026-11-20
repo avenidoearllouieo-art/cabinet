@@ -12,7 +12,7 @@ describe('ActivityFormWorkflow', () => {
     vi.resetAllMocks()
   })
 
-  it('advances Step 3 to Review and creates once only on final publish', async () => {
+  it('advances Step 3 to Review and creates once only on final confirmation', async () => {
     const saved = vi.fn()
     const file = new File(['report'], 'brief.pdf', { type: 'application/pdf' })
     api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
@@ -34,7 +34,7 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
     expect(screen.getByText('Step 4 of 4: Review & Publish')).toBeTruthy()
-    expect(screen.getByText('Review and publish')).toBeTruthy()
+    expect(screen.getByText('Review activity')).toBeTruthy()
     expect(screen.getByText('Systems Lab')).toBeTruthy()
     expect(screen.getByText('Analyze the system.')).toBeTruthy()
     expect(screen.getByText('Submit a short report.')).toBeTruthy()
@@ -42,20 +42,21 @@ describe('ActivityFormWorkflow', () => {
     expect(screen.queryByLabelText('Cabinet station')).toBeNull()
     expect(api.post).not.toHaveBeenCalled()
     fireEvent.submit(screen.getByRole('dialog', { name: 'Create New Activity' }))
-    expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
     await new Promise((resolve) => setTimeout(resolve, 1100))
-    expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
 
-    const publishButton = screen.getByRole('button', { name: 'Publish Activity' })
-    fireEvent.click(publishButton)
-    fireEvent.click(publishButton)
+    const saveDraftButton = screen.getByRole('button', { name: 'Save Draft' })
+    fireEvent.click(saveDraftButton)
+    fireEvent.click(saveDraftButton)
 
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
     const payload = api.post.mock.calls[0][1]
     expect(payload.get('title')).toBe('Systems Lab')
     expect(payload.get('instructions')).toBe('Submit a short report.')
+    expect(payload.get('status')).toBe('Draft')
     expect(payload.get('cabinet_station')).toBeNull()
     expect(payload.get('attachments').name).toBe('brief.pdf')
     expect(saved).toHaveBeenCalledWith({ id: 5, attachments: [] })
@@ -88,6 +89,48 @@ describe('ActivityFormWorkflow', () => {
     expect(document.body.textContent).toContain('photo.png')
   })
 
+  it('creates a Published activity only after explicit publish confirmation', async () => {
+    api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
+    api.post.mockResolvedValue({ data: { id: 8, status: 'Published' } })
+    render(<ActivityFormWorkflow isOpen onSaved={vi.fn()} />)
+
+    fireEvent.change(await screen.findByLabelText(/Activity title/), { target: { value: 'Published activity' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Section A' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(api.post).not.toHaveBeenCalled()
+    expect(screen.getByText('Draft')).toBeTruthy()
+    const publish = screen.getByRole('button', { name: 'Publish Activity' })
+    fireEvent.click(publish)
+    fireEvent.click(publish)
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    expect(api.post.mock.calls[0][1].get('status')).toBe('Published')
+  })
+
+  it('saves an edited Draft without publishing and then honors explicit Publish', async () => {
+    const draft = { id: 5, title: 'Existing draft', status: 'Draft', assigned_sections: [{ id: 3, section_name: 'Section A' }], attachments: [], max_score: 100 }
+    api.get.mockImplementation((path) => Promise.resolve({ data: path === '/activities/5/' ? draft : [{ id: 3, section_name: 'Section A' }] }))
+    api.patch.mockImplementation((_path, body) => Promise.resolve({ data: { ...draft, status: body.get('status') } }))
+    render(<ActivityFormWorkflow isOpen mode="edit" activityId={5} onSaved={vi.fn()} />)
+
+    expect(await screen.findByDisplayValue('Existing draft')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(api.patch.mock.calls[0][1].get('status')).toBe('Draft')
+    expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
+    expect(api.patch.mock.calls[1][1].get('status')).toBe('Published')
+    expect(screen.queryByRole('button', { name: 'Publish Activity' })).toBeNull()
+  })
+
   it('preserves entered activity details and attachments when publishing fails', async () => {
     api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
     api.post.mockRejectedValue({ response: { status: 500, data: { detail: 'Storage unavailable.' } } })
@@ -101,13 +144,13 @@ describe('ActivityFormWorkflow', () => {
     const file = new File(['report'], 'preserved.pdf', { type: 'application/pdf' })
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
 
     expect(await screen.findByText('Storage unavailable.')).toBeTruthy()
     expect(document.body.textContent).toContain('Keep this activity')
     expect(document.body.textContent).toContain('Keep these instructions too.')
     expect(document.body.textContent).toContain('preserved.pdf')
-    expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
     expect(api.post).toHaveBeenCalledTimes(1)
   })
 

@@ -12,13 +12,16 @@ import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, ChevronDown, ChevronRight } from 'lucide-react'
 
+const academicYears = ['2026–2027', '2027–2028']
+const normalizeAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
+
 export default function Sections() {
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [programFilter, setProgramFilter] = useState('all')
   const [yearLevelFilter, setYearLevelFilter] = useState('all')
+  const [academicYearFilter, setAcademicYearFilter] = useState('all')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -34,7 +37,6 @@ export default function Sections() {
   const [assignmentSections, setAssignmentSections] = useState([])
   const [instructorFilter, setInstructorFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [sortBy, setSortBy] = useState('name')
   const [expandedSections, setExpandedSections] = useState(new Set())
   const [sectionStudents, setSectionStudents] = useState(new Map())
   const [loadingStudentSections, setLoadingStudentSections] = useState(new Set())
@@ -125,14 +127,14 @@ export default function Sections() {
     if (query.trim()) {
       const keyword = query.trim().toLowerCase()
       result = result.filter((section) =>
-        [section.subject_code, section.section_name, section.year_level, section.academic_year, section.program, section.instructor_name]
+        [section.subject_code, section.section_name, section.year_level, section.academic_year, section.instructor_name]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
     }
 
-    if (programFilter !== 'all') {
-      result = result.filter((section) => String(section.program || '') === programFilter)
+    if (academicYearFilter !== 'all') {
+      result = result.filter((section) => normalizeAcademicYear(section.academic_year) === academicYearFilter)
     }
 
     if (yearLevelFilter !== 'all') {
@@ -150,25 +152,13 @@ export default function Sections() {
       result = result.filter((section) => String(section.status || '').toLowerCase() === statusFilter.toLowerCase())
     }
 
-    const sorted = [...result]
-    sorted.sort((left, right) => {
-      if (sortBy === 'students') return (Number(right.student_count || 0) || 0) - (Number(left.student_count || 0) || 0)
-      if (sortBy === 'instructors') {
-        const leftName = String(left.instructor_name || '').toLowerCase()
-        const rightName = String(right.instructor_name || '').toLowerCase()
-        return leftName.localeCompare(rightName)
-      }
-      return String(left.section_name || '').localeCompare(String(right.section_name || ''))
-    })
-
-    return sorted
-  }, [sections, query, programFilter, yearLevelFilter, instructorFilter, statusFilter, sortBy])
+    return [...result].sort((left, right) => String(left.section_name || '').localeCompare(String(right.section_name || '')))
+  }, [sections, query, academicYearFilter, yearLevelFilter, instructorFilter, statusFilter])
 
   const totalSections = sections.length
   const totalStudents = sections.reduce((sum, section) => sum + (parseInt(section.student_count) || 0), 0)
   const totalInstructors = new Set(sections.map((section) => section.instructor ?? section.instructor_name).filter(Boolean)).size
 
-  const programOptions = useMemo(() => Array.from(new Set(sections.map((section) => section.program).filter(Boolean))).sort(), [sections])
   const yearLevelOptions = useMemo(() => Array.from(new Set(sections.map((section) => section.year_level).filter(Boolean))).sort(), [sections])
 
   const instructorOptions = useMemo(() => {
@@ -355,18 +345,17 @@ export default function Sections() {
           </div>
         </div>
 
-        <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
           <label className="relative block min-w-0">
             <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
               <Search size={16} />
             </span>
             <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections" aria-label="Search sections" className="tt-control w-full pl-10" />
           </label>
-          <label className="min-w-0"><span className="sr-only">Filter program</span><select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="tt-control w-full"><option value="all">All programs</option>{programOptions.map((program) => <option key={program} value={program}>{program}</option>)}</select></label>
+          <label className="min-w-0"><span className="sr-only">Filter academic year</span><select value={academicYearFilter} onChange={(event) => setAcademicYearFilter(event.target.value)} className="tt-control w-full"><option value="all">All academic years</option>{academicYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter year level</span><select value={yearLevelFilter} onChange={(event) => setYearLevelFilter(event.target.value)} className="tt-control w-full"><option value="all">All year levels</option>{yearLevelOptions.map((yearLevel) => <option key={yearLevel} value={yearLevel}>{yearLevel}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter instructor</span><select value={instructorFilter} onChange={(event) => setInstructorFilter(event.target.value)} className="tt-control w-full">{instructorOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="tt-control w-full"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-          <label className="min-w-0"><span className="sr-only">Sort by</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="tt-control w-full"><option value="name">Section name</option><option value="students">Students</option><option value="instructors">Instructor</option></select></label>
         </div>
 
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -404,9 +393,8 @@ export default function Sections() {
                 {renderSectionActions(section, 'mobile')}
               </div>
               <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#dbe5f0] pt-3 text-xs">
-                <div><dt className="text-slate-500">Program</dt><dd className="mt-0.5 font-medium text-slate-800">{section.program || '—'}</dd></div>
                 <div><dt className="text-slate-500">Year Level</dt><dd className="mt-0.5 font-medium text-slate-800">{section.year_level || '—'}</dd></div>
-                <div><dt className="text-slate-500">Academic Year</dt><dd className="mt-0.5 font-medium text-slate-800">{section.academic_year || '—'}</dd></div>
+                <div><dt className="text-slate-500">Academic Year</dt><dd className="mt-0.5 font-medium text-slate-800">{normalizeAcademicYear(section.academic_year) || '—'}</dd></div>
                 <div><dt className="text-slate-500">Instructor</dt><dd className="mt-0.5 break-words font-medium text-slate-800">{section.instructor_name || 'Unassigned'}</dd></div>
                 <div><dt className="text-slate-500">Students</dt><dd className="mt-0.5 font-medium text-slate-800">{section.student_count ?? 0}</dd></div>
                 <div><dt className="text-slate-500">Activities</dt><dd className="mt-0.5 font-medium text-slate-800">{section.activity_count ?? 0}</dd></div>
@@ -421,23 +409,22 @@ export default function Sections() {
           <table className="w-full min-w-[720px] table-fixed border-collapse text-xs lg:min-w-0">
             <thead className="bg-[#F9FAFB]">
               <tr>
-                <th className="w-[24%] border-b border-r border-[#dbe5f0] px-3 py-3 text-left font-semibold uppercase text-slate-500"><div className="flex items-center gap-2"><input type="checkbox" aria-label="Select all visible sections" checked={filteredSections.length > 0 && filteredSections.every((section) => selectedIds.includes(section.id))} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-slate-300" />Section</div></th>
-                <th className="w-[10%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Program</th>
-                <th className="w-[9%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Year Level</th>
-                <th className="w-[11%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Academic Year</th>
-                <th className="w-[15%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Instructor</th>
-                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Students</th>
-                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Activities</th>
-                <th className="w-[8%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Status</th>
-                <th className="w-[7%] border-b border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Actions</th>
+                <th className="w-[21%] border-b border-r border-[#dbe5f0] px-3 py-3 text-left font-semibold uppercase text-slate-500"><div className="flex items-center gap-2"><input type="checkbox" aria-label="Select all visible sections" checked={filteredSections.length > 0 && filteredSections.every((section) => selectedIds.includes(section.id))} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-slate-300" />Section</div></th>
+                <th className="w-[12%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Year Level</th>
+                <th className="w-[14%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Academic Year</th>
+                <th className="w-[18%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Instructor</th>
+                <th className="w-[9%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Students</th>
+                <th className="w-[9%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Activities</th>
+                <th className="w-[9%] border-b border-r border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Status</th>
+                <th className="w-[8%] border-b border-[#dbe5f0] px-2 py-3 text-left font-semibold uppercase text-slate-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E5E7EB] bg-white">
               {loading && (
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-[#6B7280]">Loading sections…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-[#6B7280]">Loading sections…</td></tr>
               )}
               {!loading && !filteredSections.length && (
-                <tr><td colSpan={9} className="px-4 py-16 text-center text-[#6B7280]">No sections available.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-16 text-center text-[#6B7280]">No sections available.</td></tr>
               )}
               {!loading && filteredSections.map((section) => [
                 <tr key={`section-${section.id}`} className="transition hover:bg-[#f8fbff]">
@@ -448,16 +435,15 @@ export default function Sections() {
                       <div className="min-w-0"><p className="truncate font-semibold text-[#102a4c]">{section.section_name || 'Unnamed section'}</p><p className="truncate text-xs text-slate-500">{section.subject_code || 'No code'}</p></div>
                     </div>
                   </td>
-                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.program || '—'}</td>
                   <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.year_level || '—'}</td>
-                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.academic_year || '—'}</td>
+                  <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{normalizeAcademicYear(section.academic_year) || '—'}</td>
                   <td className="truncate border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.instructor_name || 'Unassigned'}</td>
                   <td className="border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.student_count ?? 0}</td>
                   <td className="border-r border-[#dbe5f0] px-2 py-2.5 text-slate-700">{section.activity_count ?? 0}</td>
                   <td className="border-r border-[#dbe5f0] px-2 py-2.5">{getStatusBadge(section.status)}</td>
                   <td className="px-2 py-2.5">{renderSectionActions(section, 'desktop')}</td>
                 </tr>,
-                expandedSections.has(section.id) && <tr key={`students-${section.id}`} className="bg-[#eef4fa]"><td colSpan={9} className="border-b border-[#dbe5f0] p-3"><div className="overflow-hidden rounded-md border border-[#dbe5f0] bg-white"><div className="border-b border-[#dbe5f0] bg-[#eaf2fb] px-3 py-2 text-xs font-semibold uppercase text-[#526780]">Enrolled Students · {section.section_name}</div>{renderStudentRoster(section)}</div></td></tr>,
+                expandedSections.has(section.id) && <tr key={`students-${section.id}`} className="bg-[#eef4fa]"><td colSpan={8} className="border-b border-[#dbe5f0] p-3"><div className="overflow-hidden rounded-md border border-[#dbe5f0] bg-white"><div className="border-b border-[#dbe5f0] bg-[#eaf2fb] px-3 py-2 text-xs font-semibold uppercase text-[#526780]">Enrolled Students · {section.section_name}</div>{renderStudentRoster(section)}</div></td></tr>,
               ])}
             </tbody>
           </table>

@@ -4,11 +4,36 @@ from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 import uuid
+import os
+import re
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import secrets
 import hashlib
 from datetime import timedelta
+
+
+def _upload_extension(filename):
+    raw_name = str(filename or '').replace('\\', '/')
+    extension = os.path.splitext(raw_name.rsplit('/', 1)[-1])[1].lower()
+    return extension if re.fullmatch(r'\.[a-z0-9]{1,10}', extension) else ''
+
+
+def activity_attachment_upload_to(instance, filename):
+    return f'activities/attachments/{uuid.uuid4().hex}{_upload_extension(filename)}'
+
+
+def activity_discussion_upload_to(instance, filename):
+    return f'activities/discussions/{uuid.uuid4().hex}{_upload_extension(filename)}'
+
+
+def submission_upload_to(instance, filename):
+    extension = _upload_extension(filename)
+    category = 'videos' if extension in {'.mp4', '.mov', '.webm'} else 'files'
+    owner_id = getattr(instance, 'user_id', None) or getattr(instance, 'student_id', None)
+    if owner_id is None and getattr(instance, 'submission_id', None):
+        owner_id = instance.submission.student_id
+    return f'submissions/{category}/{owner_id or "unassigned"}/{uuid.uuid4().hex}{extension}'
 
 
 class Section(models.Model):
@@ -150,6 +175,12 @@ class User(AbstractUser):
 
 
 class Activity(models.Model):
+    class StatusChoices(models.TextChoices):
+        DRAFT = 'Draft', 'Draft'
+        PUBLISHED = 'Published', 'Published'
+        CLOSED = 'Closed', 'Closed'
+        ARCHIVED = 'Archived', 'Archived'
+
     id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -174,7 +205,7 @@ class Activity(models.Model):
         related_name='assigned_activities'
     )
     cabinet_station = models.CharField(max_length=100, blank=True, default='')
-    status = models.CharField(max_length=30, blank=True, default='Published')
+    status = models.CharField(max_length=30, choices=StatusChoices.choices, blank=True, default=StatusChoices.DRAFT)
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -200,7 +231,7 @@ class ActivityAttachment(models.Model):
         on_delete=models.CASCADE,
         related_name='attachments'
     )
-    file = models.FileField(upload_to='activity_attachments/')
+    file = models.FileField(upload_to=activity_attachment_upload_to)
     original_filename = models.CharField(max_length=255, blank=True, default='')
     file_size = models.PositiveIntegerField(default=0)
     content_type = models.CharField(max_length=255, blank=True, default='')
@@ -244,7 +275,7 @@ class ActivityDiscussionAttachment(models.Model):
         on_delete=models.CASCADE,
         related_name='attachments',
     )
-    file = models.FileField(upload_to='discussion_attachments/')
+    file = models.FileField(upload_to=activity_discussion_upload_to)
     original_filename = models.CharField(max_length=255, blank=True, default='')
     file_size = models.PositiveIntegerField(default=0)
     content_type = models.CharField(max_length=255, blank=True, default='')
@@ -302,7 +333,10 @@ class TemporaryUpload(models.Model):
         blank=True,
         related_name='temporary_uploads'
     )
-    file = models.FileField(upload_to='temp_uploads/')
+    file = models.FileField(upload_to=submission_upload_to)
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.BigIntegerField(default=0)
+    content_type = models.CharField(max_length=255, blank=True, default='')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -312,6 +346,43 @@ class TemporaryUpload(models.Model):
         ordering = ['-uploaded_at']
 
 
+class MultipartUploadSession(models.Model):
+    class StatusChoices(models.TextChoices):
+        INITIATED = 'initiated', 'Initiated'
+        COMPLETED = 'completed', 'Completed'
+        ABORTED = 'aborted', 'Aborted'
+        FAILED = 'failed', 'Failed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='multipart_upload_sessions')
+    activity = models.ForeignKey(Activity, on_delete=models.CASCADE, related_name='multipart_upload_sessions')
+    temporary_upload = models.OneToOneField(
+        TemporaryUpload,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='multipart_session',
+    )
+    object_key = models.CharField(max_length=512, unique=True)
+    upload_id = models.CharField(max_length=1024)
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=255)
+    file_size = models.BigIntegerField()
+    part_size = models.PositiveIntegerField()
+    total_parts = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.INITIATED)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'expires_at']),
+            models.Index(fields=['user', 'activity', 'status']),
+        ]
+
+
 class SubmissionAttachment(models.Model):
     id = models.AutoField(primary_key=True)
     submission = models.ForeignKey(
@@ -319,7 +390,10 @@ class SubmissionAttachment(models.Model):
         on_delete=models.CASCADE,
         related_name='attachments'
     )
-    file = models.FileField(upload_to='submission_attachments/')
+    file = models.FileField(upload_to=submission_upload_to)
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.BigIntegerField(default=0)
+    content_type = models.CharField(max_length=255, blank=True, default='')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -342,7 +416,10 @@ class Submission(models.Model):
         related_name='submissions'
     )
     attempt = models.PositiveIntegerField(default=1)
-    file = models.FileField(upload_to='submissions/')
+    file = models.FileField(upload_to=submission_upload_to)
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.BigIntegerField(default=0)
+    content_type = models.CharField(max_length=255, blank=True, default='')
     submitted_at = models.DateTimeField(auto_now_add=True)
     remarks = models.TextField(blank=True)
     score = models.FloatField(null=True, blank=True)

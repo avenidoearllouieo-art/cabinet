@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Upload, X, FileText, Image, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
-import { SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
+import { DIRECT_MULTIPART_THRESHOLD, SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
+import { uploadTigrisVideo } from '../files/tigrisMultipartUpload.js'
 
 function formatBytes(bytes) {
   if (bytes == null) return '—'
@@ -26,6 +27,8 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState([])
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadingName, setUploadingName] = useState('')
+  const [multipartActive, setMultipartActive] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [submission, setSubmission] = useState(null)
   const [remarks, setRemarks] = useState('')
@@ -33,6 +36,9 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   const [removePrimaryFile, setRemovePrimaryFile] = useState(false)
   const fileInputRef = useRef(null)
   const submissionGuardRef = useRef(false)
+  const uploadControllerRef = useRef(null)
+
+  useEffect(() => () => uploadControllerRef.current?.abort(), [])
 
   const resetState = () => {
     setUploadedFiles([])
@@ -44,6 +50,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     setRemovedAttachmentIds([])
     setRemovePrimaryFile(false)
     submissionGuardRef.current = false
+    uploadControllerRef.current = null
   }
 
   useEffect(() => {
@@ -92,30 +99,63 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     setErrors([])
     setUploadProgress(0)
     setLoading(true)
+    const controller = new AbortController()
+    uploadControllerRef.current = controller
+    const directVideos = selectedFiles.filter((file) => (
+      file.size > DIRECT_MULTIPART_THRESHOLD && /\.(mp4|mov|webm)$/i.test(file.name)
+    ))
+    const regularFiles = selectedFiles.filter((file) => !directVideos.includes(file))
+    const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0)
+    let completedBytes = 0
     try {
-      const formData = new FormData()
-      selectedFiles.forEach((file) => formData.append('files', file))
-      formData.append('activity', activity.id)
-      removedAttachmentIds.forEach((id) => formData.append('removed_attachment_ids', id))
-      if (removePrimaryFile) formData.append('remove_primary_file', 'true')
-      const res = await api.post('/student/submissions/upload', formData, {
-        onUploadProgress: (event) => {
-          if (event.total) setUploadProgress(Math.round((event.loaded * 100) / event.total))
-        },
-      })
-      const uploads = Array.isArray(res.data?.uploads) ? res.data.uploads : [res.data]
-      const nextFiles = uploads.map((upload) => ({ ...upload, source: 'temp', tempUploadId: upload.id }))
-      setUploadedFiles((prev) => [...prev, ...nextFiles])
+      for (const file of directVideos) {
+        setUploadingName(file.name)
+        setMultipartActive(true)
+        const upload = await uploadTigrisVideo(file, activity.id, {
+          signal: controller.signal,
+          onProgress: (percent) => setUploadProgress(Math.round(((completedBytes + file.size * percent / 100) / totalBytes) * 100)),
+        })
+        completedBytes += file.size
+        setUploadedFiles((current) => [...current, { ...upload, source: 'temp', tempUploadId: upload.temp_upload_id || upload.id }])
+      }
+
+      if (regularFiles.length) {
+        setMultipartActive(false)
+        setUploadingName(regularFiles.map((file) => file.name).join(', '))
+        const formData = new FormData()
+        regularFiles.forEach((file) => formData.append('files', file))
+        formData.append('activity', activity.id)
+        removedAttachmentIds.forEach((id) => formData.append('removed_attachment_ids', id))
+        if (removePrimaryFile) formData.append('remove_primary_file', 'true')
+        const regularBytes = regularFiles.reduce((sum, file) => sum + file.size, 0)
+        const res = await api.post('/student/submissions/upload', formData, {
+          signal: controller.signal,
+          onUploadProgress: (event) => {
+            if (event.total) setUploadProgress(Math.round(((completedBytes + regularBytes * event.loaded / event.total) / totalBytes) * 100))
+          },
+        })
+        const uploads = Array.isArray(res.data?.uploads) ? res.data.uploads : [res.data]
+        const nextFiles = uploads.map((upload) => ({ ...upload, source: 'temp', tempUploadId: upload.id }))
+        setUploadedFiles((prev) => [...prev, ...nextFiles])
+      }
       setSuccessMessage('Files uploaded as draft.')
     } catch (err) {
-      console.error(err)
-      setErrors(uploadErrorMessages(err, 'Failed to upload files.'))
+      if (err.name === 'AbortError' || controller.signal.aborted) setErrors(['Upload cancelled.'])
+      else {
+        console.error(err)
+        setErrors(uploadErrorMessages(err, 'Failed to upload files.'))
+      }
     } finally {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = null
       setLoading(false)
       setUploadProgress(0)
+      setUploadingName('')
+      setMultipartActive(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
+
+  const cancelUpload = () => uploadControllerRef.current?.abort()
 
   const handleDrop = (event) => {
     event.preventDefault()
@@ -249,12 +289,15 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
               <p className="mt-3 text-sm text-slate-500">Drag and drop files here or click to select.</p>
             </div>
 
-            {uploadProgress > 0 && (
+            {loading && uploadingName && (
               <div className="mt-4">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
                   <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${uploadProgress}%` }} />
                 </div>
-                <p className="mt-2 text-xs text-slate-500">Uploading: {uploadProgress}%</p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                  <p className="min-w-0 break-words">{multipartActive ? 'Uploading directly to Tigris' : 'Uploading to TapTrack'}: {uploadingName} · {uploadProgress}%</p>
+                  <button type="button" onClick={cancelUpload} className="min-h-9 rounded-md border border-slate-300 bg-white px-3 font-semibold text-[#082B53] hover:bg-slate-50">Cancel upload</button>
+                </div>
               </div>
             )}
 

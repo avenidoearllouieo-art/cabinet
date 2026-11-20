@@ -2,11 +2,13 @@ import os
 import zipfile
 
 from django.db.models.fields.files import FieldFile
+from django.conf import settings
 
 
 MIB = 1024 * 1024
 MAX_STUDENT_SUBMISSION_FILES = 5
-MAX_STUDENT_SUBMISSION_BYTES = 750 * MIB
+MAX_STUDENT_SUBMISSION_BYTES = settings.TAPTRACK_MAX_STUDENT_SUBMISSION_BYTES
+MAX_STUDENT_VIDEO_BYTES = settings.TAPTRACK_MAX_STUDENT_VIDEO_BYTES
 
 FILE_TYPES = {
     '.mp4': ('video', 500 * MIB),
@@ -115,11 +117,13 @@ def validate_uploaded_file(uploaded_file):
         )
 
     category, maximum_size = spec
+    if category == 'video' and isinstance(uploaded_file, FieldFile):
+        maximum_size = max(maximum_size, MAX_STUDENT_VIDEO_BYTES)
     size = uploaded_file_size(uploaded_file)
     if size > maximum_size:
-        maximum_mb = maximum_size // MIB
+        maximum_label = f'{maximum_size / (1024 ** 3):g} GB' if maximum_size >= 1024 ** 3 else f'{maximum_size // MIB} MB'
         raise UploadValidationError(
-            f'{name}: {category.capitalize()} files must be {maximum_mb} MB or smaller.'
+            f'{name}: {category.capitalize()} files must be {maximum_label} or smaller.'
         )
     if not _content_matches(uploaded_file, extension):
         raise UploadValidationError(
@@ -155,5 +159,6 @@ def validate_student_submission_files(files, existing_files=()):
         except UploadValidationError:
             continue
     if total_size > MAX_STUDENT_SUBMISSION_BYTES:
-        errors.append('Combined submission files must not exceed 750 MB.')
+        maximum_gb = MAX_STUDENT_SUBMISSION_BYTES / (1024 ** 3)
+        errors.append(f'Combined submission files must not exceed {maximum_gb:g} GB.')
     return errors

@@ -18,7 +18,7 @@ import { controlClass } from '../forms/formStyles.js'
 
 const editSteps = ['Activity Details', 'Assigned Sections', 'Deadline & Files', 'Review & Publish']
 const viewSteps = ['Activity Details', 'Assigned Sections', 'Deadline & Files', 'Activity Status / Review', 'Discussion']
-const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', status: 'Published', files: [] })
+const blankForm = () => ({ title: '', description: '', instructions: '', sections: [], due_date: '', due_time: '', max_score: '100', status: 'Draft', files: [] })
 const getSectionId = (section) => section?.id ?? section?.section_id ?? section?.subject_code
 const getSectionName = (section) => section?.section_name || section?.name || section?.title || section?.subject_code || 'Unnamed section'
 const displayValue = (value) => value === null || value === undefined || String(value).trim() === '' ? 'Not recorded' : String(value)
@@ -59,7 +59,6 @@ function ReadOnlyActivityStep({ step, activity, sections, attachments, activityI
               <div key={getSectionId(section)} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <h4 className="font-semibold text-[#0B1F3A]">{getSectionName(section)}</h4>
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <ReviewItem label="Program" value={displayValue(section.program)} />
                   <ReviewItem label="Year level" value={displayValue(section.year_level)} />
                   <div className="col-span-2"><ReviewItem label="Students" value={displayValue(section.student_count)} /></div>
                 </dl>
@@ -122,6 +121,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [creationCompleted, setCreationCompleted] = useState(false)
   const [loadingSections, setLoadingSections] = useState(false)
   const [sections, setSections] = useState([])
   const [form, setForm] = useState(blankForm())
@@ -133,7 +133,6 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   const [activityRecord, setActivityRecord] = useState(activity || null)
   const [deletedAttachmentIds, setDeletedAttachmentIds] = useState([])
   const submissionGuardRef = useRef(false)
-  const publishSucceededRef = useRef(false)
 
   const loadSections = useCallback(async () => {
     setLoadingSections(true)
@@ -159,7 +158,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
         title: data.title || '', description: data.description || '', instructions: data.instructions || '',
         sections: readAssignedSections(data), due_date: date, due_time: time ? time.slice(0, 5) : '',
         max_score: data.max_score !== undefined ? String(data.max_score) : '100',
-        status: data.status || 'Published', files: [],
+        status: data.status || 'Draft', files: [],
       }
       setForm(loaded)
       setInitialSnapshot(snapshot(loaded))
@@ -183,7 +182,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       setFormError('')
       setSuccessMessage('')
       submissionGuardRef.current = false
-      publishSucceededRef.current = false
+      setCreationCompleted(false)
       setExistingAttachments([])
       setActivityRecord(null)
       setDeletedAttachmentIds([])
@@ -264,9 +263,9 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
 
   const preventImplicitSubmit = (event) => event.preventDefault()
 
-  const handlePublishActivity = async () => {
+  const handleSaveActivity = async (nextStatus = form.status) => {
     if (step !== currentSteps.length - 1) return
-    if (saving || submissionGuardRef.current || publishSucceededRef.current) return
+    if (saving || submissionGuardRef.current || (!editing && creationCompleted)) return
     const validationResults = [0, 1, 2].map((stepIndex) => validateStep(stepIndex))
     const firstInvalidStep = validationResults.indexOf(false)
     if (firstInvalidStep !== -1) {
@@ -284,7 +283,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     const payload = {
       title: form.title, description: form.description, instructions: form.instructions,
       section: form.sections[0] || null, assigned_sections: form.sections, due_date: dueDateTime,
-      max_score: form.max_score ? Number(form.max_score) : 100, status: form.status,
+      max_score: form.max_score ? Number(form.max_score) : 100, status: nextStatus,
     }
 
     try {
@@ -296,14 +295,17 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       form.files.forEach((file) => body.append('attachments', file))
       deletedAttachmentIds.forEach((id) => body.append('deleted_attachments', id))
       const response = editing ? await api.patch(`/activities/${resolvedId}/`, body) : await api.post('/activities/', body)
-      publishSucceededRef.current = true
+      if (!editing) setCreationCompleted(true)
       onSaved?.(response.data)
-      const updated = editing ? { ...form, files: [] } : blankForm()
+      const updated = editing ? { ...form, status: response.data.status || nextStatus, files: [] } : blankForm()
       setForm(updated)
       setInitialSnapshot(snapshot(updated))
+      if (editing) setActivityRecord(response.data)
       setExistingAttachments(response.data.attachments || [])
       setDeletedAttachmentIds([])
-      setSuccessMessage(editing ? 'Activity updated successfully.' : 'Activity created successfully.')
+      setSuccessMessage(editing
+        ? nextStatus === 'Published' && activityRecord?.status !== 'Published' ? 'Activity published successfully.' : 'Activity updated successfully.'
+        : nextStatus === 'Published' ? 'Activity published successfully.' : 'Draft saved successfully.')
     } catch (error) {
       if (error.response?.status === 401) return onUnauthorized?.()
       const data = error.response?.data
@@ -334,7 +336,28 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       dirty={viewing ? false : dirty}
       busy={viewing ? false : saving}
       stepper={<FormStepper steps={currentSteps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? handlePreviousStep : undefined} onNext={handleNextStep} isLastStep={step === currentSteps.length - 1} submitLabel={viewing ? 'Close' : editing ? 'Save Changes' : 'Publish Activity'} busyLabel={editing ? 'Saving…' : 'Publishing…'} busy={viewing ? false : saving} disabled={loading || loadingSections} dirty={viewing ? false : dirty} finalButtonType="button" onFinalAction={viewing ? onClose : handlePublishActivity} />}
+      actions={(
+        <div className="space-y-3">
+          {!viewing && step === currentSteps.length - 1 && (!editing || form.status !== 'Published') && (
+            <div className="flex justify-end">
+              <button type="button" onClick={() => handleSaveActivity('Published')} disabled={saving || loading || loadingSections || (!editing && creationCompleted)} className="min-h-10 rounded-lg bg-[#082B53] px-4 text-sm font-bold text-white hover:bg-[#123e6b] disabled:cursor-not-allowed disabled:opacity-50">Publish Activity</button>
+            </div>
+          )}
+          <FormActions
+            onCancel={onClose}
+            onBack={step > 0 ? handlePreviousStep : undefined}
+            onNext={handleNextStep}
+            isLastStep={step === currentSteps.length - 1}
+            submitLabel={viewing ? 'Close' : editing ? 'Save Changes' : 'Save Draft'}
+            busyLabel={editing ? 'Saving…' : 'Saving draft…'}
+            busy={viewing ? false : saving}
+            disabled={loading || loadingSections || (!editing && creationCompleted)}
+            dirty={viewing ? false : dirty}
+            finalButtonType="button"
+            onFinalAction={viewing ? onClose : editing ? () => handleSaveActivity() : () => handleSaveActivity('Draft')}
+          />
+        </div>
+      )}
       zIndex={editing ? 'z-[99999]' : 'z-[9999]'}
     >
       <div className="space-y-4" onKeyDown={(event) => {
@@ -370,7 +393,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
             </div>
           </FormSection>
         ) : (
-          <FormSection icon={ClipboardCheck} title="Review and publish" description="Confirm these details before saving.">
+          <FormSection icon={ClipboardCheck} title="Review activity" description="Confirm these details before saving.">
             <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
               <ReviewItem label="Title" value={form.title || 'Not provided'} /><ReviewItem label="Maximum score" value={form.max_score || '100'} />
               <ReviewItem label="Sections" value={selectedSections.map(getSectionName).join(', ') || 'None selected'} /><ReviewItem label="Deadline" value={form.due_date ? `${form.due_date}${form.due_time ? ` at ${form.due_time}` : ''}` : 'No deadline'} />
@@ -378,7 +401,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
               <div className="sm:col-span-2"><ReviewItem label="Description" value={form.description || 'No description'} /></div>
               <div className="sm:col-span-2"><ReviewItem label="Instructions" value={form.instructions || 'No instructions'} /></div>
             </dl>
-            <FormField label="Publishing status" required error={errors.status} className="mt-5">{({ id, describedBy, invalid }) => <select id={id} value={form.status} onChange={update('status')} aria-describedby={describedBy} aria-invalid={invalid} className={controlClass(invalid)}><option value="Published">Published</option><option value="Draft">Draft</option><option value="Scheduled">Scheduled</option><option value="Archived">Archived</option><option value="Closed">Closed</option></select>}</FormField>
+            <div className="mt-5"><ReviewItem label="Status" value={form.status || 'Draft'} /></div>
           </FormSection>
         )}
       </div>

@@ -112,6 +112,6 @@ describe('AcademicFileAttachments', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }))
 
-    expect(await screen.findByText('File unavailable. It may have been moved or deleted.')).toBeTruthy()
+    expect(await screen.findByText('The file could not be opened. Check your access or ask the owner to upload it again.')).toBeTruthy()
   })
 })

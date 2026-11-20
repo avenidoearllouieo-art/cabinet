@@ -7,7 +7,7 @@ import TableSkeleton from '../../components/TableSkeleton'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ActivityActionsMenu from '../../components/activities/ActivityActionsMenu.jsx'
-import ActivityDetailDrawer from '../../components/activities/ActivityDetailDrawer.jsx'
+import ActivityDetailModal from '../../components/activities/ActivityDetailModal.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import Pagination from '../../components/Pagination.jsx'
 import { Search, ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal, X } from 'lucide-react'
@@ -30,9 +30,9 @@ const getActivityStatus = (row) => {
   const rawStatus = typeof row.status === 'string' ? row.status.trim() : ''
   if (rawStatus) {
     const normalized = rawStatus.toLowerCase()
-    if (['active', 'published'].includes(normalized)) return 'Active'
+    if (['active', 'published'].includes(normalized)) return 'Published'
     if (normalized === 'draft') return 'Draft'
-    if (normalized === 'scheduled') return 'Scheduled'
+    if (normalized === 'scheduled') return 'Draft'
     if (['closed', 'expired', 'completed'].includes(normalized)) return 'Closed'
     if (normalized === 'archived') return 'Archived'
     return rawStatus
@@ -162,7 +162,7 @@ export default function Activities() {
 
   const totalActivities = activities.length
 
-  const activeActivities = activities.filter((activity) => getActivityStatus(activity) === 'Active').length
+  const activeActivities = activities.filter((activity) => getActivityStatus(activity) === 'Published').length
 
   const dueTodayActivities = activities.filter((activity) => {
     const dueDate = activity.due_date ? new Date(activity.due_date) : null
@@ -262,7 +262,7 @@ export default function Activities() {
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <SummaryCard icon={ClipboardList} title="Total Activities" value={totalActivities} trendText="All recorded activities" iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={CalendarDays} title="Active Activities" value={activeActivities} trendText="Currently open" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={CalendarDays} title="Published Activities" value={activeActivities} trendText="Visible to assigned students" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={CalendarCheck} title="Due Today" value={dueTodayActivities} trendText="Scheduled for today" iconBg="bg-amber-50" iconColor="text-amber-900" />
         <SummaryCard icon={XCircle} title="Closed Activities" value={closedActivities} trendText="Closed or expired" iconBg="bg-slate-100" iconColor="text-slate-700" />
       </div>
@@ -292,7 +292,7 @@ export default function Activities() {
               <span className="sr-only">Filter activity status</span>
               <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">
                 <option value="">All statuses</option>
-                <option value="Active">Active</option><option value="Draft">Draft</option><option value="Scheduled">Scheduled</option><option value="Closed">Closed</option><option value="Archived">Archived</option>
+                <option value="Published">Published</option><option value="Draft">Draft</option><option value="Closed">Closed</option><option value="Archived">Archived</option>
               </select>
             </label>
             <label className="min-w-0">
@@ -378,7 +378,7 @@ export default function Activities() {
         {!loading && pageCount > 1 && <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} label="Page" />}
       </section>
 
-      <ActivityDetailDrawer
+      <ActivityDetailModal
         activity={selectedActivityForDrawer}
         onClose={handleCloseActivityDrawer}
       />

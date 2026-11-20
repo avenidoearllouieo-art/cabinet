@@ -2,12 +2,14 @@ from io import BytesIO
 import zipfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models.fields.files import FieldFile
 from django.test import SimpleTestCase
 
 from .file_uploads import (
     FILE_TYPES,
     MAX_STUDENT_SUBMISSION_BYTES,
     MAX_STUDENT_SUBMISSION_FILES,
+    MAX_STUDENT_VIDEO_BYTES,
     MIB,
     UploadValidationError,
     validate_student_submission_files,
@@ -27,6 +29,26 @@ class SizedUpload:
 
     def seek(self, offset, whence=0):
         return self.content.seek(offset, whence)
+
+
+class ExistingStoredVideo(FieldFile):
+    def __init__(self, name, size):
+        self.name = name
+        self._size = size
+        self._file = BytesIO(b'\x00\x00\x00\x18ftypisom')
+
+    @property
+    def size(self):
+        return self._size
+
+    def seek(self, offset, whence=0):
+        return self._file.seek(offset, whence)
+
+    def read(self, size=-1):
+        return self._file.read(size)
+
+    def close(self):
+        self._file.close()
 
 
 def office_file(name, root_file):
@@ -91,23 +113,18 @@ class UploadPolicyTests(SimpleTestCase):
         self.assertEqual(MAX_STUDENT_SUBMISSION_FILES, 5)
 
     def test_submission_combined_limit_includes_existing_files(self):
-        two_videos = [
+        direct_request_uploads = [
             SizedUpload('first.mp4', b'\x00\x00\x00\x18ftypisom', 500 * MIB),
             SizedUpload('second.mp4', b'\x00\x00\x00\x18ftypisom', 251 * MIB),
         ]
-        exactly_at_limit = [
-            SizedUpload('first.mp4', b'\x00\x00\x00\x18ftypisom', 500 * MIB),
-            SizedUpload('second.mp4', b'\x00\x00\x00\x18ftypisom', 250 * MIB),
+        at_total_limit = [
+            ExistingStoredVideo('first.mp4', 5 * 1024 * MIB),
+            ExistingStoredVideo('second.mp4', 5 * 1024 * MIB),
         ]
-        existing_over_limit = [
-            SizedUpload('existing.mp4', b'\x00\x00\x00\x18ftypisom', 500 * MIB),
-            SizedUpload('existing-too.mp4', b'\x00\x00\x00\x18ftypisom', 251 * MIB),
-        ]
+        over_total_limit = [*at_total_limit, ExistingStoredVideo('third.mp4', 1)]
 
-        self.assertIn('750 MB', ' '.join(validate_student_submission_files(two_videos)))
-        self.assertEqual(validate_student_submission_files(exactly_at_limit), [])
-        self.assertIn('750 MB', ' '.join(validate_student_submission_files(
-            [SimpleUploadedFile('small.pdf', b'%PDF-1.7 data')],
-            existing_files=existing_over_limit,
-        )))
-        self.assertEqual(MAX_STUDENT_SUBMISSION_BYTES, 750 * MIB)
+        self.assertEqual(validate_student_submission_files(direct_request_uploads), [])
+        self.assertEqual(validate_student_submission_files(at_total_limit), [])
+        self.assertIn('10 GB', ' '.join(validate_student_submission_files(over_total_limit)))
+        self.assertEqual(MAX_STUDENT_VIDEO_BYTES, 5 * 1024 ** 3)
+        self.assertEqual(MAX_STUDENT_SUBMISSION_BYTES, 10 * 1024 ** 3)

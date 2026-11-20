@@ -46,7 +46,8 @@ describe('InstructorProfile', () => {
     expect(screen.getByText('Manage your account and contact information.')).toBeTruthy()
     expect(screen.getByText('Year level')).toBeTruthy()
     expect(screen.getByText('Academic year')).toBeTruthy()
-    expect(screen.getByText('2026-2027')).toBeTruthy()
+    expect(screen.getByText('2026–2027')).toBeTruthy()
+    expect(screen.queryByText('Program')).toBeNull()
     expect(screen.queryByText('INSTRUCTOR-UID-MUST-NOT-DISPLAY')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))

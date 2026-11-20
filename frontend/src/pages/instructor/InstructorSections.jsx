@@ -46,6 +46,8 @@ const formatAcademicYear = (value) => {
   const schoolYear = raw.match(/^(\d{4})-(\d{4})$/)
   return schoolYear ? `${schoolYear[1]}–${schoolYear[2]}` : raw || '—'
 }
+const normalizeAcademicYear = (value) => formatAcademicYear(value)
+const academicYears = ['2026–2027', '2027–2028']
 
 export default function InstructorSections() {
   const navigate = useNavigate()
@@ -53,7 +55,6 @@ export default function InstructorSections() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [programFilter, setProgramFilter] = useState('all')
   const [yearLevelFilter, setYearLevelFilter] = useState('all')
   const [academicYearFilter, setAcademicYearFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -81,18 +82,8 @@ export default function InstructorSections() {
 
   const selectedSectionId = selectedSection?.section_id ?? selectedSection?.id
 
-  const availablePrograms = useMemo(
-    () => [...new Set(sections.map((section) => section.program).filter(Boolean))].sort(),
-    [sections],
-  )
-
   const availableYears = useMemo(
     () => [...new Set(sections.map((section) => section.year_level).filter(Boolean))].sort(),
-    [sections],
-  )
-
-  const availableAcademicYears = useMemo(
-    () => [...new Set(sections.map((section) => section.academic_year).filter(Boolean))].sort(),
     [sections],
   )
 
@@ -102,14 +93,10 @@ export default function InstructorSections() {
     if (query.trim()) {
       const keyword = query.trim().toLowerCase()
       result = result.filter((section) =>
-        [section.subject_code, section.section_name, section.program, section.academic_year, section.instructor_name]
+        [section.subject_code, section.section_name, section.academic_year, section.instructor_name]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword)),
       )
-    }
-
-    if (programFilter !== 'all') {
-      result = result.filter((section) => String(section.program || '').toLowerCase() === programFilter.toLowerCase())
     }
 
     if (yearLevelFilter !== 'all') {
@@ -117,7 +104,7 @@ export default function InstructorSections() {
     }
 
     if (academicYearFilter !== 'all') {
-      result = result.filter((section) => String(section.academic_year || '').toLowerCase() === academicYearFilter.toLowerCase())
+      result = result.filter((section) => normalizeAcademicYear(section.academic_year).toLowerCase() === academicYearFilter.toLowerCase())
     }
 
     if (statusFilter !== 'all') {
@@ -143,7 +130,7 @@ export default function InstructorSections() {
     })
 
     return result
-  }, [sections, query, programFilter, yearLevelFilter, academicYearFilter, statusFilter, sortBy])
+  }, [sections, query, yearLevelFilter, academicYearFilter, statusFilter, sortBy])
 
   const totalSections = sections.length
   const totalStudents = sections.reduce((sum, section) => sum + (Number(section.student_count) || 0), 0)
@@ -200,7 +187,6 @@ export default function InstructorSections() {
         </div>
       ),
     },
-    { key: 'program', label: 'Program', className: 'min-w-[130px]', render: (value) => value || '—' },
     { key: 'year_level', label: 'Year', className: 'min-w-[80px]', render: (value) => formatYearLevel(value) },
     { key: 'student_count', label: 'Students', className: 'min-w-[90px]', render: (value) => value || 0 },
     { key: 'activity_count', label: 'Activities', className: 'min-w-[90px]', render: (value) => value || 0 },
@@ -273,16 +259,6 @@ export default function InstructorSections() {
 
           <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Program</label>
-            <select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500" aria-label="Filter by program">
-              <option value="all">All Programs</option>
-              {availablePrograms.map((program) => (
-                <option key={program} value={program}>{program}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Year Level</label>
             <select value={yearLevelFilter} onChange={(event) => setYearLevelFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500" aria-label="Filter by year level">
               <option value="all">All Levels</option>
@@ -296,8 +272,8 @@ export default function InstructorSections() {
             <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Academic Year</label>
             <select value={academicYearFilter} onChange={(event) => setAcademicYearFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500" aria-label="Filter by academic year">
               <option value="all">All Years</option>
-              {availableAcademicYears.map((year) => (
-                <option key={year} value={year}>{formatAcademicYear(year)}</option>
+              {academicYears.map((year) => (
+                <option key={year} value={year}>{year}</option>
               ))}
             </select>
           </div>
@@ -325,9 +301,9 @@ export default function InstructorSections() {
           </div>
         </div>
 
-        {(query || programFilter !== 'all' || yearLevelFilter !== 'all' || academicYearFilter !== 'all' || statusFilter !== 'all' || sortBy !== 'name-asc') && (
+        {(query || yearLevelFilter !== 'all' || academicYearFilter !== 'all' || statusFilter !== 'all' || sortBy !== 'name-asc') && (
           <div className="mb-4 flex justify-end">
-            <button type="button" onClick={() => { setQuery(''); setProgramFilter('all'); setYearLevelFilter('all'); setAcademicYearFilter('all'); setStatusFilter('all'); setSortBy('name-asc') }} className="min-h-9 rounded-lg border border-[#dbe5f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#082b53] hover:bg-[#eef4fa]">Reset filters</button>
+            <button type="button" onClick={() => { setQuery(''); setYearLevelFilter('all'); setAcademicYearFilter('all'); setStatusFilter('all'); setSortBy('name-asc') }} className="min-h-9 rounded-lg border border-[#dbe5f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#082b53] hover:bg-[#eef4fa]">Reset filters</button>
           </div>
         )}
 

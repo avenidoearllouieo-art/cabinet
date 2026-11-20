@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import api from '../../services/api.js'
+import { uploadTigrisVideo } from '../files/tigrisMultipartUpload.js'
 import ActivitySubmitModal from './ActivitySubmitModal.jsx'
 
 vi.mock('../../services/api.js', () => ({ default: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() } }))
+vi.mock('../files/tigrisMultipartUpload.js', () => ({ uploadTigrisVideo: vi.fn() }))
 
 describe('ActivitySubmitModal', () => {
   afterEach(() => {
@@ -51,17 +53,46 @@ describe('ActivitySubmitModal', () => {
     expect(closedButton.disabled).toBe(true)
   })
 
-  it('rejects a video over 500 MB before starting an upload', async () => {
+  it('rejects a video over the configured 5 GB storage-backed limit', async () => {
     api.get.mockResolvedValue({ data: { results: [] } })
     render(<ActivitySubmitModal activity={{ id: 8, title: 'Video assignment' }} isOpen onClose={vi.fn()} />)
 
     await screen.findByRole('button', { name: 'Choose Files' })
     const oversized = new File(['video'], 'large.mp4', { type: 'video/mp4' })
-    Object.defineProperty(oversized, 'size', { value: 500 * 1024 * 1024 + 1 })
+    Object.defineProperty(oversized, 'size', { value: 5 * 1024 ** 3 + 1 })
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [oversized] } })
 
-    expect(await screen.findByText(/large\.mp4: Video files must be 500 MB or smaller/)).toBeTruthy()
+    expect(await screen.findByText(/large\.mp4: Video files must be 5 GB or smaller/)).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('sends videos over 500 MB directly to Tigris and submits only the verified upload ID', async () => {
+    api.get.mockResolvedValue({ data: { results: [] } })
+    api.post.mockResolvedValue({ data: { id: 15 } })
+    uploadTigrisVideo.mockResolvedValue({
+      id: 22,
+      temp_upload_id: 22,
+      tempUploadId: 22,
+      name: 'defense.mp4',
+      size: 600 * 1024 * 1024,
+      source: 'temp',
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<ActivitySubmitModal activity={{ id: 13, title: 'Video assignment' }} isOpen onClose={vi.fn()} />)
+
+    await screen.findByRole('button', { name: 'Choose Files' })
+    const video = new File(['video'], 'defense.mp4', { type: 'video/mp4' })
+    Object.defineProperty(video, 'size', { value: 600 * 1024 * 1024 })
+    fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [video] } })
+
+    await waitFor(() => expect(uploadTigrisVideo).toHaveBeenCalledWith(video, 13, expect.objectContaining({ signal: expect.any(AbortSignal), onProgress: expect.any(Function) })))
+    expect(await screen.findByText('defense.mp4')).toBeTruthy()
+    expect(api.post).not.toHaveBeenCalledWith('/student/submissions/upload', expect.anything(), expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Activity' }))
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/submissions/', expect.any(FormData)))
+    const submission = api.post.mock.calls.find(([path]) => path === '/submissions/')[1]
+    expect(submission.get('temp_upload_ids')).toBe('22')
   })
 
   it('rejects a sixth file before starting an upload', async () => {
@@ -121,18 +152,18 @@ describe('ActivitySubmitModal', () => {
     expect(api.post.mock.calls.filter(([path]) => path === '/submissions/')).toHaveLength(0)
   })
 
-  it('rejects combined submission files over 750 MB before starting an upload', async () => {
+  it('rejects combined submission files over 10 GB before starting an upload', async () => {
     api.get.mockResolvedValue({ data: { results: [] } })
     render(<ActivitySubmitModal activity={{ id: 10, title: 'Video assignment' }} isOpen onClose={vi.fn()} />)
 
     await screen.findByRole('button', { name: 'Choose Files' })
     const first = new File(['video'], 'first.mp4', { type: 'video/mp4' })
     const second = new File(['video'], 'second.mp4', { type: 'video/mp4' })
-    Object.defineProperty(first, 'size', { value: 500 * 1024 * 1024 })
-    Object.defineProperty(second, 'size', { value: 251 * 1024 * 1024 })
+    Object.defineProperty(first, 'size', { value: 5 * 1024 ** 3 })
+    Object.defineProperty(second, 'size', { value: 5 * 1024 ** 3 + 1 })
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [first, second] } })
 
-    expect(await screen.findByText(/Combined submission files must not exceed 750 MB/)).toBeTruthy()
+    expect(await screen.findByText(/Combined submission files must not exceed 10 GB/)).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
   })
 })

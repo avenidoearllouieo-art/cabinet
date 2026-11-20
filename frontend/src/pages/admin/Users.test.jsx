@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
 import Users from './Users.jsx'
@@ -88,5 +88,33 @@ describe('Users directory', () => {
       { ids: [42] },
       { responseType: 'blob' },
     ))
+  })
+
+  it('expands only the selected mobile user card at common phone widths', async () => {
+    const user = directoryUser(42, 'student')
+    const originalWidth = window.innerWidth
+    api.get.mockResolvedValue({ data: { count: 1, next: null, results: [{ ...user, last_login: '2026-11-15T08:30:00Z' }] } })
+    localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
+
+    for (const width of [360, 390, 430]) {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      const view = render(<MemoryRouter><Users /></MemoryRouter>)
+      const article = (await screen.findByText('Student Record 42')).closest('article')
+      const expand = within(article).getByRole('button', { name: 'More details' })
+
+      fireEvent.click(expand)
+      expect(expand.getAttribute('aria-expanded')).toBe('true')
+      expect(within(article).getByText('System ID')).toBeTruthy()
+      expect(within(article).getByText('Last login')).toBeTruthy()
+      expect(within(article).getByRole('button', { name: 'View Profile' })).toBeTruthy()
+      expect(within(article).getByRole('button', { name: 'Less details' })).toBeTruthy()
+
+      fireEvent.click(within(article).getByRole('button', { name: 'Less details' }))
+      expect(within(article).getByRole('button', { name: 'More details' }).getAttribute('aria-expanded')).toBe('false')
+      view.unmount()
+      cleanup()
+      api.get.mockClear()
+    }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   })
 })

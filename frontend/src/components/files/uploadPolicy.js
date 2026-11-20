@@ -1,13 +1,15 @@
 const MIB = 1024 * 1024
 
 export const MAX_STUDENT_SUBMISSION_FILES = 5
-export const MAX_STUDENT_SUBMISSION_BYTES = 750 * MIB
+export const MAX_STUDENT_SUBMISSION_BYTES = 10 * 1024 * MIB
+export const MAX_STUDENT_VIDEO_BYTES = 5 * 1024 * MIB
+export const DIRECT_MULTIPART_THRESHOLD = 64 * MIB
 export const SUPPORTED_UPLOAD_ACCEPT = '.mp4,.mov,.webm,.jpg,.jpeg,.png,.webp,.pdf,.docx,.pptx,.xlsx,.mp3,.wav'
 
 const FILE_LIMITS = {
-  mp4: { label: 'Video', bytes: 500 * MIB },
-  mov: { label: 'Video', bytes: 500 * MIB },
-  webm: { label: 'Video', bytes: 500 * MIB },
+  mp4: { label: 'Video', bytes: 500 * MIB, studentBytes: MAX_STUDENT_VIDEO_BYTES },
+  mov: { label: 'Video', bytes: 500 * MIB, studentBytes: MAX_STUDENT_VIDEO_BYTES },
+  webm: { label: 'Video', bytes: 500 * MIB, studentBytes: MAX_STUDENT_VIDEO_BYTES },
   jpg: { label: 'Image', bytes: 20 * MIB },
   jpeg: { label: 'Image', bytes: 20 * MIB },
   png: { label: 'Image', bytes: 20 * MIB },
@@ -42,8 +44,12 @@ export function validateUploadFiles(newFiles, { existingFiles = [], studentSubmi
       errors.push(`${name}: unsupported format. Use MP4, MOV, WebM, JPG, JPEG, PNG, WebP, PDF, DOCX, PPTX, XLSX, MP3, or WAV.`)
       continue
     }
-    if (fileSize(file) > policy.bytes) {
-      errors.push(`${name}: ${policy.label} files must be ${policy.bytes / MIB} MB or smaller.`)
+    const maximumBytes = studentSubmission ? policy.studentBytes || policy.bytes : policy.bytes
+    if (fileSize(file) > maximumBytes) {
+      const maximum = maximumBytes >= 1024 * MIB
+        ? `${maximumBytes / (1024 * MIB)} GB`
+        : `${maximumBytes / MIB} MB`
+      errors.push(`${name}: ${policy.label} files must be ${maximum} or smaller.`)
     }
   }
 
@@ -53,7 +59,7 @@ export function validateUploadFiles(newFiles, { existingFiles = [], studentSubmi
       errors.push(`A submission can contain at most ${MAX_STUDENT_SUBMISSION_FILES} files.`)
     }
     if (allFiles.reduce((total, file) => total + fileSize(file), 0) > MAX_STUDENT_SUBMISSION_BYTES) {
-      errors.push('Combined submission files must not exceed 750 MB.')
+      errors.push('Combined submission files must not exceed 10 GB.')
     }
   }
   return errors
