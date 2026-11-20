@@ -1,16 +1,18 @@
 [Unit]
 Description=TapTrack Cabinet UI
-After=network-online.target taptrack-nfc.service
-Wants=network-online.target
+After=local-fs.target
+Wants=taptrack-nfc.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/tap-track/cabinet
-EnvironmentFile=-/etc/taptrack/cabinet.env
-ExecStartPre=/usr/bin/npm run build
-ExecStart=/usr/bin/npm run preview -- --host 127.0.0.1 --port 4000
-Restart=always
+User=taptrack
+WorkingDirectory=/home/taptrack/tap-track/cabinet
+RuntimeDirectory=taptrack-cabinet
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/python3 /home/taptrack/tap-track/cabinet/deploy/render_device_api_key.py /etc/taptrack/nfc.env /run/taptrack-cabinet/cabinet-device-key.conf
+ExecStartPre=/usr/bin/test -f /home/taptrack/tap-track/cabinet/dist/index.html
+ExecStart=/usr/sbin/nginx -p /home/taptrack/tap-track/cabinet/ -c /home/taptrack/tap-track/cabinet/deploy/nginx.conf -g 'daemon off;'
+Restart=on-failure
 RestartSec=3
 
 [Install]

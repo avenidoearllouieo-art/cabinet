@@ -1,0 +1,19 @@
+[Unit]
+Description=TapTrack Cabinet Chromium kiosk
+After=graphical.target taptrack-cabinet.service
+Wants=taptrack-cabinet.service
+PartOf=graphical.target
+
+[Service]
+Type=simple
+User=pi
+Environment=HOME=/home/pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStartPre=/usr/bin/curl --fail --silent --show-error --retry 30 --retry-connrefused --retry-delay 2 --max-time 2 http://127.0.0.1:5177/
+ExecStart=/usr/bin/chromium --kiosk --app=http://127.0.0.1:5177 --no-first-run --no-default-browser-check --disable-session-crashed-bubble --noerrdialogs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

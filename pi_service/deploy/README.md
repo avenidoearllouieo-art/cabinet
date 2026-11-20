@@ -7,25 +7,28 @@ This repository runs the official Cabinet touchscreen UI and Pi-local NFC reader
 The target boot order is:
 
 1. OS boots
-2. Python NFC service starts
-3. Cabinet UI starts
-4. Chromium opens the Cabinet in kiosk mode
+2. The existing Python NFC service starts and initializes the local reader, camera adapter, and guarded motor controller
+3. Nginx serves the prebuilt Cabinet UI and local/reverse-proxy routes on port 5177
+4. Chromium opens the Cabinet in kiosk mode after the desktop is ready
 5. Students see the TapTrack Cabinet home screen and tap their NFC card
+
+There is no `cabinet/backend/` in this checkout. The top-level `backend/` is the development Django project; on the Pi, shared application data and authentication are authoritative on `https://taptrack-api.onrender.com`. No local Django, camera, or motor service is added: photo capture and motor-controller integration already run inside the single `taptrack-nfc.service` process.
 
 ## Required OS and runtime
 
 - Raspberry Pi OS (64-bit recommended)
 - Raspberry Pi with touchscreen/LCD connected
-- Network access to the Django server
+- Internet access to `taptrack-api.onrender.com` for authenticated shared data
 - Node.js 22.x recommended
 - Python 3.11+
 - Chromium browser
+- Nginx (serves the static production build and proxies API/bridge routes)
 
 ## Required packages
 
 ```bash
 sudo apt update
-sudo apt install -y git curl python3 python3-venv python3-pip chromium x11-xserver-utils
+sudo apt install -y git curl python3 python3-venv python3-pip nginx chromium x11-xserver-utils
 ```
 
 If needed, install Node.js 22 with nvm:
@@ -83,22 +86,93 @@ pip install -r requirements.txt
 
 ```bash
 cd /home/taptrack/tap-track/cabinet
-npm install
+npm ci
 ```
 
-## Required environment variables
+## Production Cabinet build and routes
 
-Set Cabinet browser build-time values in `cabinet/.env.production` before building:
+Set these public browser build-time values in `cabinet/.env.production`:
 
 ```env
 VITE_NFC_BRIDGE_URL=/nfc-bridge/api/scans
 VITE_DJANGO_API_BASE_URL=/api
-VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000
+VITE_NFC_COOLDOWN_MS=2500
 ```
 
-The Cabinet browser calls same-origin `/nfc-bridge/*` and `/api/*` paths. Its Vite preview server proxies those paths to the Pi-local NFC bridge on `127.0.0.1:5001` and Django on `127.0.0.1:8000`. If Django is hosted elsewhere, set the Cabinet's API base and server-side proxy target to that exact reachable deployment before building. Do not use browser `127.0.0.1` URLs for a service on another machine, and never put API credentials in `VITE_` variables or URLs.
+Build the optimized static bundle once during installation or an intentional UI update; it is not rebuilt at boot:
 
-Set `TAPTRACK_NFC_ALLOWED_ORIGINS` in `/etc/taptrack/nfc.env` to a comma-separated list of exact browser origins for the Cabinet. For the requested UI URL, use `http://localhost:4000`; add `http://127.0.0.1:4000` or another production origin only if users intentionally open Cabinet at that exact origin. Origins must be HTTP(S) scheme + host + optional port only. Paths, wildcards, `null`, and arbitrary forwarded headers are not accepted. Handoff/cancel POSTs and bridge-status GETs with an Origin require an exact allowlist match. A missing Origin is accepted only for the read-only bridge-status GET because browsers may omit Origin on same-origin GET requests; CORS headers are still emitted only for an exact allowed Origin. The service does not derive trust from `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+```bash
+cd /home/taptrack/tap-track/cabinet
+npm run build
+test -f dist/index.html
+```
+
+The production systemd unit runs Nginx using `cabinet/deploy/nginx.conf` on port 5177. React Router routes fall back to `index.html`. The same-origin routes are:
+
+- `/nfc-bridge/*` -> Pi-local `127.0.0.1:5001`; only the existing `nfc_service.py` accesses the reader, camera, and motor-controller integration.
+- `/api/*` -> `https://taptrack-api.onrender.com/api/*`; this is the shared source of users, NFC verification, access history, and recovery data.
+
+Nginx resolves the Render host on demand. If the site network blocks public DNS resolvers, replace the `resolver` addresses in `cabinet/deploy/nginx.conf` with the approved DNS servers for that network. If Render is unavailable, Nginx continues to serve the local Cabinet bundle; API calls return errors, NFC verification fails closed, and no offline authentication or motor bypass is enabled. The proxy does not retry POST requests.
+
+The Cabinet polls the Pi-local scan bridge at its existing 750 ms cadence with an in-flight guard and persistent cursor to keep NFC feedback responsive. The live clock updates in isolated child widgets instead of re-rendering the entire Cabinet app each second. Password-recovery status checks use a two-second normal interval with bounded backoff on network failures. No motor command is issued by UI or service startup.
+
+`npm run dev` remains the separate development workflow and continues to use the Vite proxy. Do not run Vite preview/dev on 5177 at the same time as the production Nginx service. Keep `VITE_DJANGO_SERVER_URL` in the development environment only. Never put API credentials or `DEVICE_API_KEY` in any `VITE_` variable.
+
+## Required environment variables
+
+Install the Pi-side device environment at `/etc/taptrack/nfc.env`, readable only by the `taptrack` service user (directory owned by `taptrack`, mode 0700; file owned by `taptrack`, mode 0600). Start from `pi_service/deploy/nfc.env.example`, set a real unique `DEVICE_API_KEY`, and retain all existing motor-safety values:
+
+```env
+DEVICE_API_KEY=<secret device key mapped in Django>
+TAPTRACK_DJANGO_API_BASE_URL=https://taptrack-api.onrender.com/api
+TAPTRACK_NFC_ALLOWED_ORIGINS=http://localhost:5177,http://127.0.0.1:5177
+TAPTRACK_NFC_MODE=hardware
+TAPTRACK_NFC_DB_PATH=/home/taptrack/tap-track/pi_service/nfc_events.sqlite3
+TAPTRACK_MOTOR_MODE=serial
+TAPTRACK_MOTOR_ACTUATION_ENABLED=false
+```
+
+Do not copy the placeholder key literally. Add the exact `http://<Pi-LAN-host-or-IP>:5177` origin to `TAPTRACK_NFC_ALLOWED_ORIGINS` only when the Cabinet is intentionally opened from that address (for phone registration or administration). Origins must be exact scheme/host/port values without paths. Put the matching device-key mapping in the deployed Django `TAPTRACK_NFC_DEVICE_MAP`. No key is sent to the browser or Nginx.
+
+When preparing a new secret directory, use:
+
+```bash
+sudo install -d -o taptrack -g taptrack -m 0700 /etc/taptrack
+sudo install -o taptrack -g taptrack -m 0600 pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
+sudoedit /etc/taptrack/nfc.env
+```
+
+Do not overwrite an existing `/etc/taptrack/nfc.env`; update it in place while preserving its secret values and mode.
+
+The DNS resolver in `cabinet/deploy/nginx.conf` and the Pi service API base must both resolve/reach Render. A missing internet connection does not stop Nginx or the Cabinet UI; authentication and protected writes remain unavailable until Render reconnects.
+
+`TAPTRACK_NFC_ALLOWED_ORIGINS` must contain exact browser origins for the Cabinet. The production kiosk uses `http://127.0.0.1:5177`; add `http://localhost:5177` and the exact LAN origin only if those URLs are actually used. The existing Vite development server may use `http://127.0.0.1:4000` or `http://localhost:4000`. Origins must be HTTP(S) scheme + host + optional port only. Paths, wildcards, `null`, and arbitrary forwarded headers are not accepted. Handoff/cancel POSTs and bridge-status GETs with an Origin require an exact allowlist match. A missing Origin is accepted only for the read-only bridge-status GET because browsers may omit Origin on same-origin GET requests; CORS headers are still emitted only for an exact allowed Origin. The service does not derive trust from `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+
+## Opt-in automatic startup
+
+These are instructions only; the units are not installed or enabled by this repository change. First inspect the Pi's current services and processes. The checkout already has `taptrack-nfc.service`; it owns the single NFC reader, local scan bridge, camera photo integration, and motor-controller instance. Do not start a second NFC service or a separate motor/camera process. There is no local Pi Django service in this checkout; Django is Render-authoritative.
+
+Before enabling kiosk mode, configure Raspberry Pi OS desktop autologin for user `pi`, verify the display is available as `DISPLAY=:0` with `/home/pi/.Xauthority`, and disable any existing Chromium kiosk autostart so only one browser is launched. The supplied kiosk unit assumes that X11 session layout; adapt its display environment if the Pi uses a different desktop/session configuration.
+
+After configuring `/etc/taptrack/nfc.env`, building the Cabinet bundle, and checking that the current worktree/paths match `/home/taptrack/tap-track`, install the Cabinet server and kiosk unit templates:
+
+```bash
+sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
+sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
+sudo systemctl daemon-reload
+sudo systemctl enable taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
+sudo systemctl start taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
+```
+
+Check services and routes without sending any motor command:
+
+```bash
+systemctl is-active taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
+curl --fail --silent http://127.0.0.1:5001/nfc/status
+curl --fail --silent http://127.0.0.1:5177/ -o /dev/null
+```
+
+The NFC service starts with its existing motor actuation setting, which remains disabled in the example. Neither Nginx nor Chromium sends motor commands. Do not enable motor actuation, run motor recovery, reboot, install, or enable these units without the operator's explicit approval and the physical safety checklist below.
 
 ### Recovery-origin fix deployment and rollback
 
@@ -253,8 +327,7 @@ cd /home/taptrack/tap-track/cabinet
 npm run build
 ```
 
-The Vite output directory is the default Vite build folder from `cabinet/package.json` and `cabinet/vite.config.js`.
-The `taptrack-cabinet.service` unit rebuilds the UI after loading `/etc/taptrack/cabinet.env`; the bridge URL is compiled into the served bundle on service restart. The Cabinet always uses the hardware NFC bridge and does not accept a mock provider mode.
+The Vite output directory is `cabinet/dist`. Build it manually when installing or updating the UI; the systemd service only serves the existing bundle and does not rebuild during boot. The Cabinet always uses the hardware NFC bridge and does not accept a mock provider mode.
 
 ## Start the NFC service
 
@@ -264,9 +337,11 @@ Use a systemd service:
 sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/
 sudo install -d -m 700 /etc/taptrack
 if [ ! -e /etc/taptrack/nfc.env ]; then
-  sudo install -m 600 /home/taptrack/tap-track/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
+  sudo install -o taptrack -g taptrack -m 600 /home/taptrack/tap-track/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
 fi
 # Edit /etc/taptrack/nfc.env locally and set DEVICE_API_KEY; do not commit this file.
+# Keep the file owned by taptrack with mode 0600; the Cabinet creates a private
+# Nginx include for protected photo reads from this same file at service start.
 sudo systemctl daemon-reload
 sudo systemctl enable taptrack-nfc.service
 sudo systemctl start taptrack-nfc.service
@@ -275,36 +350,31 @@ sudo systemctl status taptrack-nfc.service
 
 The service starts from `/home/taptrack/tap-track/pi_service`, runs as `taptrack`, restarts if it crashes, detects `IC Reader IC Reader`, and binds the read-only scan bridge to `127.0.0.1:5001`. SQLite events are stored at `/home/taptrack/tap-track/pi_service/nfc_events.sqlite3` by default. The Django device key is read only from `/etc/taptrack/nfc.env`. Preserve the existing secret file when updating code; do not overwrite it with the example template.
 
-## Start the Cabinet UI
+## Install Cabinet and kiosk units (opt-in)
 
-Use the preview server from the built app:
+Build the bundle first using the commands above. Check that the current checkout matches `/home/taptrack/tap-track`, that no manual Vite/preview process is already using port 5177, and that only one Chromium autostart mechanism will be enabled. Install the existing NFC service plus the Cabinet and kiosk unit templates:
 
 ```bash
-sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/
+sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
+sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
 sudo systemctl daemon-reload
-sudo systemctl enable taptrack-cabinet.service
-sudo systemctl start taptrack-cabinet.service
-sudo systemctl status taptrack-cabinet.service
+sudo systemctl enable taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
+sudo systemctl start taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
+sudo systemctl status taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
 ```
 
-This starts the built app on `127.0.0.1:4000`. The bridge CORS allow-list contains only the Cabinet origins on port 4000.
+This starts Nginx on `127.0.0.1:5177`. The NFC service is the single local process for reader, camera, workflow, and motor-controller integration. The UI service starts even when Render is offline; in that state the Cabinet remains visible, shared-data requests fail closed, and no offline authentication is provided.
 
-## Browser kiosk mode
+`taptrack-kiosk.service` assumes an X11 desktop session for user `pi`, with `DISPLAY=:0` and `/home/pi/.Xauthority`. Configure Raspberry Pi OS desktop autologin and verify those values before enabling it. An existing `taptrack-kiosk.desktop` autostart file is also available as an alternative. Use one option only; do not enable the systemd kiosk unit while the desktop autostart entry is installed.
 
-Install a desktop autostart file:
+To use the desktop autostart alternative instead of `taptrack-kiosk.service`:
 
 ```bash
 mkdir -p /home/pi/.config/autostart
 cp /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.desktop /home/pi/.config/autostart/
 ```
 
-This launches Chromium in kiosk mode and hides browser controls.
-
-For a full-screen kiosk experience, Chromium is launched with:
-
-```bash
-/usr/bin/chromium --kiosk --disable-infobars --noerrdialogs --disable-session-crashed-bubble --disable-features=TranslateUI --user-data-dir=/home/pi/.config/taptrack-chromium http://127.0.0.1:4000
-```
+Do not install both kiosk autostart options.
 
 ## Test the scan bridge
 
@@ -314,7 +384,7 @@ This is a read-only request and does not create Django access records:
 curl -i 'http://127.0.0.1:5001/api/scans?after=0&limit=50'
 ```
 
-This GET is read-only and does not create Django access records. For each complete physical UID, the NFC daemon sends exactly one `POST http://127.0.0.1:8000/api/verify-nfc/` using `DEVICE_API_KEY` from `/etc/taptrack/nfc.env`, then stores one result event. The browser only reads the bridge and never receives the API key. Do not test by manually posting a UID unless you intend to create Django access/event records.
+This GET is read-only and does not create Django access records. For each complete physical UID, the NFC daemon sends exactly one `POST https://taptrack-api.onrender.com/api/verify-nfc/` using `DEVICE_API_KEY` from `/etc/taptrack/nfc.env`, then stores one result event. The browser only reads the bridge and never receives the API key. Do not test by manually posting a UID unless you intend to create Django access/event records.
 
 ## Service management
 
@@ -323,6 +393,7 @@ Start:
 ```bash
 sudo systemctl start taptrack-nfc.service
 sudo systemctl start taptrack-cabinet.service
+sudo systemctl start taptrack-kiosk.service
 ```
 
 Stop:
@@ -330,6 +401,7 @@ Stop:
 ```bash
 sudo systemctl stop taptrack-nfc.service
 sudo systemctl stop taptrack-cabinet.service
+sudo systemctl stop taptrack-kiosk.service
 ```
 
 Restart:
@@ -337,6 +409,7 @@ Restart:
 ```bash
 sudo systemctl restart taptrack-nfc.service
 sudo systemctl restart taptrack-cabinet.service
+sudo systemctl restart taptrack-kiosk.service
 ```
 
 Status:
@@ -344,6 +417,7 @@ Status:
 ```bash
 sudo systemctl status taptrack-nfc.service
 sudo systemctl status taptrack-cabinet.service
+sudo systemctl status taptrack-kiosk.service
 ```
 
 ## Maintenance mode
@@ -364,7 +438,7 @@ Then launch Chromium without kiosk flags if needed.
 
 - Check that the browser is running and the Cabinet service is active.
 - Check the browser log and `journalctl -u taptrack-cabinet.service`.
-- Verify the app served on port 4000.
+- Verify the app is served on port 5177.
 
 ### Browser not starting
 
@@ -380,16 +454,16 @@ journalctl -u taptrack-nfc.service -f
 
 Check the reader adapter and confirm that the NFC service is healthy at `http://127.0.0.1:5001/nfc/status`.
 
-### Django unavailable
+### Deployed Django unavailable
 
-- Confirm the Django server is reachable from the Pi.
-- Check the network address in `VITE_DJANGO_API_BASE_URL`.
+- Confirm the Pi can resolve and reach `taptrack-api.onrender.com`.
+- Check `TAPTRACK_DJANGO_API_BASE_URL` in `/etc/taptrack/nfc.env` and the Render route in `cabinet/deploy/nginx.conf`.
 - Test with `curl` from the Pi.
 
 ### Network unavailable
 
-- Ensure the Pi is connected to the same Wi-Fi/Ethernet segment as the Django server.
-- Check `ip address` and `ping` to the Django host.
+- The Cabinet UI remains local; authenticated NFC and shared-data operations wait for connectivity and fail closed while Render is unavailable.
+- Check `ip address` and DNS resolution for the configured network.
 
 ## Reboot verification
 
@@ -398,7 +472,7 @@ After a reboot:
 ```bash
 sudo systemctl status taptrack-nfc.service
 sudo systemctl status taptrack-cabinet.service
-curl http://127.0.0.1:4000
+curl --fail --silent http://127.0.0.1:5177/ -o /dev/null
 ```
 
 The Cabinet should automatically return to the TapTrack landing screen and display the normal idle “Tap your NFC card” state.

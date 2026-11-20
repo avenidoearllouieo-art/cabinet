@@ -19,6 +19,9 @@ import {
 import './App.css'
 
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
+const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
+const RECOVERY_STATUS_POLL_INTERVAL_MS = 2000
+const RECOVERY_STATUS_MAX_BACKOFF_MS = 30000
 const PHOTO_STATUS_ATTEMPTS = 12
 const PHOTO_STATUS_RETRY_DELAY_MS = 750
 
@@ -101,6 +104,27 @@ function formatDuration(start, end = new Date()) {
   return `${seconds}s`
 }
 
+function useCurrentTime() {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  return now
+}
+
+function CabinetClock() {
+  const now = useCurrentTime()
+  return <span className="clock-time">{formatDateTime(now)}</span>
+}
+
+function SessionDuration({ startedAt }) {
+  const now = useCurrentTime()
+  return <>{formatDuration(startedAt, now)}</>
+}
+
 export default function App() {
   const [view, setView] = useState('home')
   const [pendingAction, setPendingAction] = useState('open')
@@ -115,7 +139,6 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
   const [motorStatusMessage, setMotorStatusMessage] = useState('Motor dispatch has not been reported for this session.')
   const [errorMessage, setErrorMessage] = useState('')
-  const [clock, setClock] = useState(() => new Date())
   const [cabinetState, setCabinetState] = useState({ sessions: [] })
   const { sessions } = cabinetState
   const [readerContext, setReaderContext] = useState(null)
@@ -238,6 +261,7 @@ export default function App() {
     let cancelled = false
     let timeoutId
     let pollController
+    let retryDelay = RECOVERY_STATUS_POLL_INTERVAL_MS
 
     const poll = async () => {
       pollController = new AbortController()
@@ -248,6 +272,7 @@ export default function App() {
           fetchPasswordRecoveryBridgeStatus(recoveryRequestId, { signal: pollController.signal }),
         ])
         if (cancelled) return
+        retryDelay = RECOVERY_STATUS_POLL_INTERVAL_MS
         const status = backendStatus.status
         if (status === 'verified') {
           setRecoveryPhase('confirmed')
@@ -276,10 +301,11 @@ export default function App() {
       } catch (error) {
         if (!cancelled && !pollController.signal.aborted) {
           setRecoveryError(error.message || 'Unable to check password-recovery status.')
+          retryDelay = Math.min(retryDelay * 2, RECOVERY_STATUS_MAX_BACKOFF_MS)
         }
       } finally {
         if (!cancelled && !pollController.signal.aborted) {
-          timeoutId = window.setTimeout(poll, 1500)
+          timeoutId = window.setTimeout(poll, retryDelay)
         }
       }
     }
@@ -356,11 +382,6 @@ export default function App() {
         }
       })
     return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => setClock(new Date()), 1000)
-    return () => window.clearInterval(intervalId)
   }, [])
 
   useEffect(() => {
@@ -541,7 +562,7 @@ export default function App() {
     }
 
     void pollScanBridge()
-    const intervalId = window.setInterval(() => void pollScanBridge(), 750)
+    const intervalId = window.setInterval(() => void pollScanBridge(), SCAN_BRIDGE_POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
@@ -880,7 +901,7 @@ export default function App() {
               </div>
               <div className="clock-card">
                 <span className="clock-label">Current date and time</span>
-                <span className="clock-time">{formatDateTime(clock)}</span>
+                <CabinetClock />
               </div>
             </div>
 
@@ -1323,7 +1344,7 @@ export default function App() {
                   <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
                   <div className="confirm-row"><span>Closed by</span><strong>{closingParticipants.length}</strong></div>
                   <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
-                  <div className="confirm-row"><span>Current duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
+                  <div className="confirm-row"><span>Current duration</span><strong><SessionDuration startedAt={selectedSession?.openedAt} /></strong></div>
                 </>
               )}
             </div>
@@ -1361,7 +1382,7 @@ export default function App() {
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
               <div><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
-              <div><span>Session Duration</span><strong>{formatDuration(selectedSession?.openedAt, clock)}</strong></div>
+              <div><span>Session Duration</span><strong><SessionDuration startedAt={selectedSession?.openedAt} /></strong></div>
             </div>
             <p className="session-id">Session {selectedSession?.id || 'active'}</p>
             <div className="participant-list session-participants">

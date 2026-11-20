@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import test from 'node:test'
 import viteConfig from '../../vite.config.js'
@@ -63,4 +64,24 @@ test('production builds leave the development server disabled and use preview pr
   assert.equal(config.preview.proxy['/nfc-bridge'].target, 'http://127.0.0.1:5001')
   assert.equal(config.preview.proxy['/api'].target, 'http://127.0.0.1:8000')
   assert.equal(config.define, undefined)
+})
+
+test('the production Nginx server keeps hardware local and application API on Render', async () => {
+  const configUrl = new URL('../../deploy/nginx.conf', import.meta.url)
+  const config = await readFile(configUrl, 'utf8')
+
+  assert.ok(config.includes('listen 5177;'))
+  assert.ok(config.includes('proxy_pass http://127.0.0.1:5001/;'))
+  assert.ok(config.includes('set $django_api_host taptrack-api.onrender.com;'))
+  assert.ok(config.includes('proxy_pass https://$django_api_host$request_uri;'))
+  assert.ok(config.includes('proxy_next_upstream off;'))
+  assert.ok(config.includes('try_files $uri $uri/ /index.html;'))
+
+  const photoStart = config.indexOf('location ~ ^/api/access-logs/')
+  const apiStart = config.indexOf('location /api/')
+  const photoLocation = config.slice(photoStart, apiStart)
+  const apiLocation = config.slice(apiStart)
+  assert.ok(photoLocation.includes('limit_except GET'))
+  assert.ok(photoLocation.includes('include /run/taptrack-cabinet/cabinet-device-key.conf;'))
+  assert.ok(!apiLocation.includes('cabinet-device-key.conf'))
 })
