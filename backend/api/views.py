@@ -747,7 +747,7 @@ def academic_file_metadata(record, file_field):
     content_type, preview_type = type_by_extension.get(suffix, ('application/octet-stream', 'unsupported'))
     try:
         size = file_field.size
-    except (OSError, ValueError):
+    except (OSError, ValueError, ClientError):
         size = getattr(record, 'file_size', 0) or 0
     return filename, size, content_type, preview_type
 
@@ -801,10 +801,28 @@ class AcademicFilePreviewAuthorizeView(APIView):
         record, file_field, activity, submission = get_academic_attachment(kind, attachment_id)
         if not academic_file_is_authorized(request.user, kind, activity, submission):
             raise Http404
-        if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
+        if not file_field or not file_field.name:
             raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
-        filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
-        signed_urls = academic_file_presigned_urls(file_field, filename, content_type)
+        try:
+            if not file_field.storage.exists(file_field.name):
+                raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
+            filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
+            signed_urls = academic_file_presigned_urls(file_field, filename, content_type)
+        except NotFound:
+            raise
+        except Exception as error:
+            request_id = getattr(request, 'api_request_id', 'unavailable')
+            logger.error(
+                'File preview authorization failed request_id=%s status=%s exception_type=%s',
+                request_id,
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                type(error).__name__,
+            )
+            return Response({
+                'detail': 'File storage is temporarily unavailable. Please retry.',
+                'code': 'storage_unavailable',
+                'request_id': request_id,
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         content_url = reverse('academic_file_preview_content', args=[kind, attachment_id])
         payload = {
             'filename': filename,
@@ -908,42 +926,60 @@ class AcademicFilePreviewContentView(APIView):
         record, file_field, activity, submission = get_academic_attachment(kind, attachment_id)
         if not academic_file_is_authorized(user, kind, activity, submission):
             raise Http404
-        if not file_field or not file_field.name or not file_field.storage.exists(file_field.name):
+        if not file_field or not file_field.name:
             raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
 
-        filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
-        requested_download = request.query_params.get('download') == '1'
-        as_attachment = requested_download or preview_type == 'unsupported'
-        range_header = request.headers.get('Range', '')
-        response = None
-        if range_header:
-            match = re.fullmatch(r'bytes=(\d*)-(\d*)', range_header.strip())
-            if not match or size <= 0:
-                response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
-                response['Content-Range'] = f'bytes */{size}'
-                return response
-            start_text, end_text = match.groups()
-            if not start_text:
-                suffix_length = int(end_text or '0')
-                start = max(0, size - suffix_length)
-                end = size - 1
+        try:
+            if not file_field.storage.exists(file_field.name):
+                raise NotFound('This attachment record exists, but its file is missing from storage. Restore it from a backup or ask the owner to upload it again.')
+            filename, size, content_type, preview_type = academic_file_metadata(record, file_field)
+            requested_download = request.query_params.get('download') == '1'
+            as_attachment = requested_download or preview_type == 'unsupported'
+            range_header = request.headers.get('Range', '')
+            response = None
+            if range_header:
+                match = re.fullmatch(r'bytes=(\d*)-(\d*)', range_header.strip())
+                if not match or size <= 0:
+                    response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                    response['Content-Range'] = f'bytes */{size}'
+                    return response
+                start_text, end_text = match.groups()
+                if not start_text:
+                    suffix_length = int(end_text or '0')
+                    start = max(0, size - suffix_length)
+                    end = size - 1
+                else:
+                    start = int(start_text)
+                    end = min(int(end_text), size - 1) if end_text else size - 1
+                if start >= size or end < start:
+                    response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                    response['Content-Range'] = f'bytes */{size}'
+                    return response
+                length = end - start + 1
+                body = open_storage_object(file_field, (start, end))
+                stream = stream_storage_object(body) if body else stream_file_range(file_field, start, length)
+                response = StreamingHttpResponse(stream, status=status.HTTP_206_PARTIAL_CONTENT, content_type=content_type)
+                response['Content-Range'] = f'bytes {start}-{end}/{size}'
+                response['Content-Length'] = str(length)
             else:
-                start = int(start_text)
-                end = min(int(end_text), size - 1) if end_text else size - 1
-            if start >= size or end < start:
-                response = HttpResponse(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
-                response['Content-Range'] = f'bytes */{size}'
-                return response
-            length = end - start + 1
-            body = open_storage_object(file_field, (start, end))
-            stream = stream_storage_object(body) if body else stream_file_range(file_field, start, length)
-            response = StreamingHttpResponse(stream, status=status.HTTP_206_PARTIAL_CONTENT, content_type=content_type)
-            response['Content-Range'] = f'bytes {start}-{end}/{size}'
-            response['Content-Length'] = str(length)
-        else:
-            body = open_storage_object(file_field)
-            response = StreamingHttpResponse(stream_storage_object(body), content_type=content_type) if body else FileResponse(file_field.open('rb'), content_type=content_type)
-            response['Content-Length'] = str(size)
+                body = open_storage_object(file_field)
+                response = StreamingHttpResponse(stream_storage_object(body), content_type=content_type) if body else FileResponse(file_field.open('rb'), content_type=content_type)
+                response['Content-Length'] = str(size)
+        except NotFound:
+            raise
+        except Exception as error:
+            request_id = getattr(request, 'api_request_id', 'unavailable')
+            logger.error(
+                'File content request failed request_id=%s status=%s exception_type=%s',
+                request_id,
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                type(error).__name__,
+            )
+            return Response({
+                'detail': 'File storage is temporarily unavailable. Please retry.',
+                'code': 'storage_unavailable',
+                'request_id': request_id,
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         response['Content-Disposition'] = content_disposition_header(as_attachment, filename)
         response['Accept-Ranges'] = 'bytes'

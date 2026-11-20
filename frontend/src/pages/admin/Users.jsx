@@ -10,6 +10,7 @@ import AddUserModal from '../../components/users/AddUserModal.jsx'
 import EditUserModal from '../../components/users/EditUserModal.jsx'
 import ActionsMenu from '../../components/users/ActionsMenu.jsx'
 import UserDrawer from '../../components/users/UserDrawer.jsx'
+import UserDetailsPanel from '../../components/users/UserDetailsPanel.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import UserActionDialog from '../../components/users/UserActionDialog.jsx'
 import { Search, Plus, Upload, CheckCircle2, CircleOff, FileText, FileSpreadsheet, ShieldCheck, Activity, UserCheck, X, ChevronLeft, ChevronRight, ChevronDown, Trash2, UserRoundCheck, UserRoundX } from 'lucide-react'
@@ -203,7 +204,10 @@ export default function Users() {
 
   const statusBadge = (row) => <StatusBadge status={row.is_active ? 'active' : 'inactive'} icon={row.is_active ? CheckCircle2 : CircleOff} />
 
-  const nfcStatusBadge = (uid) => <StatusBadge status={uid ? 'registered' : 'not assigned'} label={uid ? 'Registered' : 'Not Assigned'} />
+  const nfcStatusBadge = (user) => {
+    const registered = typeof user?.nfc_registered === 'boolean' ? user.nfc_registered : Boolean(user?.nfc_uid)
+    return <StatusBadge status={registered ? 'registered' : 'not assigned'} label={registered ? 'Registered' : 'Not Assigned'} />
+  }
 
   const roleBadge = (role) => {
     const normalized = (role || '').toLowerCase()
@@ -240,7 +244,7 @@ export default function Users() {
     { key: 'username', label: 'Username', className: 'w-[11%]' },
     { key: 'email', label: 'Email', className: 'w-[20%]' },
     { key: 'role', label: 'Role', className: 'w-[10%]', render: (_v, row) => roleBadge(row.role) },
-    { key: 'nfc_status', label: 'NFC Status', className: 'w-[11%]', render: (_v, row) => nfcStatusBadge(row.nfc_uid) },
+    { key: 'nfc_status', label: 'NFC Status', className: 'w-[11%]', render: (_v, row) => nfcStatusBadge(row) },
     { key: 'status', label: 'Account Status', className: 'w-[12%]', render: (_v, row) => statusBadge(row) },
     {
       key: 'actions',
@@ -429,22 +433,21 @@ export default function Users() {
                     <ActionsMenu user={row} onAction={handleRowAction} protectedAccount={isProtectedAccount(row)} />
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 pl-6">
-                    {roleBadge(row.role)}{statusBadge(row)}{nfcStatusBadge(row.nfc_uid)}
+                    {roleBadge(row.role)}{statusBadge(row)}{nfcStatusBadge(row)}
                   </div>
                   <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-slate-100 pt-3 pl-6 text-xs">
                     <dt className="text-slate-500">Email</dt><dd className="min-w-0 break-all text-right text-slate-700">{row.email || '—'}</dd>
                     <dt className="text-slate-500">User ID</dt><dd className="min-w-0 break-all text-right text-slate-700">{row.student_id || row.instructor_id || row.id}</dd>
                   </dl>
                   <button type="button" aria-expanded={expanded} aria-controls={`user-details-${getUserId(row)}`} onClick={toggleExpanded} className="ml-6 mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Less details' : 'More details'}</button>
-                  <div id={`user-details-${getUserId(row)}`} aria-hidden={!expanded} className={`ml-6 grid transition-[grid-template-rows,opacity] duration-200 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                    <div className="min-h-0 overflow-hidden">
-                      <dl className="mt-2 grid grid-cols-[minmax(4.5rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md bg-slate-50 p-2 text-xs"><dt className="text-slate-500">System ID</dt><dd className="min-w-0 break-all text-right">{row.id}</dd><dt className="text-slate-500">Last login</dt><dd className="min-w-0 break-words text-right">{row.last_login ? new Date(row.last_login).toLocaleString() : '—'}</dd></dl>
-                    </div>
-                  </div>
+                  {expanded && <div id={`user-details-${getUserId(row)}`} className="ml-6 mt-2 border-t border-slate-100 pt-3">
+                    <UserDetailsPanel user={row} />
+                  </div>}
                   <button type="button" onClick={() => handleRowAction('view', row)} className="ml-6 mt-2 min-h-9 rounded-md border border-slate-200 px-3 text-xs font-semibold text-[#002B5B] hover:bg-slate-50">View Profile</button>
                 </div>
               )
             }}
+            renderExpandedRow={(row) => <UserDetailsPanel user={row} />}
           />
         )}
         {!loading && users.length > 0 && (

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import api from '../../services/api.js'
 import ActivityFormWorkflow from './ActivityFormWorkflow.jsx'
 
@@ -42,13 +42,13 @@ describe('ActivityFormWorkflow', () => {
     expect(screen.queryByLabelText('Cabinet station')).toBeNull()
     expect(api.post).not.toHaveBeenCalled()
     fireEvent.submit(screen.getByRole('dialog', { name: 'Create New Activity' }))
-    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save as Draft' })).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
     await new Promise((resolve) => setTimeout(resolve, 1100))
-    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save as Draft' })).toBeTruthy()
     expect(api.post).not.toHaveBeenCalled()
 
-    const saveDraftButton = screen.getByRole('button', { name: 'Save Draft' })
+    const saveDraftButton = screen.getByRole('button', { name: 'Save as Draft' })
     fireEvent.click(saveDraftButton)
     fireEvent.click(saveDraftButton)
 
@@ -100,13 +100,25 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(api.post).not.toHaveBeenCalled()
-    expect(screen.getByText('Draft')).toBeTruthy()
+    const status = screen.getByRole('combobox', { name: /Activity status/ })
+    expect(status.value).toBe('Draft')
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+    fireEvent.change(status, { target: { value: 'Published' } })
+    expect(status.value).toBe('Published')
+    expect(api.post).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Save as Draft' })).toBeNull()
+    fireEvent.change(status, { target: { value: 'Draft' } })
+    expect(status.value).toBe('Draft')
+    expect(screen.getByRole('button', { name: 'Save as Draft' })).toBeTruthy()
+    expect(api.post).not.toHaveBeenCalled()
+    fireEvent.change(status, { target: { value: 'Published' } })
     const publish = screen.getByRole('button', { name: 'Publish Activity' })
     fireEvent.click(publish)
     fireEvent.click(publish)
 
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
     expect(api.post.mock.calls[0][1].get('status')).toBe('Published')
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
   })
 
   it('saves an edited Draft without publishing and then honors explicit Publish', async () => {
@@ -119,16 +131,49 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Save as Draft' }))
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
     expect(api.patch.mock.calls[0][1].get('status')).toBe('Draft')
+    fireEvent.change(screen.getByRole('combobox', { name: /Activity status/ }), { target: { value: 'Published' } })
+    expect(api.patch).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
     expect(api.patch.mock.calls[1][1].get('status')).toBe('Published')
-    expect(screen.queryByRole('button', { name: 'Publish Activity' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Published')
+  })
+
+  it('initializes an existing Published activity and updates it with one primary action', async () => {
+    const published = {
+      id: 8,
+      title: 'Existing published activity',
+      status: 'Published',
+      assigned_sections: [{ id: 3, section_name: 'Section A' }],
+      attachments: [{ id: 21, filename: 'existing.pdf' }],
+      max_score: 100,
+    }
+    api.get.mockImplementation((path) => Promise.resolve({ data: path === '/activities/8/' ? published : [{ id: 3, section_name: 'Section A' }] }))
+    api.patch.mockResolvedValue({ data: published })
+    render(<ActivityFormWorkflow isOpen mode="edit" activityId={8} onSaved={vi.fn()} />)
+
+    await screen.findByDisplayValue('Existing published activity')
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Published')
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
+    expect(document.body.textContent).toContain('existing.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(api.patch).toHaveBeenCalledWith('/activities/8/', expect.any(FormData))
+    expect(api.patch.mock.calls[0][1].get('status')).toBe('Published')
+    expect(api.post).not.toHaveBeenCalled()
   })
 
   it('preserves entered activity details and attachments when publishing fails', async () => {
@@ -144,14 +189,16 @@ describe('ActivityFormWorkflow', () => {
     const file = new File(['report'], 'preserved.pdf', { type: 'application/pdf' })
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save as Draft' }))
 
     expect(await screen.findByText('Storage unavailable.')).toBeTruthy()
     expect(document.body.textContent).toContain('Keep this activity')
     expect(document.body.textContent).toContain('Keep these instructions too.')
     expect(document.body.textContent).toContain('preserved.pdf')
-    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save as Draft' })).toBeTruthy()
     expect(api.post).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Back' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(false)
   })
 
   it('does not create an activity when navigating Back or cancelling the wizard', async () => {
@@ -177,6 +224,32 @@ describe('ActivityFormWorkflow', () => {
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('keeps Cancel, Back, and one dynamic primary action in the sticky footer at phone and desktop widths', async () => {
+    const originalWidth = window.innerWidth
+    api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
+
+    for (const width of [375, 1280]) {
+      cleanup()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      render(<ActivityFormWorkflow isOpen onSaved={vi.fn()} />)
+      fireEvent.change(await screen.findByLabelText(/Activity title/), { target: { value: 'Responsive activity' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Section A' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+      const footer = screen.getByRole('contentinfo')
+      expect(footer.className).toContain('sticky')
+      expect(footer.className).toContain('bg-white')
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy()
+      expect(within(footer).getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+      expect(api.post).not.toHaveBeenCalled()
+    }
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   })
 
   it('shows a per-file instructor attachment limit error before publish', async () => {

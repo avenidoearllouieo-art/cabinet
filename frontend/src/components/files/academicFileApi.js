@@ -16,7 +16,7 @@ export async function authorizeAcademicFile(kind, attachmentId) {
   const response = await api.post(
     `/file-previews/${kind}/${attachmentId}/authorize/`,
     {},
-    { withCredentials: true },
+    { withCredentials: true, timeout: 30_000 },
   )
   return {
     ...response.data,

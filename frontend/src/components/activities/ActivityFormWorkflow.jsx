@@ -338,23 +338,18 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       stepper={<FormStepper steps={currentSteps} currentStep={step} />}
       actions={(
         <div className="space-y-3">
-          {!viewing && step === currentSteps.length - 1 && (!editing || form.status !== 'Published') && (
-            <div className="flex justify-end">
-              <button type="button" onClick={() => handleSaveActivity('Published')} disabled={saving || loading || loadingSections || (!editing && creationCompleted)} className="min-h-10 rounded-lg bg-[#082B53] px-4 text-sm font-bold text-white hover:bg-[#123e6b] disabled:cursor-not-allowed disabled:opacity-50">Publish Activity</button>
-            </div>
-          )}
           <FormActions
             onCancel={onClose}
             onBack={step > 0 ? handlePreviousStep : undefined}
             onNext={handleNextStep}
             isLastStep={step === currentSteps.length - 1}
-            submitLabel={viewing ? 'Close' : editing ? 'Save Changes' : 'Save Draft'}
-            busyLabel={editing ? 'Saving…' : 'Saving draft…'}
+              submitLabel={viewing ? 'Close' : form.status === 'Published' ? 'Publish Activity' : 'Save as Draft'}
+              busyLabel={viewing ? 'Closing…' : form.status === 'Published' ? 'Publishing…' : 'Saving draft…'}
             busy={viewing ? false : saving}
             disabled={loading || loadingSections || (!editing && creationCompleted)}
             dirty={viewing ? false : dirty}
             finalButtonType="button"
-            onFinalAction={viewing ? onClose : editing ? () => handleSaveActivity() : () => handleSaveActivity('Draft')}
+              onFinalAction={viewing ? onClose : () => handleSaveActivity()}
           />
         </div>
       )}
@@ -401,7 +396,24 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
               <div className="sm:col-span-2"><ReviewItem label="Description" value={form.description || 'No description'} /></div>
               <div className="sm:col-span-2"><ReviewItem label="Instructions" value={form.instructions || 'No instructions'} /></div>
             </dl>
-            <div className="mt-5"><ReviewItem label="Status" value={form.status || 'Draft'} /></div>
+            <div className="mt-5 max-w-sm">
+              <FormField label="Activity status" required helper={form.status === 'Published' ? 'Students in the assigned sections can see this activity after you publish it.' : 'Draft activities are saved for instructors and are not visible to students.'} error={errors.status}>
+                {({ id, describedBy, invalid }) => (
+                  <select
+                    id={id}
+                    value={form.status}
+                    onChange={update('status')}
+                    disabled={saving || loading}
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid}
+                    className={controlClass(invalid)}
+                  >
+                    <option value="Draft">Draft</option>
+                    <option value="Published">Published</option>
+                  </select>
+                )}
+              </FormField>
+            </div>
           </FormSection>
         )}
       </div>

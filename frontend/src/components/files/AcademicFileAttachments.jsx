@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Download, Eye, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo, File as FileIcon } from 'lucide-react'
 import FilePreviewModal from './FilePreviewModal.jsx'
 import { authorizeAcademicFile, downloadAuthorizedFile } from './academicFileApi.js'
+import { uploadErrorMessages } from './uploadPolicy.js'
 
 function attachmentName(attachment) {
   const rawName = attachment?.filename || attachment?.file_name || attachment?.name || attachment?.file || 'Attachment'
@@ -57,8 +58,10 @@ export default function AcademicFileAttachments({ attachments = [], kind, emptyM
       const file = await authorizeAcademicFile(fileKind, id)
       downloadAuthorizedFile(file)
     } catch (error) {
-      const message = error.response?.data?.detail
-      setDownloadErrors((current) => ({ ...current, [id]: typeof message === 'string' ? message : 'The file could not be downloaded. Check your access or ask the owner to upload it again.' }))
+      setDownloadErrors((current) => ({
+        ...current,
+        [id]: uploadErrorMessages(error, 'The file could not be downloaded. Check your access or ask the owner to upload it again.')[0],
+      }))
     } finally {
       setDownloadingId(null)
     }

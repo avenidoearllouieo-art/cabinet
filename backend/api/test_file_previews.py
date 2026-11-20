@@ -276,6 +276,92 @@ class StudentMultipartUploadAPITests(TestCase):
         self.assertFalse(TemporaryUpload.objects.filter(user=self.student, activity=self.activity).exists())
         self.assertEqual(session.__class__.objects.get(pk=session.pk).status, MultipartUploadSession.StatusChoices.FAILED)
         s3.delete_object.assert_called_once_with(Bucket='taptrack-files', Key=session.object_key)
+
+    def create_existing_submission_with_video_draft(self):
+        media_directory = TemporaryDirectory()
+        self.addCleanup(media_directory.cleanup)
+        self.enterContext(override_settings(MEDIA_ROOT=media_directory.name))
+        submission = Submission.objects.create(
+            activity=self.activity,
+            student=self.student,
+            remarks='Original notes',
+            score=91,
+            feedback='Keep this instructor feedback.',
+            graded_by=self.instructor,
+            graded_at=timezone.now(),
+            file=SimpleUploadedFile('old.png', b'\x89PNG\r\n\x1a\nold-image', content_type='image/png'),
+        )
+        existing_attachment = SubmissionAttachment.objects.create(
+            submission=submission,
+            file=SimpleUploadedFile('old.png', b'\x89PNG\r\n\x1a\nold-image', content_type='image/png'),
+            original_filename='old.png',
+            file_size=17,
+            content_type='image/png',
+        )
+        submission.file = existing_attachment.file
+        submission.save(update_fields=['file'])
+        staged_video = TemporaryUpload.objects.create(
+            user=self.student,
+            activity=self.activity,
+            original_filename='defense.mp4',
+            file_size=600 * 1024 * 1024,
+            content_type='video/mp4',
+            file=SimpleUploadedFile('defense.mp4', b'\x00\x00\x00\x18ftypisom-verified', content_type='video/mp4'),
+        )
+        self.client.force_authenticate(user=self.student)
+        return submission, existing_attachment, staged_video
+
+    def test_existing_submission_update_links_verified_large_video_and_preserves_attachments_and_grade(self):
+        submission, existing_attachment, staged_video = self.create_existing_submission_with_video_draft()
+        existing_key = existing_attachment.file.name
+        staged_key = staged_video.file.name
+        original_updated_at = submission.updated_at
+
+        response = self.client.patch(f'/api/submissions/{submission.pk}/', {
+            'remarks': 'Updated video notes',
+            'temp_upload_ids': [staged_video.pk],
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['id'], submission.pk)
+        self.assertEqual(Submission.objects.filter(activity=self.activity, student=self.student).count(), 1)
+        submission.refresh_from_db()
+        self.assertEqual(submission.remarks, 'Updated video notes')
+        self.assertEqual(submission.score, 91)
+        self.assertEqual(submission.feedback, 'Keep this instructor feedback.')
+        self.assertGreater(submission.updated_at, original_updated_at)
+        self.assertEqual(submission.attachments.count(), 2)
+        self.assertTrue(submission.attachments.filter(file=existing_key).exists())
+        self.assertTrue(submission.attachments.filter(file=staged_key, original_filename='defense.mp4').exists())
+        self.assertTrue(submission.file.storage.exists(existing_key))
+        self.assertTrue(submission.file.storage.exists(staged_key))
+        self.assertFalse(TemporaryUpload.objects.filter(pk=staged_video.pk).exists())
+        self.assertEqual({item['name'] for item in response.json()['files']}, {'old.png', 'defense.mp4'})
+
+    def test_database_failure_during_update_keeps_existing_files_and_staged_video(self):
+        submission, existing_attachment, staged_video = self.create_existing_submission_with_video_draft()
+        original_remarks = submission.remarks
+        existing_key = existing_attachment.file.name
+        staged_key = staged_video.file.name
+
+        with patch('api.serializers.SubmissionAttachment.save', side_effect=RuntimeError('private storage key must not be logged')):
+            response = self.client.patch(f'/api/submissions/{submission.pk}/', {
+                'remarks': 'This update must roll back',
+                'temp_upload_ids': [staged_video.pk],
+            }, format='multipart')
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertEqual(response.json()['code'], 'internal_error')
+        self.assertTrue(response.json()['request_id'])
+        self.assertNotIn('private storage key', response.content.decode())
+        submission.refresh_from_db()
+        self.assertEqual(submission.remarks, original_remarks)
+        self.assertEqual(submission.attachments.count(), 1)
+        self.assertTrue(submission.file.storage.exists(existing_key))
+        self.assertTrue(staged_video.file.storage.exists(staged_key))
+        self.assertTrue(TemporaryUpload.objects.filter(pk=staged_video.pk).exists())
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 
@@ -576,6 +662,29 @@ class AcademicFilePreviewAPITests(TestCase):
         self.assertTrue(all(call.kwargs['ExpiresIn'] == 600 for call in calls))
         self.assertIn('inline;', calls[0].kwargs['Params']['ResponseContentDisposition'])
         self.assertIn('attachment;', calls[1].kwargs['Params']['ResponseContentDisposition'])
+
+    @patch('api.views.academic_file_presigned_urls', side_effect=RuntimeError('sensitive object key'))
+    def test_preview_signing_failure_returns_safe_json_with_request_id(self, sign_file):
+        response = self.authorize('activity', self.activity_attachment.pk, self.student)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertEqual(response.json()['code'], 'storage_unavailable')
+        self.assertTrue(response.json()['request_id'])
+        self.assertNotIn('sensitive object key', response.content.decode())
+        sign_file.assert_called_once()
+
+    def test_video_range_read_failure_returns_safe_storage_error(self):
+        authorization = self.authorize('activity', self.video_attachment.pk, self.student)
+        self.assertEqual(authorization.status_code, 200, authorization.json())
+
+        with patch('api.views.open_storage_object', side_effect=RuntimeError('private object key')):
+            response = self.client.get(authorization.json()['content_url'], HTTP_RANGE='bytes=0-4')
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertEqual(response.json()['code'], 'storage_unavailable')
+        self.assertNotIn('private object key', response.content.decode())
 
     def test_missing_cookie_and_direct_media_path_do_not_expose_files(self):
         content_url = reverse('academic_file_preview_content', args=['activity', self.activity_attachment.pk])

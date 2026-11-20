@@ -16,6 +16,8 @@ const directoryUser = (id, role, isActive = true) => ({
   email: `${role}.${id}@example.edu`,
   role,
   is_active: isActive,
+  created_at: '2026-01-02T12:00:00Z',
+  nfc_registered: false,
   nfc_uid: null,
 })
 
@@ -90,13 +92,61 @@ describe('Users directory', () => {
     ))
   })
 
+  it('renders and collapses shared details for student, instructor, and administrator rows', async () => {
+    const users = [
+      {
+        ...directoryUser(42, 'student'),
+        student_id: 'STU-42',
+        section_name: 'Section Blue',
+        nfc_registered: true,
+        nfc_uid: 'PRIVATE-STUDENT-UID',
+      },
+      {
+        ...directoryUser(43, 'instructor'),
+        instructor_id: 'INS-43',
+        assigned_sections: [{ section_id: 7, section_name: 'Section Green' }],
+      },
+      directoryUser(44, 'admin'),
+    ]
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    api.get.mockResolvedValue({ data: { count: users.length, next: null, results: users } })
+    localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
+    render(<MemoryRouter><Users /></MemoryRouter>)
+
+    await screen.findByText('Student Record 42')
+    const expectedDetails = [
+      ['Student ID / User ID', 'STU-42', 'Section Blue', 'Registered'],
+      ['Instructor ID / User ID', 'INS-43', 'Section Green', 'Not registered'],
+      ['User ID', '44', 'Not assigned', 'Not registered'],
+    ]
+
+    for (const [index, [identifierLabel, identifier, section, nfcStatus]] of expectedDetails.entries()) {
+      const expandButton = screen.getByRole('button', { name: `Expand row ${index + 1}` })
+      fireEvent.click(expandButton)
+      const expandedRow = expandButton.closest('tr').nextElementSibling
+
+      expect(within(expandedRow).getByText('Full name')).toBeTruthy()
+      expect(within(expandedRow).getByText(identifierLabel)).toBeTruthy()
+      expect(within(expandedRow).getByText(identifier)).toBeTruthy()
+      expect(within(expandedRow).getByText(section)).toBeTruthy()
+      expect(within(expandedRow).getByText(nfcStatus)).toBeTruthy()
+      expect(within(expandedRow).getByText('Date joined')).toBeTruthy()
+      expect(within(expandedRow).queryByText('PRIVATE-STUDENT-UID')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: `Collapse row ${index + 1}` }))
+      expect(screen.queryByText(identifierLabel)).toBeNull()
+    }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  })
+
   it('expands only the selected mobile user card at common phone widths', async () => {
     const user = directoryUser(42, 'student')
     const originalWidth = window.innerWidth
-    api.get.mockResolvedValue({ data: { count: 1, next: null, results: [{ ...user, last_login: '2026-11-15T08:30:00Z' }] } })
+    api.get.mockResolvedValue({ data: { count: 1, next: null, results: [{ ...user, student_id: 'STU-42', section_name: 'Section Blue', nfc_registered: true, nfc_uid: 'PRIVATE-STUDENT-UID' }] } })
     localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
 
-    for (const width of [360, 390, 430]) {
+    for (const width of [375, 360, 390, 430]) {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
       const view = render(<MemoryRouter><Users /></MemoryRouter>)
       const article = (await screen.findByText('Student Record 42')).closest('article')
@@ -104,8 +154,16 @@ describe('Users directory', () => {
 
       fireEvent.click(expand)
       expect(expand.getAttribute('aria-expanded')).toBe('true')
-      expect(within(article).getByText('System ID')).toBeTruthy()
-      expect(within(article).getByText('Last login')).toBeTruthy()
+      expect(within(article).getByText('Full name')).toBeTruthy()
+      expect(within(article).getAllByText('STU-42')).toHaveLength(2)
+      expect(within(article).getByText('Section Blue')).toBeTruthy()
+      expect(within(article).getByText('Email address')).toBeTruthy()
+      expect(within(article).getByText('Account role')).toBeTruthy()
+      expect(within(article).getByText('Account status')).toBeTruthy()
+      expect(within(article).getByText('NFC registration')).toBeTruthy()
+      expect(within(article).getAllByText('Registered')).toHaveLength(2)
+      expect(within(article).queryByText('PRIVATE-STUDENT-UID')).toBeNull()
+      expect(within(article).getByText('Date joined')).toBeTruthy()
       expect(within(article).getByRole('button', { name: 'View Profile' })).toBeTruthy()
       expect(within(article).getByRole('button', { name: 'Less details' })).toBeTruthy()
 

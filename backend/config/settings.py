@@ -143,6 +143,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'api.middleware.ApiJsonExceptionMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -296,6 +297,7 @@ CORS_ALLOWED_ORIGINS = env_list(
     ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176', 'http://localhost:5177', 'http://127.0.0.1:5177'],
 )
 CORS_ALLOW_CREDENTIALS = True
+CORS_EXPOSE_HEADERS = ['X-Request-ID']
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -307,6 +309,7 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
     'x-api-key',
+    'x-request-id',
 ]
 CORS_ALLOW_METHODS = [
     'DELETE',

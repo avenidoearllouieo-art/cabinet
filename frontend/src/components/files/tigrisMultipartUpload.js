@@ -2,39 +2,56 @@ import api from '../../services/api.js'
 
 const PART_CONCURRENCY = 4
 const PART_RETRIES = 3
+const CONTROL_REQUEST_TIMEOUT = 30_000
+const PART_REQUEST_TIMEOUT = 5 * 60_000
+const COMPLETE_REQUEST_TIMEOUT = 60_000
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw new DOMException('Upload cancelled.', 'AbortError')
 }
 
-function putPart(url, blob, { signal, onProgress }) {
+function putPart(url, blob, { signal, onProgress, requestId }) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     const cleanup = () => signal?.removeEventListener('abort', abortRequest)
     const abortRequest = () => request.abort()
+    const rejectUpload = (message) => {
+      const error = new Error(message)
+      error.name = 'TigrisUploadError'
+      error.status = request.status || null
+      error.requestId = requestId || 'unavailable'
+      reject(error)
+    }
 
     request.open('PUT', url)
     request.withCredentials = false
+    request.timeout = PART_REQUEST_TIMEOUT
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded)
     }
     request.onerror = () => {
       cleanup()
-      reject(new Error('Network error while uploading a video part.'))
+      rejectUpload('Network error while uploading a video part.')
     }
     request.onabort = () => {
       cleanup()
-      reject(new DOMException('Upload cancelled.', 'AbortError'))
+      const error = new DOMException('Upload cancelled.', 'AbortError')
+      error.requestId = requestId || 'unavailable'
+      reject(error)
+    }
+    request.ontimeout = () => {
+      cleanup()
+      rejectUpload('The video part upload timed out.')
     }
     request.onload = () => {
       cleanup()
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(`Tigris rejected video part (${request.status}).`))
+        rejectUpload(`Tigris rejected video part (${request.status}).`)
         return
       }
       const etag = request.getResponseHeader('ETag')
       if (!etag) {
-        reject(new Error('Tigris did not return the ETag required to complete the upload. Check bucket CORS ExposeHeaders.'))
+        rejectUpload('Tigris did not return the ETag required to complete the upload. Check bucket CORS ExposeHeaders.')
         return
       }
       resolve(etag)
@@ -72,7 +89,7 @@ function retryDelay(attempt, signal) {
 
 async function abortSession(sessionId) {
   try {
-    await api.post(`/student/multipart-uploads/${sessionId}/abort/`, {})
+    await api.post(`/student/multipart-uploads/${sessionId}/abort/`, {}, { timeout: 15_000 })
   } catch {
     // Expired or already-completed sessions are handled by server-side cleanup.
   }
@@ -90,7 +107,7 @@ export async function uploadTigrisVideo(file, activityId, { signal, onProgress =
       activity: activityId,
       filename: file.name,
       file_size: file.size,
-    }, { signal: uploadSignal })
+    }, { signal: uploadSignal, timeout: CONTROL_REQUEST_TIMEOUT })
   } catch (error) {
     signal?.removeEventListener('abort', abortFromCaller)
     throw error
@@ -132,10 +149,11 @@ export async function uploadTigrisVideo(file, activityId, { signal, onProgress =
           const signed = await api.post(
             `/student/multipart-uploads/${sessionId}/parts/${partNumber}/`,
             {},
-            { signal: uploadSignal },
+            { signal: uploadSignal, timeout: CONTROL_REQUEST_TIMEOUT },
           )
           const etag = await putPart(signed.data.url, chunk, {
             signal: uploadSignal,
+            requestId: signed.headers?.['x-request-id'] || signed.data?.request_id,
             onProgress: (loaded) => {
               progressByPart.set(partNumber, Math.min(loaded, chunk.size))
               reportProgress()
@@ -162,10 +180,16 @@ export async function uploadTigrisVideo(file, activityId, { signal, onProgress =
     const parts = [...partsByNumber.values()].sort((left, right) => left.part_number - right.part_number)
     let completed
     try {
-      completed = await api.post(`/student/multipart-uploads/${sessionId}/complete/`, { parts }, { signal: uploadSignal })
+      completed = await api.post(`/student/multipart-uploads/${sessionId}/complete/`, { parts }, {
+        signal: uploadSignal,
+        timeout: COMPLETE_REQUEST_TIMEOUT,
+      })
     } catch (error) {
       if (uploadSignal.aborted || (error.response && error.response.status < 500)) throw error
-      completed = await api.post(`/student/multipart-uploads/${sessionId}/complete/`, { parts }, { signal: uploadSignal })
+      completed = await api.post(`/student/multipart-uploads/${sessionId}/complete/`, { parts }, {
+        signal: uploadSignal,
+        timeout: COMPLETE_REQUEST_TIMEOUT,
+      })
     }
     onProgress(100)
     return { ...completed.data, source: 'temp', tempUploadId: completed.data.temp_upload_id }

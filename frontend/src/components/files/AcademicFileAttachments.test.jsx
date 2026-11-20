@@ -38,7 +38,7 @@ describe('AcademicFileAttachments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }))
 
     const dialog = await screen.findByRole('dialog', { name: 'brief.pdf' })
-    expect(api.post).toHaveBeenCalledWith('/file-previews/activity/7/authorize/', {}, { withCredentials: true })
+    expect(api.post).toHaveBeenCalledWith('/file-previews/activity/7/authorize/', {}, { withCredentials: true, timeout: 30_000 })
     expect(dialog.querySelector('iframe').getAttribute('src')).toContain('/api/file-previews/activity/7/content/')
     expect(screen.getByRole('button', { name: 'Close file preview' })).toBeTruthy()
 

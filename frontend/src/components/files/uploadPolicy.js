@@ -66,15 +66,41 @@ export function validateUploadFiles(newFiles, { existingFiles = [], studentSubmi
 }
 
 export function uploadErrorMessages(error, fallback) {
+  const status = Number(error?.response?.status || error?.status)
+  if (status === 401) return ['Your session has expired. Please sign in again.']
+  if ([502, 503, 504].includes(status)) return ['Unable to connect to file storage. Please retry.']
+  if (status >= 500) return [fallback]
+
   const data = error?.response?.data
   if (!data) return [fallback]
+  const contentType = String(error?.response?.headers?.['content-type'] || '').toLowerCase()
+  if (contentType.includes('text/html')) return [fallback]
+  if (typeof data === 'string') {
+    return /<!doctype\s+html|<html[\s>]/i.test(data) ? [fallback] : [data.slice(0, 600)]
+  }
   const preferred = data.files || data.file || data.attachments || data.detail || data.non_field_errors || data
   const collect = (value) => {
-    if (typeof value === 'string') return [value]
+    if (typeof value === 'string') return /<!doctype\s+html|<html[\s>]/i.test(value) ? [] : [value.slice(0, 600)]
     if (Array.isArray(value)) return value.flatMap(collect)
-    if (value && typeof value === 'object') return Object.values(value).flatMap(collect)
+    if (value && typeof value === 'object') {
+      return Object.entries(value)
+        .filter(([key]) => !/^(?:url|content_url|download_url|object_key|signature|request_id|access_key|secret_key)$/i.test(key))
+        .flatMap(([, item]) => collect(item))
+    }
     return []
   }
   const messages = collect(preferred).filter(Boolean)
   return messages.length ? messages : [fallback]
+}
+
+export function logUploadFailure(error, operation) {
+  console.error('[Student file operation failed]', {
+    operation,
+    status: error?.response?.status ?? error?.status ?? null,
+    exceptionType: error?.name || 'Error',
+    requestId: error?.config?._taptrackRequestId
+      || error?.response?.headers?.['x-request-id']
+      || error?.requestId
+      || 'unavailable',
+  })
 }

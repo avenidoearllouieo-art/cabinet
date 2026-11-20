@@ -22,11 +22,14 @@ describe('ActivitySubmitModal', () => {
       if (path === '/student/submissions/upload') {
         return Promise.resolve({ data: { uploads: [{ id: 22, name: 'report.pdf', size: 6 }] } })
       }
-      if (path === '/submissions/') return Promise.resolve({ data: { id: 15 } })
+      if (path === '/submissions/') return Promise.resolve({ data: {
+        id: 15,
+        files: [{ id: 31, name: 'report.pdf', size: 6, content_type: 'application/pdf' }],
+        updated_at: '2026-11-20T10:00:00Z',
+      } })
       throw new Error(`Unexpected POST ${path}`)
     })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    const user = userEvent.setup()
     render(<ActivitySubmitModal activity={{ id: 5, title: 'Systems Lab' }} isOpen onClose={vi.fn()} onSuccess={vi.fn()} />)
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Choose Files' }).disabled).toBe(false))
@@ -37,12 +40,13 @@ describe('ActivitySubmitModal', () => {
     expect(await screen.findByText('report.pdf')).toBeTruthy()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit Activity' }).disabled).toBe(false))
     const submitButton = screen.getByRole('button', { name: 'Submit Activity' })
-    await user.click(submitButton)
-    await user.click(screen.getByRole('button', { name: 'Submit Activity' }))
+    fireEvent.click(submitButton)
+    fireEvent.click(submitButton)
 
     await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(api.post.mock.calls.filter(([path]) => path === '/submissions/')).toHaveLength(1))
     expect(api.post.mock.calls.find(([path]) => path === '/submissions/')[1].get('temp_upload_ids')).toBe('22')
+    expect(await screen.findByRole('button', { name: 'Update Submission' })).toBeTruthy()
   })
 
   it('does not allow submission to a closed activity', async () => {
@@ -68,7 +72,11 @@ describe('ActivitySubmitModal', () => {
 
   it('sends videos over 500 MB directly to Tigris and submits only the verified upload ID', async () => {
     api.get.mockResolvedValue({ data: { results: [] } })
-    api.post.mockResolvedValue({ data: { id: 15 } })
+    api.post.mockResolvedValue({ data: {
+      id: 15,
+      files: [{ id: 32, name: 'defense.mp4', size: 600 * 1024 * 1024, content_type: 'video/mp4' }],
+      updated_at: '2026-11-20T10:00:00Z',
+    } })
     uploadTigrisVideo.mockResolvedValue({
       id: 22,
       temp_upload_id: 22,
@@ -90,9 +98,92 @@ describe('ActivitySubmitModal', () => {
     expect(api.post).not.toHaveBeenCalledWith('/student/submissions/upload', expect.anything(), expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Submit Activity' }))
     await waitFor(() => expect(confirmSpy).toHaveBeenCalledOnce())
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/submissions/', expect.any(FormData)))
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/submissions/', expect.any(FormData), { timeout: 60_000 }))
     const submission = api.post.mock.calls.find(([path]) => path === '/submissions/')[1]
     expect(submission.get('temp_upload_ids')).toBe('22')
+  })
+
+  it('stages a small video before explicit submission', async () => {
+    api.get.mockResolvedValue({ data: { results: [] } })
+    api.post.mockImplementation((path) => {
+      if (path === '/student/submissions/upload') {
+        return Promise.resolve({ data: { uploads: [{ id: 33, name: 'short-demo.mp4', size: 12, content_type: 'video/mp4' }] } })
+      }
+      if (path === '/submissions/') {
+        return Promise.resolve({ data: { id: 55, files: [{ id: 44, name: 'short-demo.mp4', size: 12, content_type: 'video/mp4' }] } })
+      }
+      throw new Error(`Unexpected POST ${path}`)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<ActivitySubmitModal activity={{ id: 18, title: 'Video assignment' }} isOpen onClose={vi.fn()} />)
+
+    await screen.findByRole('button', { name: 'Choose Files' })
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: [new File(['video bytes'], 'short-demo.mp4', { type: 'video/mp4' })] },
+    })
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/student/submissions/upload', expect.any(FormData), expect.any(Object)))
+    expect(uploadTigrisVideo).not.toHaveBeenCalled()
+    expect(api.post.mock.calls.filter(([path]) => path === '/submissions/')).toHaveLength(0)
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit Activity' }))
+
+    await waitFor(() => expect(api.post.mock.calls.filter(([path]) => path === '/submissions/')).toHaveLength(1))
+    expect(api.post.mock.calls.find(([path]) => path === '/submissions/')[1].get('temp_upload_ids')).toBe('33')
+  })
+
+  it('hides HTML 500 pages and restores Update after upload and save failures', async () => {
+    api.get.mockResolvedValue({ data: { results: [{
+      id: 44,
+      submitted_at: '2026-11-18T10:00:00Z',
+      updated_at: '2026-11-18T10:00:00Z',
+      files: [{ id: 12, name: 'existing.png', size: 6, content_type: 'image/png' }],
+    }] } })
+    const htmlFailure = {
+      name: 'AxiosError',
+      response: {
+        status: 500,
+        headers: { 'content-type': 'text/html' },
+        data: '<!doctype html><title>Server Error (500)</title>',
+      },
+    }
+    api.post.mockRejectedValue(htmlFailure)
+    api.patch.mockRejectedValue(htmlFailure)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<ActivitySubmitModal activity={{ id: 19, title: 'Image assignment' }} isOpen onClose={vi.fn()} />)
+
+    const updateButton = await screen.findByRole('button', { name: 'Update Submission' })
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: [new File(['new image'], 'new.png', { type: 'image/png' })] },
+    })
+    expect(await screen.findByText(/Upload failed\. Please try again\./)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('<!doctype html>')
+    expect(screen.getByText('existing.png')).toBeTruthy()
+    expect(updateButton.disabled).toBe(false)
+
+    fireEvent.click(updateButton)
+    expect(await screen.findByText(/Unable to update submission\. Please try again\./)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('<!doctype html>')
+    expect(screen.getByText('existing.png')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Update Submission' }).disabled).toBe(false)
+    expect(api.patch).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks new submission creation when loading the existing submission fails', async () => {
+    api.get.mockRejectedValue({
+      name: 'AxiosError',
+      response: {
+        status: 500,
+        headers: { 'content-type': 'text/html' },
+        data: '<!doctype html><title>Server Error (500)</title>',
+      },
+    })
+    render(<ActivitySubmitModal activity={{ id: 20, title: 'Video assignment' }} isOpen onClose={vi.fn()} />)
+
+    expect(await screen.findByText(/Saved submission details could not be loaded/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('<!doctype html>')
+    expect(screen.getByRole('button', { name: 'Submit Activity' }).disabled).toBe(true)
+    expect(api.post).not.toHaveBeenCalled()
+    expect(api.patch).not.toHaveBeenCalled()
   })
 
   it('rejects a sixth file before starting an upload', async () => {

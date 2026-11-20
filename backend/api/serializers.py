@@ -1,5 +1,6 @@
 import mimetypes
 import os
+import logging
 
 from django.utils import timezone
 from django.db import transaction
@@ -26,6 +27,26 @@ from .models import (
     PasswordResetRequest,
 )
 from .file_uploads import uploaded_file_name, validate_student_submission_files, validate_uploaded_files
+
+
+logger = logging.getLogger(__name__)
+
+
+def schedule_submission_file_delete(storage, name):
+    def delete_if_unreferenced():
+        referenced = (
+            SubmissionAttachment.objects.filter(file=name).exists()
+            or Submission.objects.filter(file=name).exists()
+            or TemporaryUpload.objects.filter(file=name).exists()
+        )
+        if referenced:
+            return
+        try:
+            storage.delete(name)
+        except Exception as error:
+            logger.warning('Submission object cleanup failed exception_type=%s', type(error).__name__)
+
+    transaction.on_commit(delete_if_unreferenced)
 
 
 class AccessLogPhotoReadSerializer(serializers.Serializer):
@@ -1184,7 +1205,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             removed_file_names = {attachment.file.name for attachment in removed_attachments if attachment.file}
             for attachment in removed_attachments:
                 if attachment.file:
-                    attachment.file.delete(save=False)
+                    schedule_submission_file_delete(attachment.file.storage, attachment.file.name)
                 attachment.delete()
             if submission.file and submission.file.name in removed_file_names:
                 replacement = submission.attachments.first()
@@ -1194,7 +1215,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             replacement = submission.attachments.first()
             submission.file = replacement.file if replacement else ''
             submission.save(update_fields=['file'])
-            legacy_file_storage.delete(legacy_file_name)
+            schedule_submission_file_delete(legacy_file_storage, legacy_file_name)
 
         return submission
 

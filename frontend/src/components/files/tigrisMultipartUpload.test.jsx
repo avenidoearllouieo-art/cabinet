@@ -50,15 +50,21 @@ describe('Tigris multipart video uploader', () => {
       const partNumber = Number(this.url.match(/part-(\d+)/)[1])
       const attempt = (partAttempts.get(partNumber) || 0) + 1
       partAttempts.set(partNumber, attempt)
-      if (partNumber === 2 && attempt === 1) this.status = 503
+      if (partNumber === 2 && attempt === 1) this.status = 403
       queueMicrotask(() => this.onload?.())
     }
+    const presignAttempts = new Map()
     api.post.mockImplementation((path) => {
       if (path === '/student/multipart-uploads/') {
         return Promise.resolve({ data: { upload_id: 'session-1', part_size: 4, total_parts: 2 } })
       }
       if (path.endsWith('/complete/')) return Promise.resolve({ data: { id: 8, temp_upload_id: 8 } })
-      if (path.includes('/parts/')) return Promise.resolve({ data: { url: `https://private-bucket.t3.storage.dev/part-${path.match(/parts\/(\d+)/)[1]}` } })
+      if (path.includes('/parts/')) {
+        const partNumber = Number(path.match(/parts\/(\d+)/)[1])
+        const attempt = (presignAttempts.get(partNumber) || 0) + 1
+        presignAttempts.set(partNumber, attempt)
+        return Promise.resolve({ data: { url: `https://private-bucket.t3.storage.dev/part-${partNumber}-attempt-${attempt}` } })
+      }
       throw new Error(`Unexpected POST ${path}`)
     })
 
@@ -69,6 +75,10 @@ describe('Tigris multipart video uploader', () => {
     expect(result.temp_upload_id).toBe(8)
     expect(partAttempts.get(1)).toBe(1)
     expect(partAttempts.get(2)).toBe(2)
+    expect(presignAttempts.get(2)).toBe(2)
+    const retryUrls = FakeXMLHttpRequest.requests.filter((request) => request.url.includes('part-2-'))
+    expect(retryUrls[0].url).not.toBe(retryUrls[1].url)
+    expect(retryUrls[0].timeout).toBe(5 * 60 * 1000)
     const completion = api.post.mock.calls.find(([path]) => path.endsWith('/complete/'))
     expect(completion[1].parts.map((part) => part.part_number)).toEqual([1, 2])
     expect(progress).toHaveBeenLastCalledWith(100)
@@ -95,6 +105,6 @@ describe('Tigris multipart video uploader', () => {
     controller.abort()
 
     await expect(upload).rejects.toMatchObject({ name: 'AbortError' })
-    expect(api.post).toHaveBeenCalledWith('/student/multipart-uploads/session-cancel/abort/', {})
+    expect(api.post).toHaveBeenCalledWith('/student/multipart-uploads/session-cancel/abort/', {}, { timeout: 15_000 })
   })
 })

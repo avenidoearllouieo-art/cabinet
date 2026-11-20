@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Upload, X, FileText, Image, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react'
 import Modal from '../Modal.jsx'
 import api from '../../services/api.js'
-import { DIRECT_MULTIPART_THRESHOLD, SUPPORTED_UPLOAD_ACCEPT, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
+import { DIRECT_MULTIPART_THRESHOLD, SUPPORTED_UPLOAD_ACCEPT, logUploadFailure, uploadErrorMessages, validateUploadFiles } from '../files/uploadPolicy.js'
 import { uploadTigrisVideo } from '../files/tigrisMultipartUpload.js'
 
 function formatBytes(bytes) {
@@ -31,11 +31,13 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   const [multipartActive, setMultipartActive] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [submission, setSubmission] = useState(null)
+  const [submissionLoadFailed, setSubmissionLoadFailed] = useState(false)
   const [remarks, setRemarks] = useState('')
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState([])
   const [removePrimaryFile, setRemovePrimaryFile] = useState(false)
   const fileInputRef = useRef(null)
   const submissionGuardRef = useRef(false)
+  const uploadGuardRef = useRef(false)
   const uploadControllerRef = useRef(null)
 
   useEffect(() => () => uploadControllerRef.current?.abort(), [])
@@ -46,10 +48,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     setUploadProgress(0)
     setSuccessMessage('')
     setSubmission(null)
+    setSubmissionLoadFailed(false)
     setRemarks('')
     setRemovedAttachmentIds([])
     setRemovePrimaryFile(false)
     submissionGuardRef.current = false
+    uploadGuardRef.current = false
     uploadControllerRef.current = null
   }
 
@@ -62,8 +66,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       if (!activity?.id) return
       setLoading(true)
       setErrors([])
+      setSubmissionLoadFailed(false)
       try {
-        const res = await api.get('/submissions/', { params: { activity: activity.id, ordering: '-submitted_at', page_size: 5 } })
+        const res = await api.get('/submissions/', {
+          params: { activity: activity.id, ordering: '-submitted_at', page_size: 5 },
+          timeout: 30_000,
+        })
         const results = Array.isArray(res.data) ? res.data : res.data.results || []
         const latest = results[0] || null
         setSubmission(latest)
@@ -72,7 +80,9 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
         setUploadedFiles(existingFiles)
         setRemovedAttachmentIds([])
       } catch (err) {
-        console.error('Failed to load existing submission', err)
+        logUploadFailure(err, 'Load existing submission')
+        setErrors(uploadErrorMessages(err, 'Saved submission details could not be loaded. Please try again.'))
+        setSubmissionLoadFailed(true)
       } finally {
         setLoading(false)
       }
@@ -85,6 +95,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   const canEditSubmission = !isActivityClosed && (!submission || !isDeadlinePassed || Boolean(activity?.allow_resubmission))
 
   const handleFileSelect = async (event) => {
+    if (loading || uploadGuardRef.current) return
     const selectedFiles = Array.from(event.target.files || [])
     if (!selectedFiles.length) return
     const uploadErrors = validateUploadFiles(selectedFiles, {
@@ -97,7 +108,9 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       return
     }
     setErrors([])
+    setSuccessMessage('')
     setUploadProgress(0)
+    uploadGuardRef.current = true
     setLoading(true)
     const controller = new AbortController()
     uploadControllerRef.current = controller
@@ -130,6 +143,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
         const regularBytes = regularFiles.reduce((sum, file) => sum + file.size, 0)
         const res = await api.post('/student/submissions/upload', formData, {
           signal: controller.signal,
+          timeout: 180_000,
           onUploadProgress: (event) => {
             if (event.total) setUploadProgress(Math.round(((completedBytes + regularBytes * event.loaded / event.total) / totalBytes) * 100))
           },
@@ -142,11 +156,12 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
     } catch (err) {
       if (err.name === 'AbortError' || controller.signal.aborted) setErrors(['Upload cancelled.'])
       else {
-        console.error(err)
-        setErrors(uploadErrorMessages(err, 'Failed to upload files.'))
+        logUploadFailure(err, 'Upload student files')
+        setErrors(uploadErrorMessages(err, 'Upload failed. Please try again.'))
       }
     } finally {
       if (uploadControllerRef.current === controller) uploadControllerRef.current = null
+      uploadGuardRef.current = false
       setLoading(false)
       setUploadProgress(0)
       setUploadingName('')
@@ -159,6 +174,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
 
   const handleDrop = (event) => {
     event.preventDefault()
+    if (loading || uploadGuardRef.current) return
     const droppedFiles = Array.from(event.dataTransfer?.files || [])
     if (droppedFiles.length) handleFileSelect({ target: { files: droppedFiles } })
   }
@@ -180,7 +196,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
   }
 
   const handleSubmit = async () => {
-    if (loading || submissionGuardRef.current) return
+    if (loading || submissionLoadFailed || submissionGuardRef.current) return
     const uploadErrors = validateUploadFiles([], {
       existingFiles: uploadedFiles,
       studentSubmission: true,
@@ -215,28 +231,39 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
       removedAttachmentIds.forEach((id) => formData.append('removed_attachment_ids', id))
       if (removePrimaryFile) formData.append('remove_primary_file', 'true')
 
+      let response
       if (submission?.id) {
-        await api.patch(`/submissions/${submission.id}/`, formData)
+        response = await api.patch(`/submissions/${submission.id}/`, formData, { timeout: 60_000 })
         setSuccessMessage('Submission updated successfully.')
       } else {
-        await api.post('/submissions/', formData)
+        response = await api.post('/submissions/', formData, { timeout: 60_000 })
         setSuccessMessage('Submission created successfully.')
       }
 
-      setUploadedFiles([])
-      setRemarks('')
+      setSubmission(response.data)
+      setUploadedFiles((response.data?.files || []).map((file) => ({
+        ...file,
+        source: 'existing',
+        attachmentId: file.id,
+      })))
+      setRemarks(response.data?.remarks || '')
       setRemovedAttachmentIds([])
       setRemovePrimaryFile(false)
       onSuccess && onSuccess()
       window.dispatchEvent(new CustomEvent('studentSubmissionSaved'))
     } catch (err) {
-      console.error(err)
-      setErrors(uploadErrorMessages(err, 'Failed to save submission.'))
+      logUploadFailure(err, submission?.id ? 'Update student submission' : 'Create student submission')
+      setErrors(uploadErrorMessages(err, submission?.id ? 'Unable to update submission. Please try again.' : 'Unable to submit files. Please try again.'))
     } finally {
       submissionGuardRef.current = false
       setLoading(false)
     }
   }
+
+  const submissionValidationErrors = validateUploadFiles([], {
+    existingFiles: uploadedFiles,
+    studentSubmission: true,
+  })
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={submission?.id ? 'Update Submission' : 'Submit Activity'} description="Upload files and add optional context for your instructor." dirty={Boolean(remarks || uploadedFiles.some((file) => file.source === 'temp') || removedAttachmentIds.length || removePrimaryFile)} busy={loading} containerClassName="border-0 bg-white">
@@ -260,7 +287,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
             <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
-                  <Clock3 size={14} /> Submitted {formatDate(submission.submitted_at)}
+                  <Clock3 size={14} /> Last updated {formatDate(submission.updated_at || submission.submitted_at)}
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
                   {submission.score != null ? <><CheckCircle2 size={14} /> Graded {submission.score}</> : <><AlertCircle size={14} /> Pending review</>}
@@ -282,7 +309,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
             />
 
             <div onDrop={handleDrop} onDragOver={(event) => event.preventDefault()} className="mt-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-[#F5B700]">
-              <input ref={fileInputRef} type="file" multiple accept={SUPPORTED_UPLOAD_ACCEPT} onChange={handleFileSelect} className="hidden" />
+              <input ref={fileInputRef} type="file" multiple accept={SUPPORTED_UPLOAD_ACCEPT} onChange={handleFileSelect} disabled={loading} className="hidden" />
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={loading} className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
                 <Upload size={18} /> Choose Files
               </button>
@@ -312,7 +339,7 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
                         <p className="text-xs text-slate-500">{formatBytes(file.size || file.file_size)}</p>
                       </div>
                     </div>
-                    <button type="button" onClick={() => handleRemoveFile(index)} className="flex h-11 w-11 items-center justify-center rounded-xl text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600" aria-label={`Remove ${file.name || file.filename || 'file'}`}>
+                    <button type="button" onClick={() => handleRemoveFile(index)} disabled={loading} className="flex h-11 w-11 items-center justify-center rounded-xl text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Remove ${file.name || file.filename || 'file'}`}>
                       <X size={18} />
                     </button>
                   </div>
@@ -335,8 +362,8 @@ export default function ActivitySubmitModal({ activity, isOpen, onClose, onSucce
             <button type="button" onClick={onClose} disabled={loading} className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:bg-slate-100">
               Cancel
             </button>
-            <button type="button" onClick={handleSubmit} disabled={loading || !canEditSubmission || uploadedFiles.length === 0} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
-              {loading ? (submission?.id ? 'Updating...' : 'Submitting...') : canEditSubmission ? (submission?.id ? 'Update Submission' : 'Submit Activity') : 'Submission Closed'}
+            <button type="button" onClick={handleSubmit} disabled={loading || submissionLoadFailed || !canEditSubmission || uploadedFiles.length === 0 || submissionValidationErrors.length > 0} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-3 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-300">
+              {loading ? (uploadingName ? `Uploading... ${uploadProgress}%` : submission?.id ? 'Updating Submission...' : 'Submitting...') : canEditSubmission ? (submission?.id ? 'Update Submission' : 'Submit Activity') : 'Submission Closed'}
             </button>
           </div>
         </div>

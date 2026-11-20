@@ -1721,10 +1721,11 @@ class StudentActivityAccessTests(TestCase):
         }, format='multipart')
         self.assertEqual(staged.status_code, 201, staged.json())
 
-        response = self.client.patch(f'/api/submissions/{submission.pk}/', {
-            'remove_primary_file': True,
-            'temp_upload_ids': [staged.json()['uploads'][0]['id']],
-        }, format='multipart')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(f'/api/submissions/{submission.pk}/', {
+                'remove_primary_file': True,
+                'temp_upload_ids': [staged.json()['uploads'][0]['id']],
+            }, format='multipart')
 
         self.assertEqual(response.status_code, 200, response.json())
         submission.refresh_from_db()
