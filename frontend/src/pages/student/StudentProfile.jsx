@@ -5,6 +5,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import Modal from '../../components/Modal.jsx'
 import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
+import UserAvatar from '../../components/UserAvatar.jsx'
 import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
 
@@ -306,9 +307,7 @@ export default function StudentProfile() {
           </FormSection>
           <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-                {profileImageUrl ? <img src={profileImageUrl} alt={`${fullName} profile preview`} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-2xl font-bold text-[#0B2A4A]">{initials || 'S'}</div>}
-              </div>
+              <UserAvatar imageUrl={profileImageUrl} initials={initials || 'S'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
               <div className="flex flex-wrap gap-2">
                 <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">
                   <Camera size={16} />Choose Photo
@@ -328,7 +327,7 @@ export default function StudentProfile() {
       <Modal isOpen={isPreviewOpen} onClose={() => setIsPreviewOpen(false)} title="Profile Picture Preview">
         <div className="flex flex-col items-center gap-4">
           <div className="h-[280px] w-full overflow-hidden rounded-xl bg-slate-100">
-            {profileImageUrl ? <img src={profileImageUrl} alt="Profile preview" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>}
+            {previewSrc ? <UserAvatar imageUrl={previewSrc} initials={initials || 'S'} alt="Profile preview" size="md" shape="square" className="h-full w-full rounded-md bg-slate-100" /> : <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>}
           </div>
           <button type="button" onClick={() => setIsPreviewOpen(false)} className="min-h-11 rounded-lg bg-[#0B2A4A] px-5 py-2 text-sm font-semibold text-white hover:bg-[#153c63]">Close Preview</button>
         </div>
@@ -348,12 +347,9 @@ function ProfileFact({ label, value }) {
 
 function InstructorInfoCard({ instructor, sectionName }) {
   const fullName = instructor.full_name || `${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || instructor.username || 'Instructor'
-  const initials = fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
   return (
     <article className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-4 rounded-xl border border-[#dbe5f0] bg-[#eef4fa] p-4 sm:p-5">
-      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[#dbe5f0] bg-white sm:h-16 sm:w-16">
-        {instructor.profile_image_url ? <img src={instructor.profile_image_url} alt={`${fullName} profile`} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-lg font-bold text-[#0B2A4A]">{initials || 'I'}</div>}
-      </div>
+      <UserAvatar user={instructor} alt={`${fullName} profile picture`} size="lg" className="h-14 w-14 border border-[#dbe5f0] bg-white text-[#0B2A4A] sm:h-16 sm:w-16" />
       <div className="min-w-0 flex-1">
         <h3 className="break-words font-semibold text-[#0B2A4A]">{fullName}</h3>
         <span className="mt-1 inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{instructor.role === 'instructor' ? 'Instructor / Faculty' : instructor.role || 'Faculty'}</span>

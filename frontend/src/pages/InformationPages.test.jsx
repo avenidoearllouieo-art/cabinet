@@ -12,14 +12,13 @@ describe('TapTrack information pages', () => {
 
     expect(screen.getByRole('heading', { name: 'Student tasks' })).toBeTruthy()
     expect(screen.getByText(/registered NFC card/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Administrator' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Back to Login' }).getAttribute('href')).toBe('/')
 
     fireEvent.click(screen.getByRole('button', { name: 'Instructor' }))
     expect(screen.getByRole('heading', { name: 'Instructor tasks' })).toBeTruthy()
     expect(screen.getByText(/Save as Draft/)).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Administrator' }))
-    expect(screen.getByRole('heading', { name: 'Administrator tasks' })).toBeTruthy()
-    expect(screen.getByText(/Review the import preview/)).toBeTruthy()
   }, 10000)
 
   it('describes the implemented architecture and leaves acknowledgments editable', () => {
@@ -33,6 +32,8 @@ describe('TapTrack information pages', () => {
     expect(screen.getByText('Django media and Tigris')).toBeTruthy()
     expect(screen.getByText('[Project Team Members]')).toBeTruthy()
     expect(screen.getByText('[Faculty Adviser]')).toBeTruthy()
+    expect(screen.getByText(/USTP.*Cagayan de Oro, CITC 4th Floor/)).toBeTruthy()
+    expect(screen.getByText(/automatically attempts to capture a photo/)).toBeTruthy()
     expect(screen.queryByText(/Version\s*\d/i)).toBeNull()
   })
 })

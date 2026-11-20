@@ -10,6 +10,7 @@ import AddUserModal from '../../components/users/AddUserModal.jsx'
 import EditUserModal from '../../components/users/EditUserModal.jsx'
 import ActionsMenu from '../../components/users/ActionsMenu.jsx'
 import UserDrawer from '../../components/users/UserDrawer.jsx'
+import UserAvatar from '../../components/UserAvatar.jsx'
 import UserDetailsPanel from '../../components/users/UserDetailsPanel.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import UserActionDialog from '../../components/users/UserActionDialog.jsx'
@@ -239,8 +240,7 @@ export default function Users() {
       className: 'w-[18%]',
       render: (_value, row) => {
         const name = `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.username || '—'
-        const initials = `${row.first_name?.[0] || ''}${row.last_name?.[0] || ''}`.trim() || row.username?.[0] || 'U'
-        return <div className="flex min-w-0 items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e8f0f8] text-xs font-bold text-[#002B5B]">{initials.toUpperCase()}</span><span className="min-w-0 break-words font-semibold text-[#102a4c]">{name}</span></div>
+        return <div className="flex min-w-0 items-center gap-2"><UserAvatar user={row} size="xs" alt={`${name} profile picture`} /><span className="min-w-0 break-words font-semibold text-[#102a4c]">{name}</span></div>
       },
     },
     { key: 'username', label: 'Username', className: 'w-[11%]' },
@@ -414,12 +414,11 @@ export default function Users() {
             emptyMessage={filteredUsers.length ? 'No users match your filters.' : 'No users found.'}
             renderMobileCard={(row, { expanded, toggleExpanded }) => {
               const name = `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.username || 'Unnamed user'
-              const initials = `${row.first_name?.[0] || ''}${row.last_name?.[0] || ''}`.trim() || row.username?.[0] || 'U'
               return (
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-start gap-2">
                     <input type="checkbox" aria-label={`Select ${row.username}`} checked={selectedIds.includes(getUserId(row))} onChange={() => toggleUserSelection(row)} className="mt-2 h-4 w-4 shrink-0 rounded border-slate-300 text-[#002B5B] focus:ring-[#FFC107]" />
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e8f0f8] text-sm font-bold text-[#002B5B]">{initials.toUpperCase()}</div>
+                    <UserAvatar user={row} size="md" alt={`${name} profile picture`} />
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-semibold text-[#102a4c]">{name}</p>
                       <p className="break-all text-xs text-slate-500">@{row.username}</p>

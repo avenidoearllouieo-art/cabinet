@@ -3,14 +3,32 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronDown, Menu, X } from 'lucide-react'
 import NotificationDropdown from './NotificationDropdown'
 import TapTrackLogo from './TapTrackLogo.jsx'
+import UserAvatar from './UserAvatar.jsx'
 import api from '../services/api.js'
+
+const headerProfileFields = ['id', 'username', 'email', 'role', 'first_name', 'last_name', 'profile_image_url', 'updated_at']
+
+function getHeaderProfile(profile) {
+  return Object.fromEntries(headerProfileFields
+    .filter((field) => Object.hasOwn(profile || {}, field))
+    .map((field) => [field, profile[field]]))
+}
+
+function getStoredHeaderUser() {
+  try {
+    return getHeaderProfile(JSON.parse(localStorage.getItem('user') || '{}'))
+  } catch {
+    return {}
+  }
+}
 
 export default function Header({ sidebarCollapsed = false, mobileNavOpen = false, onMenuToggle }) {
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
   const profileButtonRef = useRef(null)
-  const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('user') || '{}'))
+  const profileUpdateVersionRef = useRef(0)
+  const [user, setUser] = useState(getStoredHeaderUser)
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 600)
   const menuLabel = isMobile
     ? mobileNavOpen ? 'Close navigation' : 'Open navigation'
@@ -25,8 +43,10 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
   useEffect(() => {
     const applyProfile = (profile) => {
       if (!profile) return
+      const safeProfile = getHeaderProfile(profile)
+      profileUpdateVersionRef.current += 1
       setUser((current) => {
-        const nextUser = { ...current, ...profile }
+        const nextUser = { ...current, ...safeProfile }
         localStorage.setItem('user', JSON.stringify(nextUser))
         return nextUser
       })
@@ -36,7 +56,8 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
     const handleStorageChange = (event) => {
       if (event.key !== 'user') return
       try {
-        setUser(JSON.parse(event.newValue || '{}'))
+        profileUpdateVersionRef.current += 1
+        setUser(getHeaderProfile(JSON.parse(event.newValue || '{}')))
       } catch {
         setUser({})
       }
@@ -45,9 +66,12 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
     window.addEventListener('taptrack-profile-updated', handleProfileUpdated)
     window.addEventListener('storage', handleStorageChange)
 
-    if (user.role === 'instructor' || user.role === 'student') {
+    if (user.role) {
+      const requestVersion = profileUpdateVersionRef.current
       api.get('/users/profile/')
-        .then((response) => applyProfile(response.data))
+        .then((response) => {
+          if (profileUpdateVersionRef.current === requestVersion) applyProfile(response.data)
+        })
         .catch(() => {})
     }
 
@@ -148,9 +172,7 @@ export default function Header({ sidebarCollapsed = false, mobileNavOpen = false
               aria-controls="header-account-menu"
               className="flex min-h-10 items-center gap-2 rounded-lg px-1.5 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] sm:gap-3 sm:px-2"
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#FFC107] text-sm font-semibold text-[#002B5B]">
-                {user.profile_image_url ? <img src={user.profile_image_url} alt="Profile" className="h-full w-full object-cover" /> : (user.username?.charAt(0).toUpperCase() || 'U')}
-              </div>
+              <UserAvatar user={user} size="sm" alt={`${user.username || 'User'} profile picture`} className="bg-[#FFC107] text-[#002B5B]" />
               <div className="hidden text-left sm:block">
                 <p className="text-sm font-medium text-white">{user.username || 'User'}</p>
                 <p className="text-xs text-white/75 capitalize">{user.role || 'user'}</p>

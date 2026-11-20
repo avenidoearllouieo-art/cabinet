@@ -1,16 +1,11 @@
 import { BadgeCheck } from 'lucide-react'
+import UserAvatar from '../UserAvatar.jsx'
 
 export default function ProfileSummaryCard({ imageUrl, fullName, initials, role, identity = [], facts = [], action }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
-        <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
-          {imageUrl ? (
-            <img src={imageUrl} alt={`${fullName} profile`} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-3xl font-bold text-[#0B2A4A]">{initials || 'U'}</div>
-          )}
-        </div>
+        <UserAvatar imageUrl={imageUrl} initials={initials || 'U'} alt={`${fullName} profile picture`} size="xl" className="border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">

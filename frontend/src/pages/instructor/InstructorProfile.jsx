@@ -6,6 +6,7 @@ import Modal from '../../components/Modal.jsx'
 import PageHeader from '../../components/PageHeader'
 import { pluralize } from '../../utils/labels.js'
 import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
+import UserAvatar from '../../components/UserAvatar.jsx'
 import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
 
@@ -339,9 +340,7 @@ export default function InstructorProfile() {
 
           <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-                {profileImageUrl ? <img src={profileImageUrl} alt={`${fullName} profile preview`} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center bg-[#eaf0f6] text-2xl font-bold text-[#0B2A4A]">{initials || 'I'}</div>}
-              </div>
+              <UserAvatar imageUrl={profileImageUrl} initials={initials || 'I'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
               <div className="flex flex-wrap gap-2">
                 <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">
                   <Camera size={16} />Choose Photo
@@ -363,7 +362,7 @@ export default function InstructorProfile() {
       <Modal isOpen={isPreviewOpen} onClose={() => setIsPreviewOpen(false)} title="Profile Picture Preview">
         <div className="flex flex-col items-center gap-4">
           <div className="h-[280px] w-full overflow-hidden rounded-xl bg-slate-100">
-            {profileImageUrl ? <img src={profileImageUrl} alt="Profile preview" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>}
+            {previewSrc ? <UserAvatar imageUrl={previewSrc} initials={initials || 'I'} alt="Profile preview" size="md" shape="square" className="h-full w-full rounded-md bg-slate-100" /> : <div className="flex h-full w-full items-center justify-center text-xl text-slate-500">No image selected</div>}
           </div>
           <button type="button" onClick={() => setIsPreviewOpen(false)} className="min-h-11 rounded-lg bg-[#0B2A4A] px-5 py-2 text-sm font-semibold text-white hover:bg-[#153c63]">Close Preview</button>
         </div>

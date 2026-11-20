@@ -34,4 +34,23 @@ describe('UserDrawer nested history dialogs', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
+
+  it('uses the same saved profile image URL as the directory user record', async () => {
+    api.get.mockResolvedValue({ data: {
+      counts: { access_logs: 0, activities: 0, submissions: 0 },
+      access_logs: [],
+      activities: [],
+      submissions: [],
+    } })
+    render(<UserDrawer user={{
+      id: 2,
+      username: 'student',
+      first_name: 'Student',
+      last_name: 'One',
+      role: 'student',
+      profile_image_url: 'https://storage.example/student-one.jpg',
+    }} onClose={() => {}} />)
+
+    expect((await screen.findByRole('img', { name: 'Student One profile picture' })).getAttribute('src')).toBe('https://storage.example/student-one.jpg')
+  })
 })

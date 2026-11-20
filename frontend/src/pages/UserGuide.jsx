@@ -19,7 +19,7 @@ const roles = {
       [BookOpen, 'Preview or download attachments', 'Open an activity or submission and use its attachment list to preview supported files or download the original. Video previews are available from the submission viewer when the browser supports the format.'],
       [CheckCircle2, 'Read submission statuses', 'Activities can be pending, submitted, overdue, due today, late, or closed. Submission History shows review, graded, and returned-for-revision states when available.'],
       [ShieldCheck, 'Register an NFC card', 'Open the registration link or QR supplied for your account and complete the form. Registration tokens are temporary; keep them private.'],
-      [MonitorCheck, 'Use cabinet access', 'Tap your registered card at the cabinet reader. Your allowed access events appear in Access Logs; contact an instructor or administrator if a scan is rejected.'],
+      [MonitorCheck, 'Use cabinet access', 'Tap your registered card at the cabinet reader. Your allowed access events appear in Access Logs; contact your instructor if a scan is rejected.'],
       [KeyRound, 'Recover your password', 'Start Forgot password? with your Student ID and registered email. Take the recovery reference to the Cabinet UI and tap your registered card, then choose a new password on the web page.'],
     ],
   },
@@ -38,26 +38,12 @@ const roles = {
       [ShieldCheck, 'Check cabinet access', 'Open Access Logs to review cabinet events from students in your assigned sections. Student identifiers are scoped to your teaching access.'],
     ],
   },
-  administrator: {
-    label: 'Administrator',
-    icon: ShieldCheck,
-    intro: 'Maintain user accounts and sections, coordinate assignments, and monitor system activity.',
-    steps: [
-      [LockKeyhole, 'Sign in securely', 'Use Administrator Login and an administrator account. Administrator sign-in remains separate from student and instructor access.'],
-      [Users, 'Manage users', 'Open Users to create accounts, update roles and account status, review NFC registration status, or import student and instructor records. Review the import preview before confirming.'],
-      [BookOpen, 'Manage sections', 'Create and update sections, review enrollment, and assign instructors. Section details show linked students and activities.'],
-      [ClipboardList, 'Monitor activities', 'Use Activities to search by title, description, instructor, or section and combine status, section, and instructor filters. Open a record to inspect its details.'],
-      [FileUp, 'Monitor submissions', 'Use Submissions to search and filter across student, activity, status, and submission date. Open a record to inspect submitted attachments and feedback.'],
-      [MonitorCheck, 'Review cabinet logs', 'Access Logs records NFC access outcomes. Cabinet Events provides the related system event history.'],
-      [ShieldCheck, 'Support NFC and recovery', 'Check the NFC status on a user record and update an assigned UID through user actions when authorized. Password recovery is initiated by the account holder and verified by the cabinet; review recorded recovery events without requesting passwords or reset tokens.'],
-    ],
-  },
 }
 
 const faqs = [
   ['An activity is missing. What should I check?', 'Students should confirm that their account is assigned to the correct section and that the instructor has published the activity. Instructors should check the activity section assignments.'],
   ['How does password recovery work?', 'The account holder starts a request with their registered account details, then the production cabinet verifies the registered NFC card. The web page accepts a new password only after successful verification.'],
-  ['Who can view cabinet access records?', 'Students see their own access history. Instructors see records for students in their assigned sections. Administrators can review system-wide access logs.'],
+  ['Who can view cabinet access records?', 'Students see their own access history. Instructors see records for students in their assigned sections.'],
 ]
 
 export default function UserGuide() {

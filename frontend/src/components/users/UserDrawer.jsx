@@ -4,6 +4,7 @@ import { CheckCircle2, CircleOff, Mail, Wifi, Clock3, Badge, ClipboardList, Layo
 import api from '../../services/api.js'
 import Modal from '../Modal.jsx'
 import { ModalBody, ModalHeader } from '../ModalPrimitives.jsx'
+import UserAvatar from '../UserAvatar.jsx'
 import UserCabinetAccessModal from './UserCabinetAccessModal.jsx'
 
 const getUserId = (user) => {
@@ -39,10 +40,6 @@ const roleColors = (role) => {
   if (normalized === 'instructor') return 'bg-[#DBEAFE] text-[#1D4ED8]'
   if (normalized === 'student') return 'bg-[#DCFCE7] text-[#15803D]'
   return 'bg-[#E5E7EB] text-[#374151]'
-}
-
-const getProfileImageUrl = (user) => {
-  return user?.profile_image_url || user?.profile_image || user?.avatar_url || user?.avatar || null
 }
 
 const InfoCard = ({ icon, label, value }) => (
@@ -86,7 +83,6 @@ export default function UserDrawer({ user, onClose, onAction }) {
 
   const selectedUserId = user?.id || user?.pk || user?.user_id || user?.uuid
 
-  const profileImageUrl = useMemo(() => getProfileImageUrl(user), [user])
   const displayName = useMemo(() => {
     if (!user) return ''
     const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim()
@@ -216,11 +212,7 @@ export default function UserDrawer({ user, onClose, onAction }) {
           title={displayName}
           titleId="user-profile-title"
           description={`@${user.username || '—'}`}
-          icon={(
-            <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-slate-100">
-              {profileImageUrl ? <img src={profileImageUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-base font-semibold text-slate-600">{(user.first_name?.[0] || user.last_name?.[0] || user.username?.[0] || 'U').toUpperCase()}</span>}
-            </span>
-          )}
+          icon={<UserAvatar user={user} size="md" shape="square" alt={`${displayName} profile picture`} className="bg-slate-100 text-slate-600" />}
           closeRef={closeButtonRef}
           closeLabel="Close profile drawer"
           onClose={onClose}

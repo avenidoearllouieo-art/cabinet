@@ -13,8 +13,9 @@ describe('Sidebar navigation', () => {
   ])('keeps %s navigation without a Settings item', (variant, expectedLink) => {
     render(<MemoryRouter><Sidebar variant={variant} /></MemoryRouter>)
     expect(screen.getByRole('link', { name: expectedLink })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'User Guide' }).getAttribute('href')).toBe('/guide')
-    expect(screen.getByRole('link', { name: 'About TapTrack' }).getAttribute('href')).toBe('/about')
+    expect(screen.queryByRole('link', { name: 'User Guide' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'About TapTrack' })).toBeNull()
+    expect(screen.queryByText('Help & Information')).toBeNull()
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
   })
 })

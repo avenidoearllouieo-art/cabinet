@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
+import UserAvatar from '../../components/UserAvatar.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import SearchField from '../../components/SearchField.jsx'
 import { ChevronLeft } from 'lucide-react'
@@ -81,13 +82,7 @@ export default function InstructorSectionStudents() {
       className: 'w-[82px] min-w-[82px] max-w-[82px] align-middle',
       render: (_value, row) => (
         <div className="flex justify-center">
-          <div className="h-10 w-10 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-sm">
-            {row.profile_image_url ? (
-              <img src={row.profile_image_url} alt={`${row.first_name || ''} ${row.last_name || ''}`} className="h-full w-full object-cover" />
-            ) : (
-              <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">N/A</span>
-            )}
-          </div>
+          <UserAvatar user={row} alt={`${row.first_name || ''} ${row.last_name || ''} profile picture`} size="md" className="border border-slate-200 bg-slate-100 shadow-sm" />
         </div>
       ),
     },

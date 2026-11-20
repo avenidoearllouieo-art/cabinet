@@ -36,7 +36,7 @@ export default function AboutTapTrack() {
         </div>
         <div className="space-y-4 text-sm leading-7 text-[#526780]">
           <p>TapTrack is a capstone project combining cabinet access monitoring with digital activity and submission management. Its purpose is to make cabinet use traceable while giving students and instructors one place to manage coursework.</p>
-          <p>The web application records role-scoped activity, submission, and cabinet information. NFC registration links a user account to a card; cabinet scans are verified by the Django API before access outcomes are recorded.</p>
+          <p>The project cabinet is located at the University of Science and Technology of Southern Philippines (USTP), Cagayan de Oro, CITC 4th Floor. The web application records role-scoped activity, submission, and cabinet information. NFC registration links a user account to a card; cabinet scans are verified by the Django API before access outcomes are recorded.</p>
         </div>
       </section>
 
@@ -47,7 +47,7 @@ export default function AboutTapTrack() {
         </div>
         <div>
           <h2 className="flex items-center gap-2 text-lg font-bold text-[#082B53]"><Boxes size={21} aria-hidden="true" />NFC and access monitoring</h2>
-          <p className="mt-3 text-sm leading-6 text-[#526780]">Registered NFC cards are checked through the Raspberry Pi service and Django API. Successful and rejected access attempts can be reviewed in the role-authorized access history. Password recovery uses a separate cabinet-verified NFC flow.</p>
+          <p className="mt-3 text-sm leading-6 text-[#526780]">Registered NFC cards are checked through the Raspberry Pi service and Django API. The cabinet automatically attempts to capture a photo for an access event; its status and any available image are associated with that access record and shown according to the user’s role permissions. A camera failure does not change the NFC access result. Password recovery uses a separate cabinet-verified NFC flow.</p>
         </div>
       </section>
 

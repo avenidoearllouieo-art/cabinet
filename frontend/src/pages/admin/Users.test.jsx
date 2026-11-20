@@ -32,7 +32,7 @@ describe('Users directory', () => {
   it('loads all API pages and composes role, status, and search filters', async () => {
     const firstPage = Array.from({ length: 20 }, (_, index) => directoryUser(index + 1, index % 2 ? 'student' : 'instructor', index !== 2))
     firstPage[0] = directoryUser(1, 'admin', true)
-    const lastPage = [directoryUser(21, 'student', false)]
+    const lastPage = [{ ...directoryUser(21, 'student', false), profile_image_url: 'https://storage.example/student-21.jpg' }]
     api.get.mockImplementation((_url, { params }) => Promise.resolve({
       data: params.page === 1
         ? { count: 21, next: 'http://localhost/api/users/?page=2', results: firstPage }
@@ -43,10 +43,12 @@ describe('Users directory', () => {
     render(<MemoryRouter><Users /></MemoryRouter>)
 
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByText('AR').length).toBeGreaterThan(0)
     expect(await screen.findByText('Page 1 of 2')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next users page' }))
     expect(await screen.findByText('Student Record 21')).toBeTruthy()
+    expect(screen.getByRole('img', { name: 'Student Record 21 profile picture' }).getAttribute('src')).toBe('https://storage.example/student-21.jpg')
 
     fireEvent.click(screen.getByRole('button', { name: 'Students' }))
     expect(screen.getByText('Page 1 of 1')).toBeTruthy()

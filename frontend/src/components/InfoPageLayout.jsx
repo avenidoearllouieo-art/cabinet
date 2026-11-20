@@ -13,8 +13,7 @@ export default function InfoPageLayout({ eyebrow, title, description, children }
           </Link>
           <Link to="/" className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-semibold text-white/90 transition hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FFBE0B]">
             <ArrowLeft size={16} aria-hidden="true" />
-            <span className="hidden sm:inline">Return to sign in</span>
-            <span className="sm:hidden">Sign in</span>
+            <span>Back to Login</span>
           </Link>
         </div>
         <div className="border-t border-white/10">
