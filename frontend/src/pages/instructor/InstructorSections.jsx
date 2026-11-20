@@ -7,7 +7,9 @@ import StatusBadge from '../../components/StatusBadge'
 import DataTable from '../../components/DataTable'
 import SectionOverviewModal from '../../components/sections/SectionOverviewModal.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
-import { Search, BookOpen, Users, ClipboardCheck, Clock3 } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { BookOpen, Users, ClipboardCheck, Clock3 } from 'lucide-react'
 
 const getStatusBadge = (status) => {
   if (!status) return <span className="inline-flex rounded-full px-3 py-1 text-xs font-semibold text-slate-600">—</span>
@@ -230,9 +232,9 @@ export default function InstructorSections() {
       <PageHeader title="Sections" description="Review your assigned classes, students, activities, and submissions." />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <StatCard icon={<BookOpen />} label="Assigned Sections" value={totalSections} subtitle="Classes assigned to you" bgColor="bg-blue-50" textColor="text-blue-900" />
-        <StatCard icon={<Users />} label="Students" value={totalStudents} subtitle="Across your sections" bgColor="bg-emerald-50" textColor="text-emerald-900" />
-        <StatCard icon={<ClipboardCheck />} label="Activities" value={activeActivities} subtitle="Assigned to your sections" bgColor="bg-sky-50" textColor="text-sky-900" />
+        <StatCard icon={<BookOpen />} label={pluralize(totalSections, 'Section', 'Sections')} value={totalSections} subtitle="Classes assigned to you" bgColor="bg-blue-50" textColor="text-blue-900" />
+        <StatCard icon={<Users />} label={pluralize(totalStudents, 'Student', 'Students')} value={totalStudents} subtitle="Across your sections" bgColor="bg-emerald-50" textColor="text-emerald-900" />
+        <StatCard icon={<ClipboardCheck />} label={pluralize(activeActivities, 'Activity', 'Activities')} value={activeActivities} subtitle="Assigned to your sections" bgColor="bg-sky-50" textColor="text-sky-900" />
         <StatCard icon={<Clock3 />} label="Pending Reviews" value={pendingReviews} subtitle="Awaiting grading" bgColor="bg-amber-50" textColor="text-amber-900" />
       </div>
 
@@ -244,18 +246,7 @@ export default function InstructorSections() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-3 md:flex-row">
-          <label className="relative block w-full md:max-w-md">
-            <span className="sr-only">Search sections</span>
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search sections..."
-              className="h-11 w-full rounded-lg border border-slate-200 bg-white px-4 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-              aria-label="Search sections"
-            />
-          </label>
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search sections..." ariaLabel="Search sections" className="w-full md:max-w-md" />
 
           <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
           <div>

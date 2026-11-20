@@ -10,7 +10,9 @@ import ActivityActionsMenu from '../../components/activities/ActivityActionsMenu
 import ActivityDetailModal from '../../components/activities/ActivityDetailModal.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import Pagination from '../../components/Pagination.jsx'
-import { Search, ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal, X } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal } from 'lucide-react'
 
 const formatDate = (value) => {
   if (!value) return 'No deadline'
@@ -56,7 +58,6 @@ export default function Activities() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [selectedActivityForDrawer, setSelectedActivityForDrawer] = useState(null)
-  const [activityTypeFilter, setActivityTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [assignedSectionFilter, setAssignedSectionFilter] = useState('')
   const [assignedInstructorFilter, setAssignedInstructorFilter] = useState('')
@@ -113,11 +114,6 @@ export default function Activities() {
         .some((value) => String(value).toLowerCase().includes(keyword))
       if (keyword && !searchable) return false
 
-      if (activityTypeFilter) {
-        const activityType = String(activity.activity_type || activity.type || '').toLowerCase()
-        if (activityType !== activityTypeFilter.toLowerCase()) return false
-      }
-
       if (statusFilter) {
         const statusValue = String(activity.status || '').toLowerCase()
         if (statusValue !== statusFilter.toLowerCase()) return false
@@ -151,9 +147,8 @@ export default function Activities() {
       }
       return 0
     })
-  }, [activities, query, activityTypeFilter, statusFilter, assignedSectionFilter, assignedInstructorFilter, sortBy])
+  }, [activities, query, statusFilter, assignedSectionFilter, assignedInstructorFilter, sortBy])
 
-  const activityTypes = [...new Set(activities.map((activity) => activity.activity_type || activity.type).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)))
   const activitySections = [...new Set(activities.flatMap(getActivitySectionNames))].sort((a, b) => a.localeCompare(b))
   const activityInstructors = [...new Set(activities.map((activity) => activity.assigned_instructor_name || activity.instructor_name || `${activity.created_by_name || ''} ${activity.created_by_last_name || ''}`.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const pageCount = Math.max(1, Math.ceil(filteredActivities.length / pageSize))
@@ -261,10 +256,10 @@ export default function Activities() {
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <SummaryCard icon={ClipboardList} title="Total Activities" value={totalActivities} trendText="All recorded activities" iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={CalendarDays} title="Published Activities" value={activeActivities} trendText="Visible to assigned students" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={CalendarCheck} title="Due Today" value={dueTodayActivities} trendText="Scheduled for today" iconBg="bg-amber-50" iconColor="text-amber-900" />
-        <SummaryCard icon={XCircle} title="Closed Activities" value={closedActivities} trendText="Closed or expired" iconBg="bg-slate-100" iconColor="text-slate-700" />
+        <SummaryCard icon={ClipboardList} title={`Total ${pluralize(totalActivities, 'Activity', 'Activities')}`} value={totalActivities} trendText="All recorded activities" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={CalendarDays} title={`Published ${pluralize(activeActivities, 'Activity', 'Activities')}`} value={activeActivities} trendText="Visible to assigned students" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={CalendarCheck} title={`${pluralize(dueTodayActivities, 'Activity', 'Activities')} Due Today`} value={dueTodayActivities} trendText="Scheduled for today" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={XCircle} title={`Closed ${pluralize(closedActivities, 'Activity', 'Activities')}`} value={closedActivities} trendText="Closed or expired" iconBg="bg-slate-100" iconColor="text-slate-700" />
       </div>
 
       {error && (
@@ -282,23 +277,13 @@ export default function Activities() {
         </div>
 
         <div className="mb-4 flex flex-col gap-3">
-          <label className="relative block w-full">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
-            <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, description, instructor, or section" aria-label="Search activities" className="tt-control w-full pl-10 pr-10" />
-            {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear activity search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
-          </label>
-          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <SearchField value={query} onChange={(value) => { setQuery(value); setPage(1) }} onClear={() => { setQuery(''); setPage(1) }} placeholder="Search title, description, instructor, or section" ariaLabel="Search activities" clearLabel="Clear activity search" />
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <label className="min-w-0">
               <span className="sr-only">Filter activity status</span>
               <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">
                 <option value="">All statuses</option>
                 <option value="Published">Published</option><option value="Draft">Draft</option><option value="Closed">Closed</option><option value="Archived">Archived</option>
-              </select>
-            </label>
-            <label className="min-w-0">
-              <span className="sr-only">Filter activity type</span>
-              <select value={activityTypeFilter} onChange={(event) => { setActivityTypeFilter(event.target.value); setPage(1) }} className="tt-control w-full">
-                <option value="">All activity types</option>{activityTypes.map((type) => <option key={type} value={type}>{type}</option>)}
               </select>
             </label>
             <label className="min-w-0">
@@ -323,8 +308,8 @@ export default function Activities() {
         </div>
 
         <div className="mb-3 flex items-center justify-between gap-3 text-sm text-slate-500">
-          <span className="inline-flex items-center gap-2"><SlidersHorizontal size={15} />{filteredActivities.length} result{filteredActivities.length === 1 ? '' : 's'}</span>
-          {statusFilter || activityTypeFilter || assignedSectionFilter || assignedInstructorFilter || query ? <button type="button" onClick={() => { setQuery(''); setStatusFilter(''); setActivityTypeFilter(''); setAssignedSectionFilter(''); setAssignedInstructorFilter(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button> : null}
+          <span className="inline-flex items-center gap-2"><SlidersHorizontal size={15} />{pluralize(filteredActivities.length, 'result')}</span>
+          {statusFilter || assignedSectionFilter || assignedInstructorFilter || query ? <button type="button" onClick={() => { setQuery(''); setStatusFilter(''); setAssignedSectionFilter(''); setAssignedInstructorFilter(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button> : null}
         </div>
 
         {loading ? (

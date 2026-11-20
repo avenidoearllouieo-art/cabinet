@@ -196,6 +196,12 @@ export default function Login({ administratorOnly = false }) {
           </div>
         </form>
 
+        <nav aria-label="TapTrack information" className="mt-3 flex items-center justify-center gap-3 text-xs font-medium text-[#607087]">
+          <Link to="/guide" className="min-h-8 inline-flex items-center hover:text-[#002B5B] hover:underline">User Guide</Link>
+          <span aria-hidden="true" className="text-[#b8c5d4]">|</span>
+          <Link to="/about" className="min-h-8 inline-flex items-center hover:text-[#002B5B] hover:underline">About TapTrack</Link>
+        </nav>
+
         <div className="mt-4 border-t border-[#E7EDF5] pt-3 text-center text-[11px] text-[#8A9BB0]">
           © 2026 TapTrack
         </div>

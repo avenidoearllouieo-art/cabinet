@@ -1,4 +1,4 @@
-export async function fetchAllResults(client, endpoint, params = {}) {
+export async function fetchAllResults(client, endpoint, params = {}, config = {}) {
   const results = []
   const visitedPages = new Set()
   let page = 1
@@ -6,7 +6,7 @@ export async function fetchAllResults(client, endpoint, params = {}) {
 
   while (!visitedPages.has(page)) {
     visitedPages.add(page)
-    const response = await client.get(endpoint, { params: { ...params, page } })
+    const response = await client.get(endpoint, { ...config, params: { ...params, page } })
     const data = response.data
 
     if (Array.isArray(data)) {

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Search, Clock, CheckCircle2, ArrowUpRight, FilePlus, RotateCcw } from 'lucide-react'
+import { Clock, CheckCircle2, ArrowUpRight, FilePlus, RotateCcw } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
+import SearchField from '../../components/SearchField.jsx'
 import StatCard from '../../components/StatCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
+import { pluralize } from '../../utils/labels.js'
 
 const statusOptions = [
   { value: 'all', label: 'All' },
@@ -57,15 +59,6 @@ function formatDate(value) {
     }).format(date)
 }
 
-function buildStats(list) {
-  return {
-    submitted: list.length,
-    underReview: list.filter((submission) => getDisplayStatus(submission) === 'Under Review').length,
-    graded: list.filter((submission) => getDisplayStatus(submission) === 'Graded').length,
-    returnedForRevision: list.filter((submission) => getDisplayStatus(submission) === 'Returned for Revision').length,
-  }
-}
-
 export default function StudentSubmissions() {
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
@@ -80,10 +73,12 @@ export default function StudentSubmissions() {
   const [sortBy, setSortBy] = useState('-submitted_at')
   const [page, setPage] = useState(1)
   const [pageCount, setPageCount] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const [refreshVersion, setRefreshVersion] = useState(0)
   const [activeSubmission, setActiveSubmission] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
 
-  const fetchSubmissions = useCallback(async () => {
+  const fetchSubmissions = useCallback(async (signal) => {
     setLoading(true)
     try {
       const params = {
@@ -94,28 +89,41 @@ export default function StudentSubmissions() {
       if (statusFilter && statusFilter !== 'all') {
         params.status = statusFilter
       }
-      const response = await api.get('/submissions/', { params })
-      const nextSubmissions = response.data.results || []
+      const [response, summaryResponse] = await Promise.all([
+        api.get('/submissions/', { params, signal }),
+        api.get('/submissions/stats/', { params: { search: query.trim() || undefined }, signal }),
+      ])
+      if (signal?.aborted) return
+      const nextSubmissions = Array.isArray(response.data) ? response.data : response.data.results || []
       setSubmissions(nextSubmissions)
-      setStats(buildStats(nextSubmissions))
-      setPageCount(Math.ceil((response.data.count || 0) / (response.data.page_size || 10)))
+      const summary = summaryResponse.data || {}
+      setStats({
+        submitted: Number(summary.totalSubmissions ?? response.data.count ?? nextSubmissions.length),
+        underReview: Number(summary.underReview ?? 0),
+        graded: Number(summary.graded ?? 0),
+        returnedForRevision: Number(summary.returnedForRevision ?? 0),
+      })
+      const count = Array.isArray(response.data) ? nextSubmissions.length : Number(response.data.count || 0)
+      setTotalCount(count)
+      setPageCount(Math.max(1, Math.ceil(count / (response.data.page_size || 10))))
     } catch (err) {
-      console.error('Failed to load submissions:', err)
+      if (!signal?.aborted) console.error('Failed to load submissions:', err)
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [page, query, sortBy, statusFilter])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchSubmissions, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [fetchSubmissions])
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => fetchSubmissions(controller.signal), 0)
+    return () => { window.clearTimeout(timeoutId); controller.abort() }
+  }, [fetchSubmissions, refreshVersion])
 
   useEffect(() => {
-    const handler = () => { fetchSubmissions() }
+    const handler = () => setRefreshVersion((current) => current + 1)
     window.addEventListener('studentSubmissionSaved', handler)
     return () => window.removeEventListener('studentSubmissionSaved', handler)
-  }, [fetchSubmissions])
+  }, [])
 
   const handleViewSubmission = async (submission) => {
     // Open submission viewer modal
@@ -179,25 +187,25 @@ export default function StudentSubmissions() {
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
         <StatCard
           icon={<FilePlus size={18} />}
-          label="Submitted"
+          label={pluralize(stats.submitted, 'Submission', 'Submissions')}
           value={stats.submitted}
           subtitle="Activities submitted"
         />
         <StatCard
           icon={<Clock size={18} />}
-          label="Under Review"
+          label={`${pluralize(stats.underReview, 'Submission', 'Submissions')} Under Review`}
           value={stats.underReview}
           subtitle="Awaiting instructor review"
         />
         <StatCard
           icon={<CheckCircle2 size={18} />}
-          label="Graded"
+          label={`Graded ${pluralize(stats.graded, 'Submission', 'Submissions')}`}
           value={stats.graded}
           subtitle="Completed with scores"
         />
         <StatCard
           icon={<RotateCcw size={18} />}
-          label="Returned for Revision"
+          label={`Returned ${pluralize(stats.returnedForRevision, 'Submission', 'Submissions')} for Revision`}
           value={stats.returnedForRevision}
           subtitle="Needs revision"
         />
@@ -205,20 +213,8 @@ export default function StudentSubmissions() {
 
       <div className="rounded-[16px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative flex w-full items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900">
-              <Search size={16} className="text-slate-500" />
-              <input
-                type="text"
-                placeholder="Search activity or instructor"
-                value={query}
-                onChange={(event) => {
-                  setPage(1)
-                  setQuery(event.target.value)
-                }}
-                className="ml-3 min-w-[240px] bg-transparent text-sm text-slate-900 outline-none"
-              />
-            </div>
+          <div className="flex min-w-0 flex-wrap gap-3">
+            <SearchField value={query} onChange={(value) => { setPage(1); setQuery(value) }} onClear={() => { setPage(1); setQuery('') }} placeholder="Search activity or instructor" ariaLabel="Search submissions" className="w-full min-w-0 md:max-w-[360px]" />
             <select
               value={statusFilter}
               onChange={(event) => {
@@ -249,7 +245,8 @@ export default function StudentSubmissions() {
             </select>
           </div>
           <div className="text-sm text-slate-500">
-            Showing {submissions.length} of {stats.submitted} submissions
+            Showing {pluralize(submissions.length, 'submission')} of {pluralize(totalCount, 'submission')}
+            {(query || statusFilter !== 'all' || sortBy !== '-submitted_at') && <button type="button" onClick={() => { setQuery(''); setStatusFilter('all'); setSortBy('-submitted_at'); setPage(1) }} className="ml-3 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>}
           </div>
         </div>
 

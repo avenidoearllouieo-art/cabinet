@@ -6,6 +6,9 @@ import StatCard from '../../components/StatCard'
 import StatusBadge from '../../components/StatusBadge'
 import DataTable from '../../components/DataTable'
 import Pagination from '../../components/Pagination'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { fetchAllResults } from '../../services/paginatedResults.js'
 import ActivityViewModal from '../../components/student/ActivityViewModal.jsx'
 import ActivitySubmitModal from '../../components/student/ActivitySubmitModal.jsx'
 
@@ -91,6 +94,14 @@ function getCanEdit(activity) {
   return !isPastDue || Boolean(activity?.allow_resubmission)
 }
 
+function getStudentSection(profile) {
+  const rawSection = profile?.section
+  return {
+    id: typeof rawSection === 'object' ? rawSection.section_id ?? rawSection.id : rawSection ?? profile?.section_id,
+    name: profile?.section_name || (typeof rawSection === 'object' ? rawSection.section_name : ''),
+  }
+}
+
 export default function StudentActivities() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -105,16 +116,16 @@ export default function StudentActivities() {
   const [query, setQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
   const [page, setPage] = useState(1)
-  const [pageCount, setPageCount] = useState(1)
   const [activeActivity, setActiveActivity] = useState(null)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
 
-  const fetchStats = useCallback(async (sectionId) => {
+  const fetchStats = useCallback(async (sectionId, signal) => {
     try {
       const params = {}
       if (sectionId) params.section = sectionId
-      const response = await api.get('/activities/stats/', { params })
+      const response = await api.get('/activities/stats/', { params, signal })
+      if (signal?.aborted) return
       const data = response.data || {}
       setStats({
         totalActivities: data.totalActivities ?? data.total_activities ?? 0,
@@ -123,37 +134,35 @@ export default function StudentActivities() {
         overdueActivities: data.overdueActivities ?? data.overdue_activities ?? 0,
       })
     } catch (err) {
-      console.error('Failed to load activity stats:', err)
-      setError('Failed to load activity stats.')
+      if (!signal?.aborted) {
+        console.error('Failed to load activity stats:', err)
+        setError('Failed to load activity stats.')
+      }
     }
   }, [])
 
-  const fetchActivities = useCallback(async (sectionId) => {
+  const fetchActivities = useCallback(async (sectionId, signal) => {
     setLoading(true)
     setError(null)
     try {
-      const params = { search: query || undefined, page }
+      const params = { search: query.trim() || undefined }
       if (sectionId) params.section = sectionId
-      const response = await api.get('/activities/', { params })
-      const data = response.data || {}
-      const fetchedActivities = Array.isArray(data) ? data : Array.isArray(data.results) ? data.results : []
-      const count = Number(data.count) || fetchedActivities.length
-      const pageSize = Number(data.page_size) || 10
-      setPageCount(Math.max(1, Math.ceil(count / pageSize)))
-      setActivities(fetchedActivities)
+      const { results } = await fetchAllResults(api, '/activities/', params, { signal })
+      setActivities(results)
     } catch (err) {
-      console.error('Failed to load activities:', err)
-      setError('Failed to load activities. Please try again.')
-      setActivities([])
+      if (!signal?.aborted) {
+        console.error('Failed to load activities:', err)
+        setError('Failed to load activities. Please try again.')
+        setActivities([])
+      }
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
-  }, [page, query])
+  }, [query])
 
   useEffect(() => {
+    let active = true
     const timeoutId = window.setTimeout(async () => {
-      setLoading(true)
-      setError(null)
       try {
         let profile = null
         try {
@@ -167,30 +176,47 @@ export default function StudentActivities() {
         } catch {
           try { profile = JSON.parse(localStorage.getItem('user') || 'null') } catch { profile = null }
         }
-        setStudent(profile)
-
-        const sectionId = profile && (profile.section || profile.section_id || (profile.section && profile.section.section_id) || null)
-        const sectionName = profile && (profile.section_name || (profile.section && profile.section.section_name) || null)
-        if (!sectionId && !sectionName) {
+        if (!active) return
+        if (!profile) {
+          setError('Failed to load your profile. Please try again.')
+          setLoading(false)
+          return
+        }
+        const section = getStudentSection(profile)
+        if (!section.id && !section.name) {
           setError('Your account is not assigned to a section. Please contact your instructor.')
           setActivities([])
-          setPageCount(0)
           setStats({ totalActivities: 0, pendingActivities: 0, submittedActivities: 0, overdueActivities: 0 })
           setLoading(false)
           return
         }
-
-        await fetchStats(sectionId)
-        await fetchActivities(sectionId)
+        setStudent(profile)
       } catch (err) {
-        console.error('Failed initializing student activities page:', err)
-        setError('Failed to load your activities. Please try again.')
+        if (active) {
+          console.error('Failed initializing student activities page:', err)
+          setError('Failed to load your activities. Please try again.')
+          setLoading(false)
+        }
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
     }, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [fetchActivities, fetchStats])
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!student) return undefined
+    const { id: sectionId } = getStudentSection(student)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => {
+      void fetchStats(sectionId, controller.signal)
+      void fetchActivities(sectionId, controller.signal)
+    }, 0)
+    return () => { window.clearTimeout(timeoutId); controller.abort() }
+  }, [student, fetchActivities, fetchStats])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => setPage(1), 0)
@@ -201,7 +227,8 @@ export default function StudentActivities() {
     const handler = () => {
       let profile
       try { profile = JSON.parse(localStorage.getItem('user') || 'null') } catch { profile = null }
-      const sectionId = (profile && profile.section) || (student && student.section) || null
+      const currentSection = (profile && profile.section) || (student && student.section) || null
+      const sectionId = typeof currentSection === 'object' ? currentSection.section_id ?? currentSection.id : currentSection
       fetchActivities(sectionId)
       fetchStats(sectionId)
     }
@@ -222,7 +249,10 @@ export default function StudentActivities() {
   const handleModalSuccess = () => {
     setIsSubmitModalOpen(false)
     setActiveActivity(null)
-    const sectionId = (student && student.section) || (() => { try { const p = JSON.parse(localStorage.getItem('user') || 'null'); return p && p.section } catch { return null } })()
+    const rawSection = student && student.section
+    const sectionId = typeof rawSection === 'object'
+      ? rawSection.section_id ?? rawSection.id
+      : rawSection || (() => { try { const p = JSON.parse(localStorage.getItem('user') || 'null'); return p && p.section } catch { return null } })()
     fetchActivities(sectionId)
     fetchStats(sectionId)
   }
@@ -263,6 +293,11 @@ export default function StudentActivities() {
       return true
     })
   }, [activities, activeFilter, query])
+
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(filteredActivities.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleActivities = filteredActivities.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   const columns = [
     { key: 'id', label: 'ID', className: 'min-w-[72px]', render: (value) => value ?? 'Not recorded' },
@@ -319,26 +354,19 @@ export default function StudentActivities() {
       <PageHeader title="Activities" description="View your assigned activities, deadlines, and submission progress." />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <StatCard icon={<ClipboardList size={18} />} label="Total Activities" value={stats.totalActivities} subtitle="Activities assigned to your section" />
-        <StatCard icon={<Search size={18} />} label="Pending Activities" value={stats.pendingActivities} subtitle="Not submitted yet" />
-        <StatCard icon={<CheckCircle2 size={18} />} label="Submitted Activities" value={stats.submittedActivities} subtitle="Activities you have submitted" />
-        <StatCard icon={<AlertCircle size={18} />} label="Overdue Activities" value={stats.overdueActivities} subtitle="Past due without submission" />
+        <StatCard icon={<ClipboardList size={18} />} label={`Total ${pluralize(stats.totalActivities, 'Activity', 'Activities')}`} value={stats.totalActivities} subtitle="Activities assigned to your section" />
+        <StatCard icon={<Search size={18} />} label={`Pending ${pluralize(stats.pendingActivities, 'Activity', 'Activities')}`} value={stats.pendingActivities} subtitle="Not submitted yet" />
+        <StatCard icon={<CheckCircle2 size={18} />} label={`Submitted ${pluralize(stats.submittedActivities, 'Activity', 'Activities')}`} value={stats.submittedActivities} subtitle="Activities you have submitted" />
+        <StatCard icon={<AlertCircle size={18} />} label={`Overdue ${pluralize(stats.overdueActivities, 'Activity', 'Activities')}`} value={stats.overdueActivities} subtitle="Past due without submission" />
       </div>
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative flex min-h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 focus-within:border-transparent focus-within:ring-2 focus-within:ring-[#0B2A4A] lg:max-w-md">
-              <Search size={16} className="shrink-0 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by title or instructor"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none"
-                aria-label="Search activities by title or instructor"
-              />
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search by title or instructor" ariaLabel="Search activities by title or instructor" className="w-full lg:max-w-md" />
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+            <span>Showing {pluralize(visibleActivities.length, 'activity', 'activities')} of {pluralize(filteredActivities.length, 'activity', 'activities')}</span>
+            {(query || activeFilter !== 'all') && <button type="button" onClick={() => { setQuery(''); setActiveFilter('all'); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>}
           </div>
-          <div className="text-sm text-slate-500">Showing {filteredActivities.length} of {activities.length} activities</div>
         </div>
 
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filter activities">
@@ -346,7 +374,7 @@ export default function StudentActivities() {
             <button
               key={tab.value}
               type="button"
-              onClick={() => setActiveFilter(tab.value)}
+              onClick={() => { setActiveFilter(tab.value); setPage(1) }}
               aria-pressed={activeFilter === tab.value}
               className={`min-h-9 rounded-lg px-3 py-2 text-sm font-semibold transition ${activeFilter === tab.value ? 'bg-[#F5B700] text-[#0B1F3A]' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
             >
@@ -356,7 +384,7 @@ export default function StudentActivities() {
         </div>
 
         {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
-        <DataTable columns={columns} rows={filteredActivities} loading={loading} variant="instructor" showActions={false} emptyMessage={error ? 'No activities are available.' : 'No activities match these filters.'} />
+        <DataTable columns={columns} rows={visibleActivities} loading={loading} variant="instructor" showActions={false} emptyMessage={error ? 'No activities are available.' : 'No activities match these filters.'} />
         {pageCount > 1 && <Pagination page={page} pageCount={pageCount} onPageChange={setPage} label="Showing page" />}
       </section>
 

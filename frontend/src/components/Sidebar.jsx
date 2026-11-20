@@ -1,5 +1,10 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, BookOpen, LogIn } from 'lucide-react'
+import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, BookOpen, LogIn, CircleHelp, Info } from 'lucide-react'
+
+const helpItems = [
+  { label: 'User Guide', path: '/guide', icon: CircleHelp },
+  { label: 'About TapTrack', path: '/about', icon: Info },
+]
 
 const menuItems = [
   { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutGrid },
@@ -75,6 +80,28 @@ export default function Sidebar({ variant = 'admin', collapsed = false, mobileOp
           )
         })}
       </nav>
+      <div className="border-t border-white/10 px-3 py-3">
+        {showLabels && <p className="px-4 pb-2 text-[10px] font-bold uppercase text-white/55">Help &amp; Information</p>}
+        <nav aria-label="Help and information" className="space-y-1">
+          {helpItems.map((item) => {
+            const Icon = item.icon
+            const active = location.pathname === item.path
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                title={item.label}
+                onClick={onMobileClose}
+                aria-current={active ? 'page' : undefined}
+                className={`flex h-11 items-center rounded-lg text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107] ${showLabels ? 'gap-3 px-4' : 'justify-center px-0'} ${active ? 'bg-[#FFC107] font-bold text-[#071f41]' : 'text-white/70 hover:bg-white/10 hover:text-white'}`}
+              >
+                <Icon size={18} aria-hidden="true" />
+                <span className={showLabels ? 'truncate' : 'sr-only'}>{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
+      </div>
     </aside>
   )
 }

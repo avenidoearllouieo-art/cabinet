@@ -10,7 +10,9 @@ import DeleteSectionModal from '../../components/sections/DeleteSectionModal.jsx
 import AssignInstructorModal from '../../components/sections/AssignInstructorModal.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
-import { Search, BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, ChevronDown, ChevronRight } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { BookOpen, Edit2, Trash2, Plus, MoreHorizontal, Eye, Users, UserCog, ChevronDown, ChevronRight } from 'lucide-react'
 
 const academicYears = ['2026–2027', '2027–2028']
 const normalizeAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
@@ -260,7 +262,7 @@ export default function Sections() {
     setSelectedIds([])
     setIsAssignInstructorOpen(false)
     setAssignmentSections([])
-    setToastMessage(`Instructor assigned to ${updatedSections.length} section${updatedSections.length === 1 ? '' : 's'}.`)
+    setToastMessage(`Instructor assigned to ${pluralize(updatedSections.length, 'section')}.`)
     window.setTimeout(() => setToastMessage(''), 4000)
   }
 
@@ -326,9 +328,9 @@ export default function Sections() {
       />
 
       <div className="dashboard-stat-grid grid grid-cols-1 gap-2.5 sm:grid-cols-3 lg:gap-4">
-        <SummaryCard icon={BookOpen} title="Total Sections" value={totalSections} trendText="All sections" iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={Users} title="Students Enrolled" value={totalStudents} trendText="Across all sections" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={UserCog} title="Assigned Instructors" value={totalInstructors} trendText="Unique assigned instructors" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={BookOpen} title={pluralize(totalSections, 'Section', 'Sections')} value={totalSections} trendText="All sections" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Users} title={`${pluralize(totalStudents, 'Student', 'Students')} Enrolled`} value={totalStudents} trendText="Across all sections" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={UserCog} title={`${pluralize(totalInstructors, 'Instructor', 'Instructors')} Assigned`} value={totalInstructors} trendText="Unique assigned instructors" iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -346,12 +348,7 @@ export default function Sections() {
         </div>
 
         <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
-          <label className="relative block min-w-0">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
-              <Search size={16} />
-            </span>
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sections" aria-label="Search sections" className="tt-control w-full pl-10" />
-          </label>
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search sections" ariaLabel="Search sections" />
           <label className="min-w-0"><span className="sr-only">Filter academic year</span><select value={academicYearFilter} onChange={(event) => setAcademicYearFilter(event.target.value)} className="tt-control w-full"><option value="all">All academic years</option>{academicYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter year level</span><select value={yearLevelFilter} onChange={(event) => setYearLevelFilter(event.target.value)} className="tt-control w-full"><option value="all">All year levels</option>{yearLevelOptions.map((yearLevel) => <option key={yearLevel} value={yearLevel}>{yearLevel}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter instructor</span><select value={instructorFilter} onChange={(event) => setInstructorFilter(event.target.value)} className="tt-control w-full">{instructorOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
@@ -367,7 +364,10 @@ export default function Sections() {
               </>
             )}
           </div>
-          <div className="text-sm text-slate-500">{filteredSections.length} result{filteredSections.length === 1 ? '' : 's'}</div>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+            <span>{pluralize(filteredSections.length, 'result')}</span>
+            {(query || yearLevelFilter !== 'all' || academicYearFilter !== 'all' || instructorFilter !== 'all' || statusFilter !== 'all') && <button type="button" onClick={() => { setQuery(''); setYearLevelFilter('all'); setAcademicYearFilter('all'); setInstructorFilter('all'); setStatusFilter('all') }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>}
+          </div>
         </div>
 
         <div className="space-y-2 lg:hidden" aria-label="Section records">

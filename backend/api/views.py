@@ -71,6 +71,7 @@ from .serializers import (
     ActivityDiscussionSerializer,
     ActivityAnnouncementSerializer,
     PasswordResetRequestSerializer,
+    PasswordChangeSerializer,
     PasswordResetStatusSerializer,
     PasswordResetCancellationSerializer,
     PasswordResetNFCVerificationSerializer,
@@ -1615,32 +1616,10 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def change_password(self, request):
         user = request.user
-        current_password = request.data.get('current_password', '')
-        new_password = request.data.get('new_password', '')
-        confirm_password = request.data.get('confirm_password', '')
-
-        if not user.check_password(current_password):
-            return Response({'current_password': ['Current password is incorrect.']}, status=status.HTTP_400_BAD_REQUEST)
-
-        if new_password != confirm_password:
-            return Response({'confirm_password': ['New password and confirmation do not match.']}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not new_password or len(new_password) < 8:
-            return Response({'new_password': ['New password must be at least 8 characters.']}, status=status.HTTP_400_BAD_REQUEST)
-
-        from django.contrib.auth.password_validation import validate_password
-        try:
-            validate_password(new_password, user=user)
-        except Exception as password_error:
-            errors = []
-            if hasattr(password_error, 'messages'):
-                errors = password_error.messages
-            else:
-                errors = [str(password_error)]
-            return Response({'new_password': errors}, status=status.HTTP_400_BAD_REQUEST)
-
-        user.set_password(new_password)
-        user.save()
+        serializer = PasswordChangeSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password'])
         return Response({'detail': 'Password updated successfully.'}, status=status.HTTP_200_OK)
 
     filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -2263,10 +2242,25 @@ class SubmissionFilter(filters.FilterSet):
         value = str(value).lower().strip()
         if value == 'graded':
             return queryset.filter(score__isnull=False)
-        if value == 'submitted':
-            return queryset.filter(score__isnull=True, activity__due_date__gte=models.F('submitted_at'))
+        if value in ('submitted', 'under_review'):
+            return queryset.annotate(
+                _trimmed_feedback=models.functions.Trim('feedback'),
+            ).filter(
+                score__isnull=True,
+                _trimmed_feedback='',
+            ).exclude(activity__due_date__lt=models.F('submitted_at'))
+        if value == 'returned_for_revision':
+            return queryset.annotate(
+                _trimmed_feedback=models.functions.Trim('feedback'),
+            ).filter(score__isnull=True, _trimmed_feedback__gt='')
         if value == 'late':
-            return queryset.filter(score__isnull=True, activity__due_date__lt=models.F('submitted_at'))
+            return queryset.annotate(
+                _trimmed_feedback=models.functions.Trim('feedback'),
+            ).filter(
+                score__isnull=True,
+                _trimmed_feedback='',
+                activity__due_date__lt=models.F('submitted_at'),
+            )
         if value == 'missing':
             return queryset.filter(score__isnull=True, activity__due_date__lt=timezone.now(), submitted_at__isnull=True)
         return queryset
@@ -2435,14 +2429,28 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
         base_qs = self.filter_queryset(self.get_queryset())
 
-        total = base_qs.count()
-        graded = base_qs.filter(score__isnull=False).count()
-        pending = base_qs.filter(score__isnull=True).count()
-        late = base_qs.filter(score__isnull=True, activity__due_date__lt=models.F('submitted_at')).count()
+        summary_qs = base_qs.annotate(_trimmed_feedback=models.functions.Trim('feedback'))
+        total = summary_qs.count()
+        graded = summary_qs.filter(score__isnull=False).count()
+        pending = summary_qs.filter(score__isnull=True).count()
+        under_review = summary_qs.filter(score__isnull=True, _trimmed_feedback='').exclude(
+            activity__due_date__lt=models.F('submitted_at'),
+        ).count()
+        returned_for_revision = summary_qs.filter(
+            score__isnull=True,
+            _trimmed_feedback__gt='',
+        ).count()
+        late = summary_qs.filter(
+            score__isnull=True,
+            _trimmed_feedback='',
+            activity__due_date__lt=models.F('submitted_at'),
+        ).count()
 
         return Response({
             'totalSubmissions': total,
             'pendingReview': pending,
+            'underReview': under_review,
+            'returnedForRevision': returned_for_revision,
             'graded': graded,
             'lateSubmissions': late,
         })

@@ -3,6 +3,7 @@ import { BookOpen, Clock, LogIn, Send, AlertCircle } from 'lucide-react'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
+import { pluralize } from '../../utils/labels.js'
 import DataTable from '../../components/DataTable'
 import CabinetStationStatus from '../../components/CabinetStationStatus'
 
@@ -133,7 +134,7 @@ export default function StudentDashboard() {
               <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
                 <StatCard
                   icon={<BookOpen size={18} />}
-                  label="Assigned Activities"
+                  label={`${pluralize(stats.totalActivities, 'Activity', 'Activities')} Assigned`}
                   value={stats.totalActivities}
                   subtitle="Open and upcoming tasks"
                   mobileSubtitle="Open tasks"
@@ -143,7 +144,7 @@ export default function StudentDashboard() {
                 />
                 <StatCard
                   icon={<Send size={18} />}
-                  label="Submitted"
+                  label={`Submitted ${pluralize(stats.submittedActivities, 'Activity', 'Activities')}`}
                   value={stats.submittedActivities}
                   subtitle="Activities you submitted"
                   mobileSubtitle="Submitted"
@@ -153,7 +154,7 @@ export default function StudentDashboard() {
                 />
                 <StatCard
                   icon={<Clock size={18} />}
-                  label="Pending"
+                  label={`Pending ${pluralize(stats.pendingActivities, 'Activity', 'Activities')}`}
                   value={stats.pendingActivities}
                   subtitle="Still to complete"
                   mobileSubtitle="To do"

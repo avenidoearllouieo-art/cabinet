@@ -29,7 +29,7 @@ describe('InstructorDashboard', () => {
     render(<MemoryRouter><InstructorDashboard /></MemoryRouter>)
 
     expect(await screen.findByText('Published lesson')).toBeTruthy()
-    const activeCard = screen.getByText('Active Activities').closest('article')
+    const activeCard = screen.getByText('Active 2 Activities').closest('article')
     expect(activeCard.textContent).toContain('2')
     expect(screen.getAllByText('Section A')).toHaveLength(3)
   })

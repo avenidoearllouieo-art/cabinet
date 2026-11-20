@@ -5,7 +5,8 @@ import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import { fetchAllResults } from '../../services/paginatedResults.js'
-import { Search, ChevronLeft } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { ChevronLeft } from 'lucide-react'
 
 export default function InstructorSectionStudents() {
   const { sectionId } = useParams()
@@ -156,17 +157,7 @@ export default function InstructorSectionStudents() {
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <label className="relative block w-full lg:max-w-lg">
-            <span className="sr-only">Search students</span>
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search student ID, name, or email"
-              className="h-11 w-full rounded-lg border border-slate-200 bg-white px-4 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
-          </label>
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search student ID, name, or email" ariaLabel="Search students" className="w-full lg:max-w-lg" />
 
           <div className="flex flex-wrap gap-3">
             <button

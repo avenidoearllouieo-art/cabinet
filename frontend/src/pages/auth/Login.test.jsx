@@ -38,6 +38,8 @@ describe('Login', () => {
     expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
     expect(screen.getByText('Sign in to access your TapTrack cabinet')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Administrator Login →' }).getAttribute('href')).toBe('/admin/login')
+    expect(screen.getByRole('link', { name: 'User Guide' }).getAttribute('href')).toBe('/guide')
+    expect(screen.getByRole('link', { name: 'About TapTrack' }).getAttribute('href')).toBe('/about')
 
     cleanup()
     renderLogin(true)

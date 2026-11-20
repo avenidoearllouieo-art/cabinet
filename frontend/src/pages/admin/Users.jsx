@@ -13,7 +13,9 @@ import UserDrawer from '../../components/users/UserDrawer.jsx'
 import UserDetailsPanel from '../../components/users/UserDetailsPanel.jsx'
 import AnchoredMenu from '../../components/users/AnchoredMenu.jsx'
 import UserActionDialog from '../../components/users/UserActionDialog.jsx'
-import { Search, Plus, Upload, CheckCircle2, CircleOff, FileText, FileSpreadsheet, ShieldCheck, Activity, UserCheck, X, ChevronLeft, ChevronRight, ChevronDown, Trash2, UserRoundCheck, UserRoundX } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { Plus, Upload, CheckCircle2, CircleOff, FileText, FileSpreadsheet, ShieldCheck, Activity, UserCheck, ChevronLeft, ChevronRight, ChevronDown, Trash2, UserRoundCheck, UserRoundX } from 'lucide-react'
 import UserImportWizard from '../../components/users/UserImportWizard.jsx'
 
 export default function Users() {
@@ -319,10 +321,10 @@ export default function Users() {
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <SummaryCard icon={UserCheck} title="Students" value={totalStudents} trendText={`${activeStudents} active`} iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={Activity} title="Instructors" value={totalInstructors} trendText={`${activeInstructors} active`} iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={ShieldCheck} title="Administrators" value={totalAdmins} trendText={`${activeAdmins} active`} iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={CircleOff} title="Inactive Accounts" value={inactiveUsers} trendText={`Across ${totalUsers} accounts`} iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={UserCheck} title={pluralize(totalStudents, 'Student', 'Students')} value={totalStudents} trendText={`${pluralize(activeStudents, 'active student', 'active students')}`} iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Activity} title={pluralize(totalInstructors, 'Instructor', 'Instructors')} value={totalInstructors} trendText={`${pluralize(activeInstructors, 'active instructor', 'active instructors')}`} iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={ShieldCheck} title={pluralize(totalAdmins, 'Administrator', 'Administrators')} value={totalAdmins} trendText={`${pluralize(activeAdmins, 'active administrator', 'active administrators')}`} iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={CircleOff} title={`Inactive ${pluralize(inactiveUsers, 'Account', 'Accounts')}`} value={inactiveUsers} trendText={`Across ${pluralize(totalUsers, 'account')}`} iconBg="bg-amber-50" iconColor="text-amber-900" />
       </div>
 
       {error && (
@@ -338,18 +340,7 @@ export default function Users() {
             <p className="text-sm text-[#64748b]">Browse registered users and account access.</p>
           </div>
           <div className="flex w-full min-w-0 flex-col gap-3 lg:w-auto lg:flex-row">
-            <label className="relative block min-w-0 flex-1 lg:min-w-[280px] lg:max-w-[380px]">
-              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => { setQuery(event.target.value); setPage(1) }}
-                placeholder="Search name, username, email, ID, or NFC UID"
-                className="tt-control w-full pl-10 pr-10"
-                aria-label="Search users"
-              />
-              {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
-            </label>
+            <SearchField value={query} onChange={(value) => { setQuery(value); setPage(1) }} onClear={() => { setQuery(''); setPage(1) }} placeholder="Search name, username, email, ID, or NFC UID" ariaLabel="Search users" className="w-full flex-1 lg:min-w-[280px] lg:max-w-[380px]" />
             <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:flex">
                 <select value={filters.status} onChange={(event) => { setFilters((current) => ({ ...current, status: event.target.value })); setPage(1) }} className="tt-control w-full lg:min-w-[170px]">
                   <option value="">All statuses</option>
@@ -398,7 +389,10 @@ export default function Users() {
             </AnchoredMenu>
             {protectedSelection.length > 0 && <span className="text-xs text-amber-800">Protected administrator accounts cannot be deactivated or deleted here.</span>}
           </div>
-          <div className="text-right text-sm text-slate-500">{filteredUsers.length} result{filteredUsers.length === 1 ? '' : 's'}{selectedIds.length > 0 && <span className="ml-2 font-semibold text-[#002B5B]">{selectedIds.length} selected</span>}</div>
+          <div className="flex flex-wrap items-center justify-end gap-3 text-right text-sm text-slate-500">
+            <span>{pluralize(filteredUsers.length, 'result')}{selectedIds.length > 0 && <span className="ml-2 font-semibold text-[#002B5B]">{pluralize(selectedIds.length, 'user')} selected</span>}</span>
+            {(query || activeRole !== 'all' || filters.status || filters.section) && <button type="button" onClick={() => { setQuery(''); setActiveRole('all'); setFilters({ status: '', section: '' }); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>}
+          </div>
         </div>
         {loading ? (
           <TableSkeleton />

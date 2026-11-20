@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
 import UserCabinetAccessModal from '../../components/users/UserCabinetAccessModal.jsx'
+import { pluralize } from '../../utils/labels.js'
 import { ChevronLeft, ClipboardList, AlertCircle } from 'lucide-react'
 
 const formatDate = (value) => {
@@ -29,17 +30,16 @@ export default function InstructorStudentProfile() {
   const fetchProfile = useCallback(async () => {
     try {
       setLoading(true)
-      const [studentResponse, submissionsResponse, activitiesResponse, accessLogsResponse] = await Promise.all([
+      const [studentResponse, profileDetailsResponse] = await Promise.all([
         api.get(`/users/${studentId}/`),
-        api.get(`/submissions/?student=${studentId}`),
-        api.get('/activities/'),
-        api.get(`/users/${studentId}/access-logs/`, { params: { page_size: 5 } }),
+        api.get(`/users/${studentId}/profile-details/`),
       ])
 
       setStudent(studentResponse.data)
-      setSubmissionsCount(Array.isArray(submissionsResponse.data) ? submissionsResponse.data.length : (submissionsResponse.data.results || []).length)
-      setActivitiesCount(Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : (activitiesResponse.data.results || []).length)
-      setRecentAccessLogs(Array.isArray(accessLogsResponse.data) ? accessLogsResponse.data : (accessLogsResponse.data.results || []))
+      const profileDetails = profileDetailsResponse.data || {}
+      setSubmissionsCount(Number(profileDetails.counts?.submissions) || 0)
+      setActivitiesCount(Number(profileDetails.counts?.activities) || 0)
+      setRecentAccessLogs(profileDetails.access_logs || [])
       setError('')
     } catch (err) {
       console.error('Error fetching student profile:', err)
@@ -114,8 +114,8 @@ export default function InstructorStudentProfile() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <StatCard icon={<ClipboardList />} label="Submitted" value={submissionsCount} subtitle="Activities received" />
-          <StatCard icon={<AlertCircle />} label="Missing" value={missingActivities} subtitle="Activities not submitted" bgColor="bg-amber-50" textColor="text-amber-900" />
+          <StatCard icon={<ClipboardList />} label={pluralize(submissionsCount, 'Submission', 'Submissions')} value={submissionsCount} subtitle="Activities received" />
+          <StatCard icon={<AlertCircle />} label={`${pluralize(missingActivities, 'Activity', 'Activities')} Missing`} value={missingActivities} subtitle="Activities not submitted" bgColor="bg-amber-50" textColor="text-amber-900" />
         </div>
       </div>
 

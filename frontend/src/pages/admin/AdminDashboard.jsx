@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../../components/PageHeader'
 import SummaryCard from '../../components/SummaryCard'
+import { pluralize } from '../../utils/labels.js'
 import CabinetStationStatus from '../../components/CabinetStationStatus'
 import { Activity, ClipboardList, Radio, Send, ShieldCheck, Users } from 'lucide-react'
 
@@ -62,9 +63,9 @@ export default function AdminDashboard() {
       ) : (
         <>
           <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-            <SummaryCard icon={Users} title="Enrolled Students" value={stats.totalStudents} trendText="Registered system users" mobileTrendText="Students" iconBg="bg-blue-50" iconColor="text-blue-900" />
-            <SummaryCard icon={ClipboardList} title="Active Activities" value={stats.totalAssignments} trendText="Published coursework" mobileTrendText="Published" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-            <SummaryCard icon={Send} title="Submissions" value={stats.totalSubmissions} trendText="Files received" mobileTrendText="Received" iconBg="bg-violet-50" iconColor="text-violet-900" />
+            <SummaryCard icon={Users} title={`${pluralize(stats.totalStudents, 'Student', 'Students')} Enrolled`} value={stats.totalStudents} trendText="Registered system users" mobileTrendText="Students" iconBg="bg-blue-50" iconColor="text-blue-900" />
+            <SummaryCard icon={ClipboardList} title={`Active ${pluralize(stats.totalAssignments, 'Activity', 'Activities')}`} value={stats.totalAssignments} trendText="Published coursework" mobileTrendText="Published" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+            <SummaryCard icon={Send} title={pluralize(stats.totalSubmissions, 'Submission', 'Submissions')} value={stats.totalSubmissions} trendText="Files received" mobileTrendText="Received" iconBg="bg-violet-50" iconColor="text-violet-900" />
             <SummaryCard icon={ShieldCheck} title="Access Records" value={stats.totalAccessLogs} trendText="Recorded NFC and login events" mobileTrendText="NFC and login" iconBg="bg-amber-50" iconColor="text-amber-900" />
           </div>
 

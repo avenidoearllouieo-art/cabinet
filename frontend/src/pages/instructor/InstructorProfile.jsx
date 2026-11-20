@@ -4,6 +4,7 @@ import { ArrowLeft, BadgeCheck, BookOpen, Camera, Mail, Phone, Trash2, UploadClo
 import api from '../../services/api.js'
 import Modal from '../../components/Modal.jsx'
 import PageHeader from '../../components/PageHeader'
+import { pluralize } from '../../utils/labels.js'
 import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
 import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
@@ -260,7 +261,7 @@ export default function InstructorProfile() {
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#eef4fa] text-[#0B2A4A]"><BookOpen size={18} /></div>
           <div>
             <h2 className="text-base font-semibold text-[#0B2A4A]">Assigned Sections</h2>
-            <p className="text-sm text-slate-500">{assignedSectionList.length} section{assignedSectionList.length === 1 ? '' : 's'}</p>
+            <p className="text-sm text-slate-500">{pluralize(assignedSectionList.length, 'section')}</p>
           </div>
         </div>
         {assignedSectionList.length === 0 ? (

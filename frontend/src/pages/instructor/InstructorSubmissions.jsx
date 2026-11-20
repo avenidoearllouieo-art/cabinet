@@ -9,8 +9,9 @@ import StatusBadge from '../../components/StatusBadge'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import GradeSubmissionModal from '../../components/submissions/GradeSubmissionModal.jsx'
 import { fetchAllResults } from '../../services/paginatedResults.js'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
 import {
-  Search,
   Eye,
   CheckCircle2,
   Send,
@@ -63,37 +64,40 @@ export default function InstructorSubmissions() {
   const [selectedSubmission, setSelectedSubmission] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
   const activeSectionId = initialSectionId || selectedSection
+  const activeSelectedActivity = activities.some((activity) => String(activity.id) === String(selectedActivity)) ? selectedActivity : ''
 
-  const fetchFilters = useCallback(async () => {
+  const fetchFilters = useCallback(async (signal) => {
     try {
       const [sectionPage, activityPage] = await Promise.all([
-        fetchAllResults(api, '/sections/'),
-        fetchAllResults(api, '/activities/', activeSectionId ? { section: activeSectionId } : {}),
+        fetchAllResults(api, '/sections/', {}, { signal }),
+        fetchAllResults(api, '/activities/', activeSectionId ? { section: activeSectionId } : {}, { signal }),
       ])
+      if (signal?.aborted) return
       setSections(sectionPage.results)
       setActivities(activityPage.results)
       setTotalActivities(activityPage.count)
     } catch (err) {
-      console.error('Error fetching filter lists:', err)
+      if (!signal?.aborted) console.error('Error fetching filter lists:', err)
     }
   }, [activeSectionId])
 
-  const fetchSubmissions = useCallback(async () => {
+  const fetchSubmissions = useCallback(async (signal) => {
     try {
       setLoading(true)
       const params = {
         search: query || undefined,
         student__section: activeSectionId || undefined,
-        activity: selectedActivity || undefined,
+        activity: activeSelectedActivity || undefined,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         ordering: selectedSort === 'oldest' ? 'submitted_at' : selectedSort === 'highest_score' ? '-score' : selectedSort === 'lowest_score' ? 'score' : '-submitted_at',
         page,
       }
 
       const [response, statsResponse] = await Promise.all([
-        api.get('/submissions/', { params }),
-        api.get('/submissions/stats/', { params: { ...params, page: undefined, ordering: undefined } }),
+        api.get('/submissions/', { params, signal }),
+        api.get('/submissions/stats/', { params: { ...params, page: undefined, ordering: undefined }, signal }),
       ])
+      if (signal?.aborted) return
       const rawSubmissions = Array.isArray(response.data)
         ? response.data
         : response.data.results || []
@@ -105,12 +109,14 @@ export default function InstructorSubmissions() {
       setPageCount(Math.max(1, Math.ceil((response.data.count ?? rawSubmissions.length) / 10)))
       setError('')
     } catch (err) {
-      console.error('Error fetching submissions:', err)
-      setError('Failed to load submissions.')
+      if (!signal?.aborted) {
+        console.error('Error fetching submissions:', err)
+        setError('Failed to load submissions.')
+      }
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
-  }, [activeSectionId, page, query, selectedActivity, selectedSort, selectedStatus])
+  }, [activeSectionId, activeSelectedActivity, page, query, selectedSort, selectedStatus])
 
   const handleSubmissionGraded = async (gradedSubmission) => {
     setSubmissions((existing) =>
@@ -135,13 +141,15 @@ export default function InstructorSubmissions() {
   }
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchFilters, 0)
-    return () => window.clearTimeout(timeoutId)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => fetchFilters(controller.signal), 0)
+    return () => { window.clearTimeout(timeoutId); controller.abort() }
   }, [fetchFilters])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchSubmissions, 0)
-    return () => window.clearTimeout(timeoutId)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => fetchSubmissions(controller.signal), 0)
+    return () => { window.clearTimeout(timeoutId); controller.abort() }
   }, [fetchSubmissions])
 
   const filteredSubmissions = useMemo(() => {
@@ -221,8 +229,8 @@ export default function InstructorSubmissions() {
         <PageHeader title="Instructor Submissions" description="Review, grade, and track student submissions." />
 
         <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-          <StatCard icon={<Circle />} label="Activities" value={totalActivities} subtitle="Created by you" />
-          <StatCard icon={<Send />} label="Submissions" value={totalSubmissions} subtitle="Received" />
+          <StatCard icon={<Circle />} label={pluralize(totalActivities, 'Activity', 'Activities')} value={totalActivities} subtitle="Created by you" />
+          <StatCard icon={<Send />} label={pluralize(totalSubmissions, 'Submission', 'Submissions')} value={totalSubmissions} subtitle="Received" />
           <StatCard icon={<Filter />} label="Pending Review" value={pendingReviewCount} subtitle="Awaiting grading" bgColor="bg-amber-50" textColor="text-amber-900" />
           <StatCard icon={<CheckCircle2 />} label="Graded" value={gradedCount} subtitle="Reviewed" bgColor="bg-emerald-50" textColor="text-emerald-900" />
         </div>
@@ -230,16 +238,7 @@ export default function InstructorSubmissions() {
 
       <div className="rounded-xl border border-[#dbe5f0] bg-white p-4 shadow-sm">
         <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-3 md:flex-row">
-          <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
-            <Search size={18} className="text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search student ID, name, or activity..."
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-              className="h-11 flex-1 border-0 bg-transparent text-sm outline-none"
-            />
-          </div>
+          <SearchField value={query} onChange={(value) => { setQuery(value); setPage(1) }} onClear={() => { setQuery(''); setPage(1) }} placeholder="Search student ID, name, or activity..." ariaLabel="Search submissions" className="w-full md:max-w-md" />
 
           <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
           <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
@@ -247,7 +246,7 @@ export default function InstructorSubmissions() {
             <select
               value={activeSectionId}
               onChange={(e) => { setSelectedSection(e.target.value); setPage(1) }}
-              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+              className="tt-control mt-2 w-full"
             >
               {!sectionScoped && <option value="">All Sections</option>}
               {sections.filter((section) => !sectionScoped || String(section.id) === String(initialSectionId)).map((section) => (
@@ -258,12 +257,12 @@ export default function InstructorSubmissions() {
             </select>
           </label>
 
-          <label className="flex flex-col text-sm text-slate-700">
+          <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
             Activity
             <select
-              value={selectedActivity}
+              value={activeSelectedActivity}
               onChange={(e) => { setSelectedActivity(e.target.value); setPage(1) }}
-              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+              className="tt-control mt-2 w-full"
             >
               <option value="">All Activities</option>
               {activities.map((activity) => (
@@ -274,12 +273,12 @@ export default function InstructorSubmissions() {
             </select>
           </label>
 
-          <label className="flex flex-col text-sm text-slate-700">
+          <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
             Status
             <select
               value={selectedStatus}
               onChange={(e) => { setSelectedStatus(e.target.value); setPage(1) }}
-              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+              className="tt-control mt-2 w-full"
             >
               <option value="all">All</option>
               <option value="submitted">Submitted</option>
@@ -288,12 +287,12 @@ export default function InstructorSubmissions() {
             </select>
           </label>
 
-          <label className="flex flex-col text-sm text-slate-700">
+          <label className="flex min-w-[150px] flex-col text-sm text-slate-700">
             Sort by
             <select
               value={selectedSort}
               onChange={(e) => { setSelectedSort(e.target.value); setPage(1) }}
-              className="mt-2 h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+              className="tt-control mt-2 w-full"
             >
               {sortOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -303,6 +302,13 @@ export default function InstructorSubmissions() {
             </select>
           </label>
           </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+          <span>{pluralize(totalSubmissions, 'submission')}{loading ? ' · Loading…' : ''}</span>
+          {(query || selectedActivity || selectedStatus !== 'all' || selectedSort !== 'newest' || (!sectionScoped && selectedSection)) && (
+            <button type="button" onClick={() => { setQuery(''); setSelectedActivity(''); setSelectedStatus('all'); setSelectedSort('newest'); setSelectedSection(initialSectionId); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>
+          )}
         </div>
 
         {error && (

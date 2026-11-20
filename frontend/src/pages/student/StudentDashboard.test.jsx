@@ -56,7 +56,7 @@ describe('StudentDashboard', () => {
       </MemoryRouter>,
     )
 
-    await waitFor(() => expect(screen.getByText('Assigned Activities')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('8 Activities Assigned')).toBeTruthy())
     expect(screen.getByRole('heading', { name: 'Student Dashboard' })).toBeTruthy()
     expect(screen.getByText(/Welcome back, Maya\./)).toBeTruthy()
     expect(screen.queryByText('Welcome back')).toBeNull()

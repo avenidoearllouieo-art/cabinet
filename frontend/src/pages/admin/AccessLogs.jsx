@@ -9,7 +9,9 @@ import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.j
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { formatAccessLogDuration } from '../../components/accesslogs/accessLogFormatters.js'
-import { Search, LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus, FileSpreadsheet } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus, FileSpreadsheet } from 'lucide-react'
 
 const formatDate = (value) => {
   if (!value) return '—'
@@ -422,18 +424,7 @@ export default function AccessLogs() {
         </div>
 
         <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <label className="relative block w-full lg:max-w-[360px]">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#6B7280]">
-              <Search size={16} />
-            </span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search access logs..."
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-700 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
-          </label>
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search access logs..." ariaLabel="Search access logs" className="w-full lg:max-w-[360px]" />
 
           <div className="flex flex-1 flex-wrap gap-3 lg:justify-end">
             <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
@@ -532,7 +523,7 @@ export default function AccessLogs() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span>{filteredLogs.length} result{filteredLogs.length === 1 ? '' : 's'}</span>
+            <span>{pluralize(filteredLogs.length, 'result')}</span>
             <button type="button" onClick={handleExportExcel} disabled={!filteredLogs.length || exporting} className="inline-flex min-h-11 items-center gap-2 rounded-[8px] border border-[#D1D5DB] bg-white px-4 py-2 text-sm font-semibold text-taptrack-navy hover:bg-taptrack-gold/15 disabled:cursor-not-allowed disabled:opacity-50">
               <FileSpreadsheet size={16} />{exporting ? 'Exporting...' : `Export Excel${selectedIds.length ? ` (${selectedIds.length} selected)` : ''}`}
             </button>

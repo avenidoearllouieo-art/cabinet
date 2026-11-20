@@ -35,6 +35,8 @@ export default function ChangePasswordForm({ role }) {
     if (!currentPassword) nextErrors.current_password = 'Enter your current password.'
     if (!newPassword) nextErrors.new_password = 'Enter a new password.'
     else if (newPassword.length < 8) nextErrors.new_password = 'Use at least 8 characters.'
+    else if (currentPassword && newPassword === currentPassword) nextErrors.new_password = 'Your new password must be different from your current password.'
+    else if (![ /[A-Z]/.test(newPassword), /[a-z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword) ].every(Boolean)) nextErrors.new_password = 'Use upper- and lowercase letters, a number, and a symbol.'
     if (!confirmPassword) nextErrors.confirm_password = 'Confirm your new password.'
     else if (newPassword !== confirmPassword) nextErrors.confirm_password = 'The passwords do not match.'
     if (Object.keys(nextErrors).length) return setErrors(nextErrors)
@@ -77,6 +79,7 @@ export default function ChangePasswordForm({ role }) {
         <FormSection icon={ShieldCheck} title="Choose a new password" description="A longer password with mixed character types is harder to guess.">
           <div className="space-y-5">
             <PasswordField label="New password" required value={newPassword} onChange={update(setNewPassword, 'new_password')} error={errors.new_password} helper="Use at least 8 characters with upper- and lowercase letters, a number, and a symbol." />
+            {currentPassword && newPassword === currentPassword && !errors.new_password && <p role="alert" className="-mt-3 text-sm text-rose-700">Your new password must be different from your current password.</p>}
             {newPassword && <div aria-label={`Password strength ${passwordScore} out of 5`}><div className="flex gap-1">{[1, 2, 3, 4, 5].map((value) => <span key={value} className={`h-1.5 flex-1 rounded-full ${value <= passwordScore ? passwordScore < 3 ? 'bg-rose-500' : passwordScore < 5 ? 'bg-amber-500' : 'bg-emerald-500' : 'bg-slate-200'}`} />)}</div><p className="mt-1 text-xs text-slate-500">Strength: {passwordScore < 3 ? 'Weak' : passwordScore < 5 ? 'Good' : 'Strong'}</p></div>}
             <PasswordField label="Confirm new password" required value={confirmPassword} onChange={update(setConfirmPassword, 'confirm_password')} error={errors.confirm_password} />
           </div>

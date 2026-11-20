@@ -6,7 +6,8 @@ import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import ViewInstructorAccessLogModal from '../../components/accesslogs/ViewInstructorAccessLogModal.jsx'
-import { Search, CheckCircle2, AlertCircle, LogIn, Eye } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { CheckCircle2, AlertCircle, LogIn, Eye } from 'lucide-react'
 
 const getStatusBadge = (status) => {
   if (!status) return <span className="text-[#6B7280]">—</span>
@@ -155,20 +156,7 @@ export default function StudentAccessLogs() {
         </div>
 
         <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <label className="relative block">
-            <span className="sr-only">Search logs</span>
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => {
-                setPage(1)
-                setQuery(event.target.value)
-              }}
-              placeholder="Search access history..."
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
-          </label>
+          <SearchField value={query} onChange={(value) => { setPage(1); setQuery(value) }} onClear={() => { setPage(1); setQuery('') }} placeholder="Search access history..." ariaLabel="Search logs" />
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Status</label>

@@ -8,7 +8,9 @@ import AddActivityModal from '../../components/activities/AddActivityModal.jsx'
 import EditActivityModal from '../../components/activities/EditActivityModal.jsx'
 import ViewActivityModal from '../../components/activities/ViewActivityModal.jsx'
 import DeleteActivityModal from '../../components/activities/DeleteActivityModal.jsx'
-import { Search, Plus, ClipboardList, Edit2, Trash2, Eye } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { pluralize } from '../../utils/labels.js'
+import { Plus, ClipboardList, Edit2, Trash2, Eye } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 
@@ -204,11 +206,8 @@ export default function InstructorActivities() {
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="mb-4 flex w-full flex-col items-center justify-between gap-3 rounded-lg border border-[#dbe5f0] bg-[#f7f9fc] p-3 md:flex-row">
-          <div className="flex h-11 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm focus-within:border-transparent focus-within:ring-2 focus-within:ring-blue-900 md:max-w-md">
-            <Search size={18} className="text-slate-400" />
-            <input type="text" placeholder="Search activities..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-full flex-1 border-0 bg-transparent text-sm outline-none" />
-          </div>
-          <span className="text-sm text-slate-500">{filteredActivities.length} activities</span>
+          <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search activities..." ariaLabel="Search activities" className="w-full md:max-w-md" />
+          <span className="text-sm text-slate-500">{pluralize(filteredActivities.length, 'activity', 'activities')}</span>
         </div>
 
         {error && (

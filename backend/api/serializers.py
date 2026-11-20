@@ -3,6 +3,7 @@ import os
 import logging
 
 from django.utils import timezone
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import serializers
@@ -489,6 +490,43 @@ class CabinetRegistrationSerializer(serializers.Serializer):
         else:
             if not attrs.get('instructor_id', '').strip():
                 raise serializers.ValidationError({'instructor_id': 'Instructor ID is required for instructor registrations.'})
+        return attrs
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(required=True, write_only=True, allow_blank=False)
+    new_password = serializers.CharField(required=True, write_only=True, allow_blank=False)
+    confirm_password = serializers.CharField(required=True, write_only=True, allow_blank=False)
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        current_password = attrs['current_password']
+        new_password = attrs['new_password']
+
+        if not user.check_password(current_password):
+            raise serializers.ValidationError({'current_password': 'Current password is incorrect.'})
+        if new_password != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'New password and confirmation do not match.'})
+        if user.check_password(new_password):
+            raise serializers.ValidationError({
+                'new_password': 'Your new password must be different from your current password.'
+            })
+        if len(new_password) < 8:
+            raise serializers.ValidationError({'new_password': 'Use at least 8 characters.'})
+        if not (any(char.isupper() for char in new_password)
+                and any(char.islower() for char in new_password)
+                and any(char.isdigit() for char in new_password)
+                and any(not char.isalnum() for char in new_password)):
+            raise serializers.ValidationError({
+                'new_password': 'Use upper- and lowercase letters, a number, and a symbol.'
+            })
+
+        from django.contrib.auth.password_validation import validate_password
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({'new_password': error.messages}) from error
+
         return attrs
 
 

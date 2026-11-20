@@ -9,7 +9,8 @@ import StatusBadge from '../../components/StatusBadge'
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
 import ViewInstructorAccessLogModal from '../../components/accesslogs/ViewInstructorAccessLogModal.jsx'
 import { accessLogResult, accessLogValue, formatAccessLogDate, formatAccessLogTime } from '../../components/accesslogs/accessLogFormatters.js'
-import { Search, CheckCircle2, AlertCircle, LogIn, Users, Eye } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { CheckCircle2, AlertCircle, LogIn, Users, Eye } from 'lucide-react'
 
 const getStatusBadge = (log) => {
   const result = accessLogResult(log)
@@ -232,20 +233,7 @@ export default function InstructorAccessLogs() {
         </div>
 
         <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <label className="relative block">
-            <span className="sr-only">Search logs</span>
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value)
-                setPage(1)
-              }}
-              placeholder="Search student ID, name, or cabinet"
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-11 text-sm text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-blue-900"
-            />
-          </label>
+          <SearchField value={query} onChange={(value) => { setQuery(value); setPage(1) }} onClear={() => { setQuery(''); setPage(1) }} placeholder="Search student ID, name, or cabinet" ariaLabel="Search logs" />
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Section</label>

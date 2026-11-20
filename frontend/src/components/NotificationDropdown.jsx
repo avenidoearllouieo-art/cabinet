@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Bell, ClipboardList, Send, GraduationCap, LockKeyhole, Settings, X, Inbox } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api.js'
+import { pluralize } from '../utils/labels.js'
 
 const categoryStyles = {
   activity: { icon: ClipboardList, color: 'bg-blue-100 text-blue-700', label: 'Activities' },
@@ -144,7 +145,7 @@ export default function NotificationDropdown() {
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E5E7EB] px-3 py-4 sm:flex-nowrap sm:px-5 sm:py-5">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold text-[#111827]">Notifications</h2>
-                <p className="mt-1 text-sm text-[#6B7280]">{unreadCount} unread</p>
+                <p className="mt-1 text-sm text-[#6B7280]">{pluralize(unreadCount, 'unread notification', 'unread notifications')}</p>
               </div>
               <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
                 <button

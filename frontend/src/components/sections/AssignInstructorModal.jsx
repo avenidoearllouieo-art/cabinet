@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { pluralize } from '../../utils/labels.js'
 import { AlertCircle, LoaderCircle, UserRound } from 'lucide-react'
 import api from '../../services/api.js'
 import { fetchAllResults } from '../../services/paginatedResults.js'
@@ -134,7 +135,7 @@ export default function AssignInstructorModal({ isOpen, sections = [], onClose, 
         {replacementSections.length > 0 && (
           <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <input type="checkbox" checked={confirmReplacement} onChange={(event) => { setConfirmReplacement(event.target.checked); setError('') }} className="mt-0.5 h-4 w-4 accent-[#082b53]" disabled={saving} />
-            <span>Replace the current instructor for {replacementSections.length} selected section{replacementSections.length === 1 ? '' : 's'} with {instructorName}.</span>
+            <span>Replace the current instructor for {pluralize(replacementSections.length, 'selected section')} with {instructorName}.</span>
           </label>
         )}
 

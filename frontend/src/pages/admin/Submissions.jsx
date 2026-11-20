@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Search, Send, CheckCircle2, AlertCircle, Clock, X } from 'lucide-react'
+import { Send, CheckCircle2, AlertCircle, Clock } from 'lucide-react'
 import api from '../../services/api.js'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import PageHeader from '../../components/PageHeader'
+import SearchField from '../../components/SearchField.jsx'
 import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import Pagination from '../../components/Pagination.jsx'
 import SubmissionActionsMenu from '../../components/submissions/SubmissionActionsMenu.jsx'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
+import { pluralize } from '../../utils/labels.js'
 
 const statusOptions = [
   { value: '', label: 'All statuses' },
@@ -88,7 +90,7 @@ export default function Submissions() {
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
 
-  const fetchSubmissions = useCallback(async () => {
+  const fetchSubmissions = useCallback(async (signal) => {
     try {
       setLoading(true)
       const params = { page, ordering: '-submitted_at' }
@@ -96,7 +98,8 @@ export default function Submissions() {
       if (activityIdFilter) params.activity = activityIdFilter
       if (statusFilter) params.status = statusFilter
       if (submittedDate) params.submission_date = submittedDate
-      const response = await api.get('/submissions/', { params })
+      const response = await api.get('/submissions/', { params, signal })
+      if (signal?.aborted) return
       const rawData = Array.isArray(response.data) ? response.data : response.data.results || []
       setSubmissions(rawData)
       const count = Array.isArray(response.data) ? rawData.length : Number(response.data.count || 0)
@@ -104,16 +107,19 @@ export default function Submissions() {
       setPageCount(Math.max(1, Math.ceil(count / PAGE_SIZE)))
       setError('')
     } catch (err) {
-      console.error('Error fetching submissions:', err)
-      setError('Failed to load submissions.')
+      if (!signal?.aborted) {
+        console.error('Error fetching submissions:', err)
+        setError('Failed to load submissions.')
+      }
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [activityIdFilter, page, query, statusFilter, submittedDate])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchSubmissions, 0)
-    return () => window.clearTimeout(timeoutId)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => fetchSubmissions(controller.signal), 0)
+    return () => { window.clearTimeout(timeoutId); controller.abort() }
   }, [fetchSubmissions])
 
   useEffect(() => {
@@ -216,7 +222,7 @@ export default function Submissions() {
       />
 
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <SummaryCard icon={Send} title="Total Submissions" value={totalSubmissions} trendText="All student submissions" iconBg="bg-blue-50" iconColor="text-blue-900" />
+        <SummaryCard icon={Send} title={`Total ${pluralize(totalSubmissions, 'Submission', 'Submissions')}`} value={totalSubmissions} trendText="All student submissions" iconBg="bg-blue-50" iconColor="text-blue-900" />
         <SummaryCard icon={CheckCircle2} title="Graded" value={gradedCount} trendText="Fully reviewed" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
         <SummaryCard icon={Clock} title="Pending Review" value={pendingCount} trendText="Awaiting review" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
         <SummaryCard icon={AlertCircle} title="Late" value={lateCount} trendText="Past due date" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
@@ -237,19 +243,15 @@ export default function Submissions() {
         </div>
 
         <div className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="relative block min-w-0">
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#64748b]"><Search size={16} /></span>
-            <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search student, ID, activity, or section" aria-label="Search submissions" className="tt-control w-full pl-10 pr-10" />
-            {query && <button type="button" onClick={() => { setQuery(''); setPage(1) }} aria-label="Clear submission search" className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><X size={16} /></button>}
-          </label>
+          <SearchField value={query} onChange={(value) => { setQuery(value); setPage(1) }} onClear={() => { setQuery(''); setPage(1) }} placeholder="Search student, ID, activity, or section" ariaLabel="Search submissions" clearLabel="Clear submission search" />
           <label className="min-w-0"><span className="sr-only">Filter activity</span><select value={activityIdFilter} onChange={(event) => { setActivityIdFilter(event.target.value); setPage(1) }} className="tt-control w-full"><option value="">All activities</option>{activityOptions.map((activity) => <option key={activity.id} value={activity.id}>{activity.title}{activity.type ? ` · ${activity.type}` : ''}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Filter submission status</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="tt-control w-full">{statusOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}</select></label>
           <label className="min-w-0"><span className="sr-only">Submission date</span><input type="date" aria-label="Submission date" value={submittedDate} onChange={(event) => { setSubmittedDate(event.target.value); setPage(1) }} className="tt-control w-full" /></label>
         </div>
 
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
-          <span>{totalCount} result{totalCount === 1 ? '' : 's'}{loading ? ' · Loading…' : ''}</span>
-          {(query || activityIdFilter || statusFilter || submittedDate) && <button type="button" onClick={() => { setQuery(''); setActivityIdFilter(''); setStatusFilter(''); setSubmittedDate(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Clear filters</button>}
+          <span>{pluralize(totalCount, 'result')}{loading ? ' · Loading…' : ''}</span>
+          {(query || activityIdFilter || statusFilter || submittedDate) && <button type="button" onClick={() => { setQuery(''); setActivityIdFilter(''); setStatusFilter(''); setSubmittedDate(''); setPage(1) }} className="min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">Reset Filters</button>}
         </div>
 
         <DataTable

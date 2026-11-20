@@ -6,7 +6,8 @@ import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEventModal.jsx'
 import DeleteCabinetEventModal from '../../components/cabinetevents/DeleteCabinetEventModal.jsx'
-import { Search, Box, Plus } from 'lucide-react'
+import SearchField from '../../components/SearchField.jsx'
+import { Box, Plus } from 'lucide-react'
 
 export default function CabinetEvents() {
   const [events, setEvents] = useState([])
@@ -226,11 +227,7 @@ export default function CabinetEvents() {
           </div>
 
           <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-            <label className="relative block">
-              <span className="sr-only">Search events</span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" />
-              <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search events" className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 pl-9 text-sm text-slate-900 outline-none focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40" />
-            </label>
+            <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search events" ariaLabel="Search events" />
             <label>
               <span className="sr-only">Filter station or cabinet</span>
               <select value={cabinetFilter} onChange={(event) => setCabinetFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">

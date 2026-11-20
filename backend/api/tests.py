@@ -1275,6 +1275,56 @@ class SubmissionGradingTests(TestCase):
         result_ids = [item['id'] for item in response.json()['results']]
         self.assertEqual(result_ids, [end_boundary.pk, start_boundary.pk])
 
+    def test_student_submission_status_filters_match_display_statuses(self):
+        self.activity.due_date = timezone.now() + timedelta(days=1)
+        self.activity.status = Activity.StatusChoices.PUBLISHED
+        self.activity.save(update_fields=['due_date', 'status'])
+        returned = Submission.objects.create(
+            activity=self.activity,
+            student=self.student,
+            attempt=2,
+            feedback='Please revise this section.',
+        )
+        graded = Submission.objects.create(
+            activity=self.activity,
+            student=self.student,
+            attempt=3,
+            score=90,
+        )
+        late_activity = Activity.objects.create(
+            title='Past due activity',
+            created_by=self.instructor,
+            section=self.section,
+            due_date=timezone.now() - timedelta(days=1),
+            status=Activity.StatusChoices.PUBLISHED,
+        )
+        late = Submission.objects.create(
+            activity=late_activity,
+            student=self.student,
+            attempt=1,
+        )
+        self.client.force_authenticate(user=self.student)
+
+        expected = {
+            'under_review': {self.submission.pk},
+            'submitted': {self.submission.pk},
+            'returned_for_revision': {returned.pk},
+            'graded': {graded.pk},
+            'late': {late.pk},
+        }
+        for status_filter, expected_ids in expected.items():
+            with self.subTest(status=status_filter):
+                response = self.client.get('/api/submissions/', {'status': status_filter})
+                self.assertEqual(response.status_code, 200, response.json())
+                self.assertEqual({item['id'] for item in response.json()['results']}, expected_ids)
+
+        summary = self.client.get('/api/submissions/stats/').json()
+        self.assertEqual(summary['totalSubmissions'], 4)
+        self.assertEqual(summary['underReview'], 1)
+        self.assertEqual(summary['returnedForRevision'], 1)
+        self.assertEqual(summary['graded'], 1)
+        self.assertEqual(summary['lateSubmissions'], 1)
+
     def test_assigned_section_instructor_can_grade_and_view_stats(self):
         assigned_instructor = User.objects.create_user(
             username='assigned-grader',
@@ -3324,6 +3374,71 @@ class StudentAccessLogsTests(TestCase):
         self.assertEqual(log.station, 'Station 1')
         self.assertEqual(log.cabinet_name, 'Cabinet 1')
         self.assertEqual(log.reason, 'Original audit reason')
+
+
+@override_settings(TAPTRACK_NFC_DEVICE_MAP=[
+    {'device_id': 'CABINET1-STATION1', 'api_key': 'test-device-key', 'station': 'Station 1', 'cabinet_name': 'Cabinet 1', 'active': True},
+])
+class PasswordChangeApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='password-change-student',
+            email='password-change-student@example.com',
+            password='Current-Password-123!',
+            role=User.RoleChoices.STUDENT,
+            student_id='PASS-CHANGE-001',
+        )
+        self.client.force_authenticate(self.user)
+
+    def change_password(self, new_password='Updated-Password-456!', confirm_password=None, current_password='Current-Password-123!'):
+        return self.client.post('/api/users/change_password/', {
+            'current_password': current_password,
+            'new_password': new_password,
+            'confirm_password': confirm_password if confirm_password is not None else new_password,
+        }, format='json')
+
+    def test_correct_current_password_allows_successful_change(self):
+        response = self.change_password()
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Updated-Password-456!'))
+
+    def test_incorrect_current_password_is_rejected_without_changing_password(self):
+        response = self.change_password(current_password='Wrong-Password-123!')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('current_password', response.json())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Current-Password-123!'))
+
+    def test_reusing_current_password_is_rejected_without_changing_password(self):
+        response = self.change_password(
+            new_password='Current-Password-123!',
+            confirm_password='Current-Password-123!',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('different from your current password', response.json()['new_password'][0])
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Current-Password-123!'))
+
+    def test_confirmation_mismatch_is_rejected_without_changing_password(self):
+        response = self.change_password(confirm_password='Different-Password-789!')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('confirm_password', response.json())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Current-Password-123!'))
+
+    def test_password_strength_policy_is_enforced(self):
+        response = self.change_password(new_password='weakpassword', confirm_password='weakpassword')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('new_password', response.json())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Current-Password-123!'))
 
 
 @override_settings(TAPTRACK_NFC_DEVICE_MAP=[

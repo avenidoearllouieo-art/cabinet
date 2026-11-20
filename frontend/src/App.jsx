@@ -33,6 +33,8 @@ const StudentSubmissions = lazy(() => import('./pages/student/StudentSubmissions
 const StudentAccessLogs = lazy(() => import('./pages/student/StudentAccessLogs.jsx'))
 const StudentProfile = lazy(() => import('./pages/student/StudentProfile.jsx'))
 const StudentChangePassword = lazy(() => import('./pages/student/StudentChangePassword.jsx'))
+const UserGuide = lazy(() => import('./pages/UserGuide.jsx'))
+const AboutTapTrack = lazy(() => import('./pages/AboutTapTrack.jsx'))
 
 function App() {
   return (
@@ -42,6 +44,8 @@ function App() {
         <Route path='/' element={<Login />} />
         <Route path='/forgot-password' element={<ForgotPassword />} />
         <Route path='/register' element={<NfcRegistration />} />
+        <Route path='/guide' element={<UserGuide />} />
+        <Route path='/about' element={<AboutTapTrack />} />
         <Route path='/admin/login' element={<Login administratorOnly />} />
         <Route path='/instructor/login' element={<Login />} />
         <Route path='/student/login' element={<Login />} />

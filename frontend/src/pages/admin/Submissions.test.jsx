@@ -44,7 +44,7 @@ describe('Admin Submissions', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledWith('/submissions/', expect.objectContaining({
       params: expect.objectContaining({ submission_date: '2026-08-11' }),
     })))
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Filters' }))
     await waitFor(() => {
       const request = api.get.mock.calls.filter(([path]) => path === '/submissions/').at(-1)
       expect(request[1].params).not.toHaveProperty('submission_date')

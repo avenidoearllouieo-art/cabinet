@@ -4,6 +4,7 @@ import api from '../../services/api.js'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import PageHeader from '../../components/PageHeader'
 import StatCard from '../../components/StatCard'
+import { pluralize } from '../../utils/labels.js'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import CabinetStationStatus from '../../components/CabinetStationStatus'
@@ -213,7 +214,7 @@ export default function InstructorDashboard() {
           <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
             <StatCard 
               icon={<ClipboardList size={20} />} 
-              label="Total Activities" 
+              label={`Total ${pluralize(stats.totalActivities, 'Activity', 'Activities')}`}
               value={stats.totalActivities} 
               subtitle="Created by you"
               mobileSubtitle="Created"
@@ -222,7 +223,7 @@ export default function InstructorDashboard() {
             />
             <StatCard 
               icon={<TrendingUp size={20} />} 
-              label="Active Activities" 
+              label={`Active ${pluralize(stats.activeActivities, 'Activity', 'Activities')}`}
               value={stats.activeActivities} 
               subtitle="Open now"
               mobileSubtitle="Open"
@@ -231,7 +232,7 @@ export default function InstructorDashboard() {
             />
             <StatCard 
               icon={<Send size={20} />} 
-              label="Submissions"
+              label={pluralize(stats.totalSubmissions, 'Submission', 'Submissions')}
               value={stats.totalSubmissions} 
               subtitle="Received from students"
               mobileSubtitle="Received"
