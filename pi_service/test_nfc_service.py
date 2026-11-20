@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -392,16 +393,58 @@ class NFCServiceTests(unittest.TestCase):
             calls.append((request, timeout))
             return FakeResponse(200, {'station': 'Station 1', 'session': {'id': 4}})
 
-        verifier = DjangoVerifier(api_key='workflow-device-key', opener=opener)
+        with patch.dict(os.environ, {
+            'TAPTRACK_DJANGO_API_BASE_URL': 'https://taptrack-api.onrender.com/api',
+            'TAPTRACK_DJANGO_VERIFY_URL': 'http://127.0.0.1:8000/api/verify-nfc/',
+            'TAPTRACK_DJANGO_WORKFLOW_URL': 'http://127.0.0.1:8000/api/cabinet/workflow/',
+        }):
+            verifier = DjangoVerifier(api_key='workflow-device-key', opener=opener)
         status, payload = verifier.workflow('open', 'Station 2')
 
         self.assertEqual(status, 200)
         self.assertEqual(payload['station'], 'Station 1')
         request, timeout = calls[0]
-        self.assertEqual(request.full_url, 'http://127.0.0.1:8000/api/cabinet/workflow/')
+        self.assertEqual(request.full_url, 'https://taptrack-api.onrender.com/api/cabinet/workflow/')
         self.assertEqual(json.loads(request.data), {'command': 'open', 'station': 'Station 2'})
         self.assertEqual(request.get_header('X-api-key'), 'workflow-device-key')
         self.assertEqual(timeout, 5)
+
+    def test_django_workflow_connection_failure_is_logged_and_actionable(self):
+        def opener(request, timeout):
+            raise urllib.error.URLError(ConnectionRefusedError('connection refused'))
+
+        verifier = DjangoVerifier(
+            api_key='workflow-device-key',
+            api_base_url='https://taptrack-api.onrender.com/api',
+            opener=opener,
+        )
+
+        with self.assertLogs('nfc_service', level='WARNING') as logs:
+            with self.assertRaises(DjangoRequestError) as raised:
+                verifier.workflow()
+
+        self.assertIn('TAPTRACK_DJANGO_API_BASE_URL', str(raised.exception))
+        self.assertIn('endpoint=taptrack-api.onrender.com/api/cabinet/workflow/', logs.output[0])
+        self.assertIn('connection refused', logs.output[0])
+        self.assertNotIn('workflow-device-key', logs.output[0])
+
+    def test_django_workflow_auth_failure_is_logged_without_exposing_device_key(self):
+        verifier = DjangoVerifier(
+            api_key='workflow-device-key',
+            api_base_url='https://taptrack-api.onrender.com/api',
+            opener=lambda request, timeout: FakeResponse(
+                401,
+                {'error': 'Invalid key workflow-device-key.'},
+            ),
+        )
+
+        with self.assertLogs('nfc_service', level='WARNING') as logs:
+            status, payload = verifier.workflow()
+
+        self.assertEqual(status, 401)
+        self.assertEqual(payload['error'], 'Invalid key [redacted].')
+        self.assertIn('status=401', logs.output[0])
+        self.assertNotIn('workflow-device-key', logs.output[0])
 
     def test_password_recovery_proxy_uses_device_key_and_exact_endpoint_contracts(self):
         requests = []
@@ -1174,6 +1217,20 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(BRIDGE_HOST, '127.0.0.1')
         self.assertEqual(BRIDGE_PORT, 5001)
         self.assertEqual(self.server.server_address[0], '127.0.0.1')
+
+    def test_workflow_bridge_returns_actionable_502_when_django_is_unreachable(self):
+        def fail_workflow():
+            raise DjangoRequestError(
+                'Unable to reach the Django cabinet workflow. Check TAPTRACK_DJANGO_API_BASE_URL and Pi network connectivity.'
+            )
+
+        self.service.verifier.workflow = fail_workflow
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(self.url + '/cabinet/workflow')
+
+        response_body = json.loads(raised.exception.read().decode('utf-8'))
+        self.assertEqual(raised.exception.code, HTTPStatus.BAD_GATEWAY)
+        self.assertIn('TAPTRACK_DJANGO_API_BASE_URL', response_body['error'])
 
     def test_password_reset_queue_route_returns_safe_queue_and_enforces_origin_policy(self):
         status, _, payload = self.get_json('/password-reset/queue')

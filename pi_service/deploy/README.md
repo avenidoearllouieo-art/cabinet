@@ -42,19 +42,19 @@ nvm alias default 22.12.0
 
 ## Repository setup
 
-The confirmed live NFC-service checkout is `/home/taptrack/tap-track`. Verify the active unit before changing it:
+The confirmed live NFC-service checkout is `/home/taptrack/tap-track-clean`. Verify the active unit before changing it:
 
 ```bash
 sudo systemctl cat taptrack-nfc.service
 sudo systemctl show taptrack-nfc.service -p User -p WorkingDirectory -p ExecStart
-cd /home/taptrack/tap-track
+cd /home/taptrack/tap-track-clean
 git status --short
 ```
 
 Before updating, confirm the service unit's `WorkingDirectory` and `ExecStart` match this checkout and the Git branch/remotes are the expected deployment source. Do not overwrite `/etc/taptrack/nfc.env` or SQLite files. After the reviewed change is available on the Pi:
 
 ```bash
-cd /home/taptrack/tap-track
+cd /home/taptrack/tap-track-clean
 git status --short
 git branch --show-current
 git remote -v
@@ -64,7 +64,7 @@ git pull --ff-only
 Only restart the NFC service for Pi-service changes. If deploying the updated unit file, first inspect the diff and then install it and reload systemd:
 
 ```bash
-sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/taptrack-nfc.service
+sudo cp /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/taptrack-nfc.service
 sudo systemctl daemon-reload
 sudo systemctl restart taptrack-nfc.service
 sudo systemctl status taptrack-nfc.service
@@ -76,7 +76,7 @@ This is a deployment procedure only; these commands were not run as part of this
 ## Install Python dependencies
 
 ```bash
-cd /home/taptrack/tap-track/pi_service
+cd /home/taptrack/tap-track-clean/pi_service
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -85,7 +85,7 @@ pip install -r requirements.txt
 ## Install Cabinet dependencies
 
 ```bash
-cd /home/taptrack/tap-track/cabinet
+cd /home/taptrack/tap-track-clean/cabinet
 npm ci
 ```
 
@@ -102,7 +102,7 @@ VITE_NFC_COOLDOWN_MS=2500
 Build the optimized static bundle once during installation or an intentional UI update; it is not rebuilt at boot:
 
 ```bash
-cd /home/taptrack/tap-track/cabinet
+cd /home/taptrack/tap-track-clean/cabinet
 npm run build
 test -f dist/index.html
 ```
@@ -127,7 +127,7 @@ DEVICE_API_KEY=<secret device key mapped in Django>
 TAPTRACK_DJANGO_API_BASE_URL=https://taptrack-api.onrender.com/api
 TAPTRACK_NFC_ALLOWED_ORIGINS=http://localhost:5177,http://127.0.0.1:5177
 TAPTRACK_NFC_MODE=hardware
-TAPTRACK_NFC_DB_PATH=/home/taptrack/tap-track/pi_service/nfc_events.sqlite3
+TAPTRACK_NFC_DB_PATH=/home/taptrack/tap-track-clean/pi_service/nfc_events.sqlite3
 TAPTRACK_MOTOR_MODE=serial
 TAPTRACK_MOTOR_ACTUATION_ENABLED=false
 ```
@@ -154,11 +154,11 @@ These are instructions only; the units are not installed or enabled by this repo
 
 Before enabling kiosk mode, configure Raspberry Pi OS desktop autologin for user `pi`, verify the display is available as `DISPLAY=:0` with `/home/pi/.Xauthority`, and disable any existing Chromium kiosk autostart so only one browser is launched. The supplied kiosk unit assumes that X11 session layout; adapt its display environment if the Pi uses a different desktop/session configuration.
 
-After configuring `/etc/taptrack/nfc.env`, building the Cabinet bundle, and checking that the current worktree/paths match `/home/taptrack/tap-track`, install the Cabinet server and kiosk unit templates:
+After configuring `/etc/taptrack/nfc.env`, building the Cabinet bundle, and checking that the current worktree/paths match `/home/taptrack/tap-track-clean`, install the Cabinet server and kiosk unit templates:
 
 ```bash
-sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
-sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
+sudo install -m 0644 /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
+sudo install -m 0644 /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
 sudo systemctl daemon-reload
 sudo systemctl enable taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
 sudo systemctl start taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
@@ -191,8 +191,8 @@ Before deploying, inspect `systemctl cat taptrack-nfc.service`, its effective pa
 
 ```bash
 cp -p /home/taptrack/tap-track-clean/pi_service/nfc_service.py /home/taptrack/tap-track-clean/pi_service/nfc_service.py.before-origin-fix
-cp -p /home/taptrack/tap-track/pi_service/nfc-service.env /home/taptrack/tap-track/pi_service/nfc-service.env.before-origin-fix
-sudoedit /home/taptrack/tap-track/pi_service/nfc-service.env
+cp -p /home/taptrack/tap-track-clean/pi_service/nfc-service.env /home/taptrack/tap-track-clean/pi_service/nfc-service.env.before-origin-fix
+sudoedit /home/taptrack/tap-track-clean/pi_service/nfc-service.env
 python -m py_compile /home/taptrack/tap-track-clean/pi_service/nfc_service.py
 sudo systemctl restart taptrack-nfc.service
 systemctl is-active taptrack-nfc.service
@@ -205,7 +205,7 @@ Verify from the Cabinet browser that handoff uses `/nfc-bridge/password-reset/ha
 
 ```bash
 cp -p /home/taptrack/tap-track-clean/pi_service/nfc_service.py.before-origin-fix /home/taptrack/tap-track-clean/pi_service/nfc_service.py
-cp -p /home/taptrack/tap-track/pi_service/nfc-service.env.before-origin-fix /home/taptrack/tap-track/pi_service/nfc-service.env
+cp -p /home/taptrack/tap-track-clean/pi_service/nfc-service.env.before-origin-fix /home/taptrack/tap-track-clean/pi_service/nfc-service.env
 sudo systemctl restart taptrack-nfc.service
 ```
 
@@ -258,8 +258,8 @@ If an item is unchecked, do not energize the driver or enable actuation. This ch
 After all commissioning items above have been verified, configure `TAPTRACK_MOTOR_MODE=serial`, set `TAPTRACK_MOTOR_ACTUATION_ENABLED=true`, and set each safety confirmation variable to `true`. The service then exposes an owner-only Unix socket at `/run/taptrack/motor-control.sock`; it is not an HTTP/Cabinet endpoint. With the motor-driver power physically isolated, the mechanism stationary, and the ESP32 power-cycled, run the interactive command as the `taptrack` service account:
 
 ```bash
-sudo -u taptrack /home/taptrack/tap-track/pi_service/.venv/bin/python \
-  /home/taptrack/tap-track/pi_service/motor_recovery.py
+sudo -u taptrack /home/taptrack/tap-track-clean/pi_service/.venv/bin/python \
+  /home/taptrack/tap-track-clean/pi_service/motor_recovery.py
 ```
 
 The script requires an explicit `YES` for each physical confirmation. A successful recovery performs only the V2 serial handshake; it sends no movement command and does not prove shutter position. The service remains armed only for the lifetime of that process; after a restart or uncertain result, recovery must be repeated. Follow the separately approved physical procedure before reconnecting driver power. This workflow is intentionally unavailable in mock mode or when actuation is disabled.
@@ -323,7 +323,7 @@ Django derives the Cabinet from the authenticated device. The Cabinet screen sel
 ## Build the Cabinet UI
 
 ```bash
-cd /home/taptrack/tap-track/cabinet
+cd /home/taptrack/tap-track-clean/cabinet
 npm run build
 ```
 
@@ -334,10 +334,10 @@ The Vite output directory is `cabinet/dist`. Build it manually when installing o
 Use a systemd service:
 
 ```bash
-sudo cp /home/taptrack/tap-track/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/
+sudo cp /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-nfc.service /etc/systemd/system/
 sudo install -d -m 700 /etc/taptrack
 if [ ! -e /etc/taptrack/nfc.env ]; then
-  sudo install -o taptrack -g taptrack -m 600 /home/taptrack/tap-track/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
+  sudo install -o taptrack -g taptrack -m 600 /home/taptrack/tap-track-clean/pi_service/deploy/nfc.env.example /etc/taptrack/nfc.env
 fi
 # Edit /etc/taptrack/nfc.env locally and set DEVICE_API_KEY; do not commit this file.
 # Keep the file owned by taptrack with mode 0600; the Cabinet creates a private
@@ -348,15 +348,15 @@ sudo systemctl start taptrack-nfc.service
 sudo systemctl status taptrack-nfc.service
 ```
 
-The service starts from `/home/taptrack/tap-track/pi_service`, runs as `taptrack`, restarts if it crashes, detects `IC Reader IC Reader`, and binds the read-only scan bridge to `127.0.0.1:5001`. SQLite events are stored at `/home/taptrack/tap-track/pi_service/nfc_events.sqlite3` by default. The Django device key is read only from `/etc/taptrack/nfc.env`. Preserve the existing secret file when updating code; do not overwrite it with the example template.
+The service starts from `/home/taptrack/tap-track-clean/pi_service`, runs as `taptrack`, restarts if it crashes, detects `IC Reader IC Reader`, and binds the read-only scan bridge to `127.0.0.1:5001`. SQLite events are stored at `/home/taptrack/tap-track-clean/pi_service/nfc_events.sqlite3` by default. The Django device key is read only from `/etc/taptrack/nfc.env`. Preserve the existing secret file when updating code; do not overwrite it with the example template.
 
 ## Install Cabinet and kiosk units (opt-in)
 
-Build the bundle first using the commands above. Check that the current checkout matches `/home/taptrack/tap-track`, that no manual Vite/preview process is already using port 5177, and that only one Chromium autostart mechanism will be enabled. Install the existing NFC service plus the Cabinet and kiosk unit templates:
+Build the bundle first using the commands above. Check that the current checkout matches `/home/taptrack/tap-track-clean`, that no manual Vite/preview process is already using port 5177, and that only one Chromium autostart mechanism will be enabled. Install the existing NFC service plus the Cabinet and kiosk unit templates:
 
 ```bash
-sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
-sudo install -m 0644 /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
+sudo install -m 0644 /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-cabinet.service /etc/systemd/system/taptrack-cabinet.service
+sudo install -m 0644 /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-kiosk.service /etc/systemd/system/taptrack-kiosk.service
 sudo systemctl daemon-reload
 sudo systemctl enable taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
 sudo systemctl start taptrack-nfc.service taptrack-cabinet.service taptrack-kiosk.service
@@ -371,7 +371,7 @@ To use the desktop autostart alternative instead of `taptrack-kiosk.service`:
 
 ```bash
 mkdir -p /home/pi/.config/autostart
-cp /home/taptrack/tap-track/pi_service/deploy/taptrack-kiosk.desktop /home/pi/.config/autostart/
+cp /home/taptrack/tap-track-clean/pi_service/deploy/taptrack-kiosk.desktop /home/pi/.config/autostart/
 ```
 
 Do not install both kiosk autostart options.
@@ -459,6 +459,38 @@ Check the reader adapter and confirm that the NFC service is healthy at `http://
 - Confirm the Pi can resolve and reach `taptrack-api.onrender.com`.
 - Check `TAPTRACK_DJANGO_API_BASE_URL` in `/etc/taptrack/nfc.env` and the Render route in `cabinet/deploy/nginx.conf`.
 - Test with `curl` from the Pi.
+
+### Cabinet workflow returns HTTP 502
+
+The local `/cabinet/workflow` bridge forwards to `TAPTRACK_DJANGO_API_BASE_URL/cabinet/workflow/`. A refused or timed-out connection is reported locally as HTTP 502. The supported production base is `https://taptrack-api.onrender.com/api`; do not point it at `127.0.0.1:8000` unless Django actually runs on the Pi. The request uses `X-API-Key` from `/etc/taptrack/nfc.env`; Django must map that same key to an active cabinet in `TAPTRACK_NFC_DEVICE_MAP`. A 401 from `/api/` alone does not verify the device key or workflow route.
+
+Back up and edit only the Pi environment file. Preserve `DEVICE_API_KEY` and the motor safety values; remove stale legacy URL entries if present:
+
+```bash
+sudo cp -a /etc/taptrack/nfc.env "/etc/taptrack/nfc.env.backup.$(date +%Y%m%d-%H%M%S)"
+sudoedit /etc/taptrack/nfc.env
+```
+
+Set `TAPTRACK_DJANGO_API_BASE_URL=https://taptrack-api.onrender.com/api`. Then inspect the active unit and any drop-ins without printing its full environment (which could contain credentials):
+
+```bash
+sudo systemctl show taptrack-nfc.service -p FragmentPath -p DropInPaths -p EnvironmentFiles -p WorkingDirectory -p ExecStart
+sudo grep -RniE 'TAPTRACK_DJANGO_(API_BASE|VERIFY|WORKFLOW)_URL' /etc/systemd/system/taptrack-nfc.service.d 2>/dev/null || true
+```
+
+If a drop-in sets an old Django URL, edit that existing drop-in with `sudo systemctl edit taptrack-nfc.service` and remove only the stale `Environment=TAPTRACK_DJANGO_*_URL=...` assignment; keep `/etc/taptrack/nfc.env` as the source of the corrected base URL and preserve all other directives. If an extra `EnvironmentFile` contains an old URL, edit that file in place instead. Do not add a duplicate drop-in, reset unrelated environment files, or put `DEVICE_API_KEY` in a unit override. If the main unit still points to an old checkout, review and back it up before installing the matching template from `/home/taptrack/tap-track-clean/pi_service/deploy/taptrack-nfc.service`.
+
+After saving changes, reload and restart only the NFC service when no password-recovery handoff or workflow is active. The GET below is read-only and does not issue a motor command:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart taptrack-nfc.service
+sudo systemctl status taptrack-nfc.service --no-pager
+curl --fail-with-body --silent --show-error http://127.0.0.1:5001/cabinet/workflow
+sudo journalctl -u taptrack-nfc.service -n 50 --no-pager
+```
+
+On HTTP 401/403, verify the Render `TAPTRACK_NFC_DEVICE_MAP` entry is active and contains the exact existing Pi key and cabinet name. Never print or paste the key into logs, browser configuration, or support output.
 
 ### Network unavailable
 

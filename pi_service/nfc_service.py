@@ -560,6 +560,7 @@ class DjangoVerifier:
 
     def workflow(self, command: str | None = None, station: str | None = None) -> tuple[int, dict]:
         if not self.api_key:
+            logger.error('django_workflow_request_failed reason=device_api_key_missing')
             raise DjangoRequestError('Django device API key is not configured.')
 
         workflow_payload = {'command': command} if command is not None else None
@@ -576,6 +577,8 @@ class DjangoVerifier:
             },
             method='GET' if command is None else 'POST',
         )
+        parsed_endpoint = urlsplit(self.workflow_url)
+        endpoint = f'{parsed_endpoint.hostname or "unknown-host"}{parsed_endpoint.path}'
         try:
             opener = self.opener or urllib.request.urlopen
             response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
@@ -586,7 +589,14 @@ class DjangoVerifier:
             status_code = error.code
             response_body = error.read()
         except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise DjangoRequestError('Unable to reach the Django cabinet workflow.') from error
+            reason = self._sanitize_error(getattr(error, 'reason', error))
+            logger.warning(
+                'django_workflow_request_failed method=%s endpoint=%s error_type=%s reason=%s',
+                request.get_method(), endpoint, type(error).__name__, reason,
+            )
+            raise DjangoRequestError(
+                'Unable to reach the Django cabinet workflow. Check TAPTRACK_DJANGO_API_BASE_URL and Pi network connectivity.'
+            ) from error
 
         try:
             payload = json.loads(response_body.decode('utf-8')) if response_body else {}
@@ -596,6 +606,12 @@ class DjangoVerifier:
             payload = {}
         if 'error' in payload:
             payload['error'] = self._sanitize_error(payload['error'])
+        if status_code >= HTTPStatus.BAD_REQUEST:
+            detail = payload.get('error') or payload.get('detail') or f'Django returned HTTP {status_code}.'
+            logger.warning(
+                'django_workflow_request_failed method=%s endpoint=%s status=%s detail=%s',
+                request.get_method(), endpoint, status_code, self._sanitize_error(detail),
+            )
         return status_code, payload
 
 

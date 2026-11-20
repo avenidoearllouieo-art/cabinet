@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=taptrack
-WorkingDirectory=/home/taptrack/tap-track/pi_service
+WorkingDirectory=/home/taptrack/tap-track-clean/pi_service
 EnvironmentFile=-/etc/taptrack/nfc.env
-ExecStart=/home/taptrack/tap-track/pi_service/.venv/bin/python /home/taptrack/tap-track/pi_service/nfc_service.py
+ExecStart=/home/taptrack/tap-track-clean/pi_service/.venv/bin/python /home/taptrack/tap-track-clean/pi_service/nfc_service.py
 Restart=always
 RestartSec=3
 RuntimeDirectory=taptrack
