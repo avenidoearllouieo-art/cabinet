@@ -68,6 +68,16 @@ export function validateUploadFiles(newFiles, { existingFiles = [], studentSubmi
 export function uploadErrorMessages(error, fallback) {
   const status = Number(error?.response?.status || error?.status)
   if (status === 401) return ['Your session has expired. Please sign in again.']
+  const code = error?.response?.data?.code
+  const safeMessages = {
+    upload_initialization_failed: 'Upload initialization failed. Please retry.',
+    part_authorization_failed: 'File storage rejected the upload. Please retry.',
+    multipart_completion_failed: 'Unable to complete multipart upload. Please retry.',
+    file_verification_failed: 'File verification failed. Please retry.',
+    multipart_abort_failed: 'Upload interrupted. Please retry.',
+    storage_unavailable: 'Unable to connect to file storage. Please retry.',
+  }
+  if (safeMessages[code]) return [safeMessages[code]]
   if ([502, 503, 504].includes(status)) return ['Unable to connect to file storage. Please retry.']
   if (status >= 500) return [fallback]
 

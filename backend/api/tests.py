@@ -623,6 +623,20 @@ class InstructorSectionAssignmentTests(TestCase):
         self.section_a.refresh_from_db()
         self.assertIsNone(self.section_a.instructor)
 
+    def test_bulk_section_assignment_rejects_inactive_instructors(self):
+        self.second_instructor.is_active = False
+        self.second_instructor.save(update_fields=['is_active'])
+
+        response = self.client.patch('/api/sections/assign-instructor/', {
+            'section_ids': [self.section_a.pk],
+            'instructor_id': self.second_instructor.pk,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.json())
+        self.assertIn('registered instructor', ' '.join(response.json()['instructor_id']))
+        self.section_a.refresh_from_db()
+        self.assertIsNone(self.section_a.instructor)
+
     def test_bulk_section_assignment_requires_admin(self):
         self.client.force_authenticate(user=self.first_instructor)
 

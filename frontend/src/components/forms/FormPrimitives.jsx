@@ -180,7 +180,7 @@ export function FormDialog({
   )
 }
 
-export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busyLabel = 'Saving…', busy = false, disabled = false, destructiveAction, dirty = false, finalButtonType = 'submit', onFinalAction, hideCancel = false }) {
+export function FormActions({ onCancel, onBack, onNext, isLastStep = false, submitLabel = 'Save', busyLabel = 'Saving…', busy = false, disabled = false, destructiveAction, dirty = false, finalButtonType = 'submit', onFinalAction, finalActions, hideCancel = false }) {
   const requestCancel = () => {
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
     onCancel?.()
@@ -193,6 +193,8 @@ export function FormActions({ onCancel, onBack, onNext, isLastStep = false, subm
         {onBack && <button type="button" onClick={onBack} disabled={busy} className="min-h-11 rounded-xl border border-slate-300 bg-slate-100 px-5 py-2.5 text-sm font-semibold text-[#0B1F3A] transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:opacity-50">Back</button>}
         {!isLastStep ? (
           <button type="button" onClick={onNext} disabled={busy || disabled} className="min-h-11 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">Continue</button>
+        ) : finalActions ? (
+          finalActions
         ) : (
           <button type={finalButtonType} onClick={onFinalAction} disabled={busy || disabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#F5B700] px-6 py-2.5 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50">
             {busy ? <LoadingSpinner label={busyLabel} /> : submitLabel}

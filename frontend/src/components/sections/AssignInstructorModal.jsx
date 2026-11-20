@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, LoaderCircle, Search, UserRound } from 'lucide-react'
+import { AlertCircle, LoaderCircle, UserRound } from 'lucide-react'
 import api from '../../services/api.js'
 import { fetchAllResults } from '../../services/paginatedResults.js'
 import Modal from '../Modal.jsx'
@@ -9,19 +9,21 @@ const getInstructorName = (instructor) =>
 
 const getErrorMessage = (error) => {
   const data = error.response?.data
-  if (typeof data === 'string') return data
-  if (data?.detail) return data.detail
+  const fallback = 'The instructor assignment could not be saved. Please try again.'
+  if (typeof data === 'string') return /<!doctype\s+html|<html[\s>]/i.test(data) ? fallback : data
+  if (typeof data?.detail === 'string') {
+    return /<!doctype\s+html|<html[\s>]/i.test(data.detail) ? fallback : data.detail
+  }
   if (data && typeof data === 'object') {
     const messages = Object.values(data).flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean)
     if (messages.length) return messages.join(' ')
   }
-  return 'The instructor assignment could not be saved. Please try again.'
+  return fallback
 }
 
 export default function AssignInstructorModal({ isOpen, sections = [], onClose, onAssigned, onUnauthorized }) {
   const [instructors, setInstructors] = useState(null)
   const [instructorId, setInstructorId] = useState('')
-  const [search, setSearch] = useState('')
   const [confirmReplacement, setConfirmReplacement] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -33,7 +35,7 @@ export default function AssignInstructorModal({ isOpen, sections = [], onClose, 
     fetchAllResults(api, '/users/', { role: 'instructor', page_size: 100 })
       .then(({ results }) => {
         if (active) {
-          setInstructors(results.filter((user) => user.role === 'instructor' && user.is_active !== false))
+          setInstructors(results.filter((user) => user.role === 'instructor' && user.is_active === true))
           setError('')
         }
       })
@@ -54,18 +56,9 @@ export default function AssignInstructorModal({ isOpen, sections = [], onClose, 
   const replacementSections = selectedInstructor
     ? sections.filter((section) => section.instructor && String(section.instructor) !== instructorId)
     : []
-  const filteredInstructors = useMemo(() => {
-    const keyword = search.trim().toLowerCase()
-    if (!keyword) return availableInstructors
-    return availableInstructors.filter((instructor) => [getInstructorName(instructor), instructor.username, instructor.instructor_id, instructor.email]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(keyword)))
-  }, [availableInstructors, search])
-
   const handleClose = () => {
     setInstructors(null)
     setInstructorId('')
-    setSearch('')
     setConfirmReplacement(false)
     setError('')
     onClose?.()
@@ -84,7 +77,7 @@ export default function AssignInstructorModal({ isOpen, sections = [], onClose, 
       const response = await api.patch('/sections/assign-instructor/', {
         section_ids: sections.map((section) => Number(section.id)),
         instructor_id: Number(selectedInstructor.id),
-      })
+      }, { timeout: 30_000 })
       await onAssigned?.(response.data)
       onClose?.()
     } catch (requestError) {
@@ -123,17 +116,12 @@ export default function AssignInstructorModal({ isOpen, sections = [], onClose, 
         </section>
 
         <div>
-          <label htmlFor="assign-instructor-search" className="mb-1.5 block text-sm font-semibold text-[#28415f]">Find instructor</label>
-          <div className="relative">
-            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" aria-hidden="true" />
-            <input id="assign-instructor-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, ID, or email" className="tt-control w-full pl-10" disabled={loadingInstructors || saving} />
-          </div>
           <label htmlFor="assign-instructor-select" className="sr-only">Instructor</label>
           <div className="relative mt-2">
             <UserRound size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" aria-hidden="true" />
             <select id="assign-instructor-select" value={instructorId} onChange={(event) => { setInstructorId(event.target.value); setConfirmReplacement(false); setError('') }} className="tt-control w-full pl-10" disabled={loadingInstructors || saving}>
-              <option value="">{loadingInstructors ? 'Loading instructors…' : filteredInstructors.length ? 'Select an instructor' : 'No matching instructors'}</option>
-              {filteredInstructors.map((instructor) => (
+              <option value="">{loadingInstructors ? 'Loading instructors…' : availableInstructors.length ? 'Select an instructor' : 'No eligible instructors available'}</option>
+              {availableInstructors.map((instructor) => (
                 <option key={instructor.id} value={instructor.id}>
                   {getInstructorName(instructor)}{instructor.instructor_id ? ` · ${instructor.instructor_id}` : ''}{instructor.email ? ` · ${instructor.email}` : ''}
                 </option>

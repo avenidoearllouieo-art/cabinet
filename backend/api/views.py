@@ -100,10 +100,26 @@ from .excel_exports import branded_excel_response, format_duration
 from django.contrib.auth.password_validation import validate_password
 import secrets
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 MAX_ACCESS_LOG_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ACCESS_LOG_PHOTO_PIXELS = 20_000_000
+
+
+def log_api_operation_failure(request, operation, status_code, error):
+    source = 'unavailable'
+    if error.__traceback__:
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        source = f'{os.path.basename(frame.filename)}:{frame.lineno}:{frame.name}'
+    logger.error(
+        'API operation failed request_id=%s operation=%s status=%s exception_type=%s source=%s',
+        getattr(request, 'api_request_id', 'unavailable'),
+        operation,
+        status_code,
+        type(error).__name__,
+        source,
+    )
 
 
 def requested_export_ids(request):
@@ -548,7 +564,11 @@ class SectionViewSet(viewsets.ModelViewSet):
             return Response({'instructor_id': ['Select a registered instructor.']}, status=status.HTTP_400_BAD_REQUEST)
 
         unique_ids = list(dict.fromkeys(section_ids))
-        instructor = User.objects.filter(pk=instructor_id, role=User.RoleChoices.INSTRUCTOR).first()
+        instructor = User.objects.filter(
+            pk=instructor_id,
+            role=User.RoleChoices.INSTRUCTOR,
+            is_active=True,
+        ).first()
         if not instructor:
             return Response({'instructor_id': ['Select a registered instructor.']}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1040,8 +1060,13 @@ class StudentMultipartUploadStartView(APIView):
         try:
             if cache.add('taptrack-tigris-multipart-cleanup', True, timeout=3600):
                 abort_expired_multipart_sessions()
-        except Exception:
-            logger.exception('Could not clean expired Tigris multipart sessions before starting a new upload')
+        except Exception as error:
+            log_api_operation_failure(
+                request,
+                'cleanup expired multipart uploads',
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                error,
+            )
 
         with transaction.atomic():
             User.objects.select_for_update().get(pk=request.user.pk)
@@ -1065,9 +1090,18 @@ class StudentMultipartUploadStartView(APIView):
                 session = create_multipart_session(request.user, activity, filename, file_size)
             except ValueError as error:
                 return Response({'file': [str(error)]}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception:
-                logger.exception('Could not initiate a multipart upload for student %s and activity %s', request.user.pk, activity.pk)
-                return Response({'detail': 'Tigris could not start the video upload. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            except Exception as error:
+                log_api_operation_failure(
+                    request,
+                    'initialize multipart upload',
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    error,
+                )
+                return Response({
+                    'detail': 'Upload initialization failed. Please retry.',
+                    'code': 'upload_initialization_failed',
+                    'request_id': getattr(request, 'api_request_id', 'unavailable'),
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({
             'upload_id': str(session.pk),
             'part_size': session.part_size,
@@ -1088,9 +1122,18 @@ class StudentMultipartUploadPartView(APIView):
             url = presign_upload_part(session, part_number)
         except ValueError as error:
             return Response({'part_number': [str(error)]}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            logger.exception('Could not authorize multipart part for session %s', session.pk)
-            return Response({'detail': 'Tigris could not authorize this video part. Please retry.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as error:
+            log_api_operation_failure(
+                request,
+                'authorize multipart part',
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                error,
+            )
+            return Response({
+                'detail': 'File storage rejected the upload authorization. Please retry.',
+                'code': 'part_authorization_failed',
+                'request_id': getattr(request, 'api_request_id', 'unavailable'),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'url': url, 'expires_in': settings.TAPTRACK_PRESIGNED_PART_URL_TTL})
 
 
@@ -1117,9 +1160,18 @@ class StudentMultipartUploadCompleteView(APIView):
             upload = complete_multipart_session(session, request.data.get('parts'))
         except ValueError as error:
             return Response({'detail': str(error)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            logger.exception('Could not verify completed multipart upload session %s', session.pk)
-            return Response({'detail': 'The uploaded video could not be verified. No submission file was created.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as error:
+            log_api_operation_failure(
+                request,
+                'complete and verify multipart upload',
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                error,
+            )
+            return Response({
+                'detail': 'Unable to complete multipart upload. Please retry.',
+                'code': 'multipart_completion_failed',
+                'request_id': getattr(request, 'api_request_id', 'unavailable'),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(multipart_upload_response(upload, session.pk), status=status.HTTP_201_CREATED)
 
 
@@ -1137,9 +1189,18 @@ class StudentMultipartUploadAbortView(APIView):
             return Response({'detail': 'Only an active upload can be aborted.'}, status=status.HTTP_409_CONFLICT)
         try:
             abort_multipart_session(session)
-        except Exception:
-            logger.exception('Could not abort multipart upload session %s', session.pk)
-            return Response({'detail': 'Tigris could not abort this upload. It will be removed by multipart cleanup.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as error:
+            log_api_operation_failure(
+                request,
+                'abort multipart upload',
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                error,
+            )
+            return Response({
+                'detail': 'Upload cancellation could not finish. Cleanup will retry automatically.',
+                'code': 'multipart_abort_failed',
+                'request_id': getattr(request, 'api_request_id', 'unavailable'),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

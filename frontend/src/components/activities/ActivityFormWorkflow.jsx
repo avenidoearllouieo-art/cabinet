@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, CalendarClock, ClipboardCheck, PencilLine, Users } from 'lucide-react'
+import { BookOpen, CalendarClock, ClipboardCheck, LoaderCircle, PencilLine, Users } from 'lucide-react'
 import api from '../../services/api.js'
 import AcademicFileAttachments from '../files/AcademicFileAttachments.jsx'
 import { SUPPORTED_UPLOAD_ACCEPT, validateUploadFiles } from '../files/uploadPolicy.js'
@@ -121,6 +121,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [savingStatus, setSavingStatus] = useState(null)
   const [creationCompleted, setCreationCompleted] = useState(false)
   const [loadingSections, setLoadingSections] = useState(false)
   const [sections, setSections] = useState([])
@@ -276,6 +277,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
 
     submissionGuardRef.current = true
     setSaving(true)
+    setSavingStatus(nextStatus)
     setErrors({})
     setFormError('')
     setSuccessMessage('')
@@ -294,7 +296,10 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
       })
       form.files.forEach((file) => body.append('attachments', file))
       deletedAttachmentIds.forEach((id) => body.append('deleted_attachments', id))
-      const response = editing ? await api.patch(`/activities/${resolvedId}/`, body) : await api.post('/activities/', body)
+      const requestOptions = { timeout: form.files.length ? 10 * 60 * 1000 : 60_000 }
+      const response = editing
+        ? await api.patch(`/activities/${resolvedId}/`, body, requestOptions)
+        : await api.post('/activities/', body, requestOptions)
       if (!editing) setCreationCompleted(true)
       onSaved?.(response.data)
       const updated = editing ? { ...form, status: response.data.status || nextStatus, files: [] } : blankForm()
@@ -309,7 +314,13 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     } catch (error) {
       if (error.response?.status === 401) return onUnauthorized?.()
       const data = error.response?.data
-      if (data && typeof data === 'object') {
+      const contentType = String(error.response?.headers?.['content-type'] || '').toLowerCase()
+      const rawMessage = typeof data === 'string' ? data : typeof data?.detail === 'string' ? data.detail : ''
+      const isHtmlError = contentType.includes('text/html') || /<!doctype\s+html|<html[\s>]/i.test(rawMessage)
+      if (isHtmlError) {
+        setErrors({})
+        setFormError(`Failed to ${editing ? 'update' : 'create'} activity. Please try again.`)
+      } else if (data && typeof data === 'object') {
         setErrors(data)
         setFormError(typeof data.detail === 'string' ? data.detail : 'Some fields need your attention.')
         const fieldToStep = { title: 0, description: 0, instructions: 0, max_score: 0, section: 1, sections: 1, assigned_sections: 1, due_date: 2, attachments: 2 }
@@ -319,6 +330,7 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
     } finally {
       submissionGuardRef.current = false
       setSaving(false)
+      setSavingStatus(null)
     }
   }
 
@@ -343,13 +355,33 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
             onBack={step > 0 ? handlePreviousStep : undefined}
             onNext={handleNextStep}
             isLastStep={step === currentSteps.length - 1}
-              submitLabel={viewing ? 'Close' : form.status === 'Published' ? 'Publish Activity' : 'Save as Draft'}
-              busyLabel={viewing ? 'Closing…' : form.status === 'Published' ? 'Publishing…' : 'Saving draft…'}
+            submitLabel={viewing ? 'Close' : 'Save as Draft'}
+            busyLabel="Saving…"
             busy={viewing ? false : saving}
             disabled={loading || loadingSections || (!editing && creationCompleted)}
             dirty={viewing ? false : dirty}
             finalButtonType="button"
-              onFinalAction={viewing ? onClose : () => handleSaveActivity()}
+            onFinalAction={viewing ? onClose : undefined}
+            finalActions={!viewing && step === currentSteps.length - 1 && (
+              <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => handleSaveActivity('Draft')}
+                  disabled={saving || loading || loadingSections || (!editing && creationCompleted)}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-[#0B1F3A] transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving && savingStatus === 'Draft' ? <><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />Saving…</> : 'Save as Draft'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveActivity('Published')}
+                  disabled={saving || loading || loadingSections || (!editing && creationCompleted)}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#082B53] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#123e6b] focus:outline-none focus:ring-2 focus:ring-[#FFBE0B] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving && savingStatus === 'Published' ? <><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />Publishing…</> : 'Publish Activity'}
+                </button>
+              </div>
+            )}
           />
         </div>
       )}
@@ -396,24 +428,6 @@ export default function ActivityFormWorkflow({ isOpen, activityId, activity, onC
               <div className="sm:col-span-2"><ReviewItem label="Description" value={form.description || 'No description'} /></div>
               <div className="sm:col-span-2"><ReviewItem label="Instructions" value={form.instructions || 'No instructions'} /></div>
             </dl>
-            <div className="mt-5 max-w-sm">
-              <FormField label="Activity status" required helper={form.status === 'Published' ? 'Students in the assigned sections can see this activity after you publish it.' : 'Draft activities are saved for instructors and are not visible to students.'} error={errors.status}>
-                {({ id, describedBy, invalid }) => (
-                  <select
-                    id={id}
-                    value={form.status}
-                    onChange={update('status')}
-                    disabled={saving || loading}
-                    aria-describedby={describedBy}
-                    aria-invalid={invalid}
-                    className={controlClass(invalid)}
-                  >
-                    <option value="Draft">Draft</option>
-                    <option value="Published">Published</option>
-                  </select>
-                )}
-              </FormField>
-            </div>
           </FormSection>
         )}
       </div>

@@ -107,7 +107,7 @@ describe('Admin Sections', () => {
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/sections/assign-instructor/', {
       section_ids: [4],
       instructor_id: 12,
-    }))
+    }, { timeout: 30_000 }))
     expect(await screen.findByText('Instructor assigned to 1 section.')).toBeTruthy()
     expect(screen.getAllByText('Rae Santos').length).toBeGreaterThan(0)
   })

@@ -59,6 +59,7 @@ describe('ActivityFormWorkflow', () => {
     expect(payload.get('status')).toBe('Draft')
     expect(payload.get('cabinet_station')).toBeNull()
     expect(payload.get('attachments').name).toBe('brief.pdf')
+    expect(api.post.mock.calls[0][2]).toEqual({ timeout: 10 * 60 * 1000 })
     expect(saved).toHaveBeenCalledWith({ id: 5, attachments: [] })
   })
 
@@ -100,25 +101,17 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(api.post).not.toHaveBeenCalled()
-    const status = screen.getByRole('combobox', { name: /Activity status/ })
-    expect(status.value).toBe('Draft')
-    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
-    fireEvent.change(status, { target: { value: 'Published' } })
-    expect(status.value).toBe('Published')
-    expect(api.post).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: 'Save as Draft' })).toBeNull()
-    fireEvent.change(status, { target: { value: 'Draft' } })
-    expect(status.value).toBe('Draft')
-    expect(screen.getByRole('button', { name: 'Save as Draft' })).toBeTruthy()
-    expect(api.post).not.toHaveBeenCalled()
-    fireEvent.change(status, { target: { value: 'Published' } })
+    expect(screen.queryByLabelText('Activity status')).toBeNull()
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(2)
     const publish = screen.getByRole('button', { name: 'Publish Activity' })
     fireEvent.click(publish)
     fireEvent.click(publish)
 
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
     expect(api.post.mock.calls[0][1].get('status')).toBe('Published')
-    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Save as Draft' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Publish Activity' }).disabled).toBe(true)
   })
 
   it('saves an edited Draft without publishing and then honors explicit Publish', async () => {
@@ -131,22 +124,20 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Draft')
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: 'Save as Draft' }))
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
     expect(api.patch.mock.calls[0][1].get('status')).toBe('Draft')
-    fireEvent.change(screen.getByRole('combobox', { name: /Activity status/ }), { target: { value: 'Published' } })
     expect(api.patch).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
     expect(api.patch.mock.calls[1][1].get('status')).toBe('Published')
-    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Published')
   })
 
-  it('initializes an existing Published activity and updates it with one primary action', async () => {
+  it('initializes an existing Published activity and updates it using the explicit publish action', async () => {
     const published = {
       id: 8,
       title: 'Existing published activity',
@@ -164,14 +155,14 @@ describe('ActivityFormWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-    expect(screen.getByRole('combobox', { name: /Activity status/ }).value).toBe('Published')
-    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+    expect(screen.queryByLabelText('Activity status')).toBeNull()
+    expect(screen.getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Publish Activity' })).toBeTruthy()
     expect(document.body.textContent).toContain('existing.pdf')
     fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-    expect(api.patch).toHaveBeenCalledWith('/activities/8/', expect.any(FormData))
+    expect(api.patch).toHaveBeenCalledWith('/activities/8/', expect.any(FormData), { timeout: 60_000 })
     expect(api.patch.mock.calls[0][1].get('status')).toBe('Published')
     expect(api.post).not.toHaveBeenCalled()
   })
@@ -201,6 +192,25 @@ describe('ActivityFormWorkflow', () => {
     expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(false)
   })
 
+  it('recovers the Publish action after a request timeout without losing form data', async () => {
+    api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
+    api.post.mockRejectedValue({ code: 'ECONNABORTED', name: 'AxiosError' })
+    render(<ActivityFormWorkflow isOpen onSaved={vi.fn()} />)
+
+    fireEvent.change(await screen.findByLabelText(/Activity title/), { target: { value: 'Timeout-safe activity' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Section A' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Activity' }))
+
+    expect(await screen.findByText(/Failed to create activity\. Please try again\./)).toBeTruthy()
+    expect(document.body.textContent).toContain('Timeout-safe activity')
+    expect(screen.getByRole('button', { name: 'Publish Activity' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Back' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(false)
+  })
+
   it('does not create an activity when navigating Back or cancelling the wizard', async () => {
     const onClose = vi.fn()
     api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
@@ -226,7 +236,7 @@ describe('ActivityFormWorkflow', () => {
     expect(api.post).not.toHaveBeenCalled()
   })
 
-  it('keeps Cancel, Back, and one dynamic primary action in the sticky footer at phone and desktop widths', async () => {
+  it('keeps Cancel, Back, and both final actions in the sticky footer at phone and desktop widths', async () => {
     const originalWidth = window.innerWidth
     api.get.mockResolvedValue({ data: [{ id: 3, section_name: 'Section A' }] })
 
@@ -245,7 +255,8 @@ describe('ActivityFormWorkflow', () => {
       expect(footer.className).toContain('bg-white')
       expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
       expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy()
-      expect(within(footer).getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(1)
+      expect(within(footer).getAllByRole('button', { name: /Save as Draft|Publish Activity/ })).toHaveLength(2)
+      expect(screen.queryByLabelText('Activity status')).toBeNull()
       expect(api.post).not.toHaveBeenCalled()
     }
 
