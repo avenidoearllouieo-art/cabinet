@@ -260,7 +260,7 @@ describe('Cabinet photo scan integration', () => {
   })
 
   it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {
-    const registrationUrl = 'http://10.109.175.241:5177/register?token=enrollment-token-123'
+    const registrationUrl = 'https://frontend.example/register?token=enrollment-token-123'
     let workflowStarted = false
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)

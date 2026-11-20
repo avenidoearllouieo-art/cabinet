@@ -2,6 +2,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.contrib import admin as django_admin
+from django.core import mail
 from django.conf import settings
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.test import TransactionTestCase
@@ -16,6 +17,7 @@ from io import BytesIO
 from PIL import Image
 import os
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,6 +30,30 @@ from openpyxl import Workbook, load_workbook
 
 from .admin import AccessLogAdmin
 from .models import AccessLog, AccessLogPhoto, ActivityDiscussion, ActivityDiscussionAttachment, CabinetEvent, Notification, Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, TemporaryUpload, PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, CabinetSession
+
+
+def register_nfc_with_email_code(client, payload):
+    role = payload.get('role')
+    identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
+    mail.outbox.clear()
+    with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+        identity = client.post('/api/cabinet/enrollment/identity/', {
+            'token': payload.get('token'),
+            'role': role,
+            identifier_field: payload.get(identifier_field, ''),
+        }, format='json')
+    if identity.status_code != 202:
+        return identity
+    verification_code = '000000'
+    if mail.outbox:
+        match = re.search(r'verification code is (\d{6})', mail.outbox[-1].body)
+        if match:
+            verification_code = match.group(1)
+    return client.post(
+        '/api/cabinet/enrollment/register/',
+        {**payload, 'verification_code': verification_code},
+        format='json',
+    )
 
 
 class BackendEnvironmentLoadingTests(SimpleTestCase):
@@ -454,30 +480,27 @@ class InstructorSectionAssignmentTests(TestCase):
 
     def test_create_instructor_accepts_ids_and_returns_section_objects(self):
         response = self.client.post('/api/users/', {
-            'username': 'created-instructor',
             'email': 'created-instructor@example.com',
-            'password': 'secret1234',
             'role': User.RoleChoices.INSTRUCTOR,
             'instructor_id': 'INST-003',
             'assigned_sections': [self.section_a.pk, self.section_b.pk],
         }, format='json')
 
         self.assertEqual(response.status_code, 201, response.json())
-        created = User.objects.get(pk=response.json()['id'])
+        created = User.objects.get(instructor_id='INST-003')
+        self.assertIsNone(response.json()['username'])
+        self.assertNotIn('password', response.json())
+        self.assertFalse(created.has_usable_password())
         self.assertEqual(
             {item['section_id'] for item in response.json()['assigned_sections']},
             {self.section_a.pk, self.section_b.pk},
         )
         self.assertEqual(set(created.assigned_sections.values_list('pk', flat=True)), {self.section_a.pk, self.section_b.pk})
-        self.assertFalse(created.check_password('created-instructor'))
-        self.assertTrue(created.check_password('secret1234'))
         self.assertFalse(Section.objects.filter(pk__in=[self.section_a.pk, self.section_b.pk]).exclude(instructor=created).exists())
 
-    def test_admin_can_create_student_and_administrator_roles_and_invalid_roles_are_rejected(self):
+    def test_admin_can_create_student_without_credentials_but_not_admin_profiles_through_this_api(self):
         student_response = self.client.post('/api/users/', {
-            'username': 'created-student',
             'email': 'created-student@example.com',
-            'password': 'secret1234',
             'first_name': 'Created',
             'last_name': 'Student',
             'role': User.RoleChoices.STUDENT,
@@ -500,12 +523,34 @@ class InstructorSectionAssignmentTests(TestCase):
         }, format='json')
 
         self.assertEqual(student_response.status_code, 201, student_response.json())
-        self.assertEqual(admin_response.status_code, 201, admin_response.json())
         self.assertEqual(invalid_response.status_code, 400, invalid_response.json())
-        self.assertEqual(User.objects.get(username='created-student').role, User.RoleChoices.STUDENT)
-        self.assertEqual(User.objects.get(username='created-admin').role, User.RoleChoices.ADMIN)
-        self.assertTrue(User.objects.get(username='created-admin').check_password('secret1234'))
+        self.assertIsNone(student_response.json()['username'])
+        self.assertNotIn('password', student_response.json())
+        student = User.objects.get(student_id='ST-NEW-001')
+        self.assertFalse(student.has_usable_password())
+        self.assertEqual(student_response.json()['registration_status'], 'pending_registration')
+        self.assertEqual(admin_response.status_code, 400, admin_response.json())
+        self.assertFalse(User.objects.filter(email='created-admin@example.com').exists())
         self.assertTrue(User.objects.filter(pk=self.first_instructor.pk).exists())
+
+    def test_pending_profile_cannot_authenticate_until_registration(self):
+        response = self.client.post('/api/users/', {
+            'email': 'pending-login@example.com',
+            'first_name': 'Pending',
+            'last_name': 'Login',
+            'role': User.RoleChoices.STUDENT,
+            'student_id': 'ST-PENDING-LOGIN',
+            'section': self.section_a.pk,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        pending = User.objects.get(student_id='ST-PENDING-LOGIN')
+        self.assertFalse(pending.has_usable_password())
+        login = APIClient().post('/api/auth/login/', {
+            'username': pending.username,
+            'password': 'AnyAttemptedPassword!123',
+        }, format='json')
+        self.assertEqual(login.status_code, 401, login.json())
 
     def test_assignment_transfer_removes_previous_owner(self):
         self.first_instructor.assigned_sections.add(self.section_a)
@@ -2569,7 +2614,7 @@ class StudentWorkbookImportTests(TestCase):
             initial = self.client.post('/api/verify-nfc/', {'nfc_uid': test_uid}, HTTP_X_API_KEY=device_key)
             self.assertEqual(initial.status_code, 404, initial.json())
             token = parse_qs(urlparse(initial.json()['registration_url']).query)['token'][0]
-            registration = self.client.post('/api/cabinet/enrollment/register/', {
+            registration = register_nfc_with_email_code(self.client, {
                 'token': token,
                 'role': 'student',
                 'username': 'taylor_enroll',
@@ -5157,14 +5202,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertTrue(initial_verification.json()['registration_required'])
         token = parse_qs(urlparse(initial_verification.json()['registration_url']).query)['token'][0]
 
-        registration = self.client.post('/api/cabinet/enrollment/register/', {
+        registration = register_nfc_with_email_code(self.client, {
             'token': token,
             'role': 'student',
             'username': 'taptrack_test_student',
             'student_id': student.student_id,
             'password': 'Fixture-Only-Password-123',
             'confirm_password': 'Fixture-Only-Password-123',
-        }, format='json')
+        })
         self.assertEqual(registration.status_code, 201, registration.json())
 
         verification = self.client.post('/api/verify-nfc/', {
@@ -5492,7 +5537,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertTrue(validation.json()['valid'])
         self.assertTrue(enrollment.verify_token(token))
 
-    @override_settings(TAPTRACK_NFC_REGISTRATION_URL_BASE='http://10.109.175.241:5177/register')
+    @override_settings(NFC_REGISTRATION_URL_BASE='https://frontend.example/register')
     def test_new_enrollment_urls_use_configured_base_and_preserve_valid_token(self):
         response = self.client.post('/api/verify-nfc/', {
             'nfc_uid': 'card-configured-url-001',
@@ -5504,7 +5549,7 @@ class CabinetDeviceIntegrationTests(TestCase):
         token = parse_qs(parsed_url.query)['token'][0]
         enrollment = NFCEnrollmentSession.objects.get(nfc_uid='CARD-CONFIGURED-URL-001')
         self.assertEqual((parsed_url.scheme, parsed_url.netloc, parsed_url.path), (
-            'http', '10.109.175.241:5177', '/register',
+            'https', 'frontend.example', '/register',
         ))
         self.assertTrue(enrollment.verify_token(token))
         self.assertNotIn('localhost:5176', registration_url)
@@ -5597,14 +5642,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('registration-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'registration-token',
             'role': 'student',
             'username': 'pending_student',
             'student_id': 'PENDING-001',
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
 
         self.assertEqual(response.status_code, 201, response.json())
         student.refresh_from_db()
@@ -5616,14 +5661,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         self.assertTrue(student.has_usable_password())
         self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
 
-        reused = self.client.post('/api/cabinet/enrollment/register/', {
+        reused = register_nfc_with_email_code(self.client, {
             'token': 'registration-token',
             'role': 'student',
             'username': 'pending_student',
             'student_id': 'PENDING-001',
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
         self.assertEqual(reused.status_code, 410, reused.json())
 
     def test_enrollment_registration_rejects_taken_username_without_consuming_token(self):
@@ -5650,14 +5695,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('username-conflict-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'username-conflict-token',
             'role': 'student',
             'username': 'claimed_username',
             'student_id': pending_student.student_id,
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
 
         self.assertEqual(response.status_code, 409, response.json())
         self.assertEqual(response.json()['error'], 'That username is already in use.')
@@ -5677,13 +5722,13 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('required-fields-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'required-fields-token',
             'role': 'student',
             'student_id': 'PENDING-REQUIRED-001',
             'password': 'short',
             'confirm_password': 'short',
-        }, format='json')
+        })
 
         self.assertEqual(response.status_code, 400, response.json())
         self.assertIn('username', response.json())
@@ -5699,14 +5744,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('unknown-student-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'unknown-student-token',
             'role': 'student',
             'username': 'unknown_student',
             'student_id': 'DOES-NOT-EXIST',
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
 
         self.assertEqual(response.status_code, 404, response.json())
 
@@ -5736,14 +5781,14 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('assigned-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'assigned-token',
             'role': 'student',
             'username': 'pending_nfc_student',
             'student_id': 'PENDING-002',
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
         self.assertEqual(response.status_code, 409, response.json())
 
     def test_enrollment_registration_rejects_existing_account(self):
@@ -5764,18 +5809,19 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('existing-account-token')
         enrollment.save()
 
-        response = self.client.post('/api/cabinet/enrollment/register/', {
+        response = register_nfc_with_email_code(self.client, {
             'token': 'existing-account-token',
             'username': 'existing_account_student',
             'role': 'student',
             'student_id': 'EXISTING-001',
             'password': 'new-password-123',
             'confirm_password': 'new-password-123',
-        }, format='json')
+        })
         self.assertEqual(response.status_code, 409, response.json())
 
 
 @override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
     TAPTRACK_NFC_DEVICE_MAP=[{
         'device_id': 'ENROLLMENT-TEST-READER',
         'api_key': 'nfc-enrollment-device-key',
@@ -5787,6 +5833,7 @@ class CabinetDeviceIntegrationTests(TestCase):
 class NFCEnrollmentRegistrationTests(TestCase):
     def setUp(self):
         cache.clear()
+        mail.outbox.clear()
         self.client = APIClient()
         self.device_api_key = 'nfc-enrollment-device-key'
         self.previous_device_key = os.environ.get('DEVICE_API_KEY')
@@ -5816,14 +5863,14 @@ class NFCEnrollmentRegistrationTests(TestCase):
         return enrollment
 
     def register(self, token, role, identifier_field, identifier, username, password, confirm_password=None):
-        return self.client.post('/api/cabinet/enrollment/register/', {
+        return register_nfc_with_email_code(self.client, {
             'token': token,
             'role': role,
             identifier_field: identifier,
             'username': username,
             'password': password,
             'confirm_password': confirm_password if confirm_password is not None else password,
-        }, format='json')
+        })
 
     def test_student_registration_binds_existing_roster_record(self):
         student = User.objects.create_user(
@@ -5971,6 +6018,47 @@ class NFCEnrollmentRegistrationTests(TestCase):
         self.assertEqual(account_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
         self.assertEqual(card_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
         self.assertEqual(existing_card_owner.nfc_uid, 'IDENTITY-DUPLICATE-CARD')
+
+    def test_admin_assigned_card_cannot_be_claimed_from_a_different_scan(self):
+        assigned_student = User.objects.create_user(
+            username='admin-assigned-card-student',
+            email='admin-assigned-card@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='IDENTITY-ASSIGNED-001',
+            nfc_uid='IDENTITY-ADMIN-ASSIGNED-CARD',
+        )
+        wrong_card = self.make_enrollment('IDENTITY-DIFFERENT-CARD', 'different-card-token')
+        assigned_card = self.make_enrollment('IDENTITY-ADMIN-ASSIGNED-CARD', 'assigned-card-token')
+        assigned_card.identity_target_user = assigned_student
+        assigned_card.save(update_fields=['identity_target_user'])
+
+        wrong_identity = self.client.post('/api/cabinet/enrollment/identity/', {
+            'token': 'different-card-token',
+            'role': 'student',
+            'student_id': assigned_student.student_id,
+        }, format='json')
+        wrong_registration = self.register(
+            'different-card-token', 'student', 'student_id', assigned_student.student_id,
+            'different_card_claim', 'Cobalt!93-RiverQuartz',
+        )
+
+        self.assertEqual(wrong_identity.status_code, 202, wrong_identity.json())
+        self.assertEqual(wrong_identity.json(), {
+            'detail': 'If the profile is eligible, a verification code was sent to its recorded email address.',
+        })
+        self.assertEqual(wrong_registration.status_code, 403, wrong_registration.json())
+        self.assertFalse(mail.outbox)
+        assigned_student.refresh_from_db()
+        wrong_card.refresh_from_db()
+        self.assertFalse(assigned_student.has_usable_password())
+        self.assertEqual(wrong_card.status, NFCEnrollmentSession.StatusChoices.PENDING)
+
+        correct_registration = self.register(
+            'assigned-card-token', 'student', 'student_id', assigned_student.student_id,
+            'assigned_card_owner', 'Cobalt!93-RiverQuartz',
+        )
+        self.assertEqual(correct_registration.status_code, 201, correct_registration.json())
 
     def test_inactive_roster_account_cannot_register_a_card(self):
         inactive_student = User.objects.create_user(

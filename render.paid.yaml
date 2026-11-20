@@ -54,22 +54,34 @@ services:
         sync: false
       - key: TAPTRACK_NFC_REGISTRATION_URL_BASE
         sync: false
+      - key: DJANGO_EMAIL_HOST
+        sync: false
+      - key: DJANGO_EMAIL_PORT
+        value: "587"
+      - key: DJANGO_EMAIL_HOST_USER
+        sync: false
+      - key: DJANGO_EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DJANGO_EMAIL_USE_TLS
+        value: "true"
+      - key: DJANGO_DEFAULT_FROM_EMAIL
+        sync: false
       - key: TAPTRACK_NFC_DEVICE_MAP
         sync: false
 
   - type: web
-    name: taptrack-web
+    name: taptrack-frontend
     runtime: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
-    staticPublishPath: frontend/dist
+    staticPublishPath: dist
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_BASE_URL
-        sync: false
+        value: https://taptrack-api.onrender.com/api
 
 databases:
   - name: taptrack-postgres

@@ -14,6 +14,7 @@ import os
 import json
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from dotenv import load_dotenv
@@ -57,10 +58,34 @@ CSRF_TRUSTED_ORIGINS = env_list(
     'DJANGO_CSRF_TRUSTED_ORIGINS',
     ['http://localhost:5176', 'http://127.0.0.1:5176', 'http://localhost:5177', 'http://127.0.0.1:5177'],
 )
-NFC_REGISTRATION_URL_BASE = os.environ.get(
-    'TAPTRACK_NFC_REGISTRATION_URL_BASE',
-    'http://10.109.175.241:5177/register',
-).rstrip('/')
+NFC_REGISTRATION_URL_BASE = os.environ.get('TAPTRACK_NFC_REGISTRATION_URL_BASE', '').strip().rstrip('/')
+if not NFC_REGISTRATION_URL_BASE:
+    if DEBUG:
+        NFC_REGISTRATION_URL_BASE = 'http://localhost:5176/register'
+    else:
+        raise ImproperlyConfigured('TAPTRACK_NFC_REGISTRATION_URL_BASE must be set to the deployed registration page URL.')
+registration_url = urlsplit(NFC_REGISTRATION_URL_BASE)
+if (
+    not registration_url.hostname
+    or registration_url.path != '/register'
+    or registration_url.query
+    or registration_url.fragment
+    or registration_url.username is not None
+    or registration_url.password is not None
+    or (not DEBUG and registration_url.scheme != 'https')
+):
+    raise ImproperlyConfigured('TAPTRACK_NFC_REGISTRATION_URL_BASE must be an HTTPS /register URL in production.')
+
+EMAIL_BACKEND = os.environ.get(
+    'DJANGO_EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = env_bool('DJANGO_EMAIL_USE_TLS', not DEBUG)
+DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_DEFAULT_FROM_EMAIL', 'webmaster@localhost' if DEBUG else '')
 TAPTRACK_CABINET_NAME = os.environ.get('TAPTRACK_CABINET_NAME', 'Cabinet 1').strip()
 TAPTRACK_CABINET_STATIONS = env_list(
     'TAPTRACK_CABINET_STATIONS',

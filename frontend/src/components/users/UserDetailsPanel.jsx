@@ -41,6 +41,11 @@ export default function UserDetailsPanel({ user }) {
   const registered = typeof user?.nfc_registered === 'boolean'
     ? user.nfc_registered
     : Boolean(user?.nfc_uid)
+  const accountRegistrationStatus = !user?.is_active
+    ? 'Inactive'
+    : (user?.registration_status || (user?.username ? 'registered' : 'pending_registration')) === 'registered'
+      ? 'Registered'
+      : 'Pending Registration'
   const details = [
     ['Full name', fullName || 'Not available'],
     ['Username', user?.username || 'Not available'],
@@ -49,6 +54,7 @@ export default function UserDetailsPanel({ user }) {
     ['Account role', roleLabel(user?.role)],
     ['Assigned section(s)', assignedSectionNames(user || {}, role)],
     ['Account status', user?.is_active == null ? 'Not available' : user.is_active ? 'Active' : 'Inactive'],
+    ['Registration status', accountRegistrationStatus],
     ['NFC registration', registered ? 'Registered' : 'Not registered'],
     ['Date joined', joinedDate(user || {})],
   ]

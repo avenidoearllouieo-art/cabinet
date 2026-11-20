@@ -1,6 +1,7 @@
 import mimetypes
 import os
 import logging
+import secrets
 
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -299,6 +300,7 @@ class UserSerializer(serializers.ModelSerializer):
     last_access_status = serializers.SerializerMethodField()
     last_access_time = serializers.SerializerMethodField()
     nfc_registered = serializers.SerializerMethodField()
+    registration_status = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -329,12 +331,14 @@ class UserSerializer(serializers.ModelSerializer):
             'last_access_status',
             'last_access_time',
             'nfc_registered',
+            'registration_status',
             'created_at',
             'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
         extra_kwargs = {
             'password': {'write_only': True, 'required': False},
+            'username': {'required': False},
             'profile_image': {'required': False, 'allow_null': True},
             'email': {'required': False},
             'contact_number': {'required': False},
@@ -371,6 +375,11 @@ class UserSerializer(serializers.ModelSerializer):
     def get_nfc_registered(self, obj):
         return bool(obj.nfc_uid)
 
+    def get_registration_status(self, obj):
+        if not obj.is_active:
+            return 'inactive'
+        return 'registered' if obj.has_usable_password() else 'pending_registration'
+
     def validate(self, attrs):
         role = attrs.get('role', getattr(self.instance, 'role', User.RoleChoices.STUDENT))
         assigned_sections = attrs.get('assigned_sections')
@@ -378,10 +387,22 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'assigned_sections': 'Only instructors can be assigned to sections.'
             })
+        credential_fields = {'username', 'password'}.intersection(attrs)
+        if self.instance is None:
+            if role not in (User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR):
+                raise serializers.ValidationError({'role': 'Add student and instructor profiles here; administrator accounts are provisioned separately.'})
+            if credential_fields:
+                raise serializers.ValidationError({'credentials': 'Users create their username and password during NFC registration.'})
+            if not attrs.get('email'):
+                raise serializers.ValidationError({'email': 'An email address is required for registration verification.'})
+        elif credential_fields:
+            raise serializers.ValidationError({'credentials': 'Users manage login credentials through registration and account-security flows.'})
         return attrs
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        if not instance.has_usable_password():
+            data['username'] = None
         if instance.role != User.RoleChoices.INSTRUCTOR:
             data['assigned_sections'] = []
         elif not data['assigned_sections']:
@@ -397,11 +418,10 @@ class UserSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         assigned_sections = validated_data.pop('assigned_sections', [])
-        password = validated_data.pop('password', None)
+        validated_data['username'] = f'pending_{secrets.token_hex(16)}'
         user = super().create(validated_data)
-        if password:
-            user.set_password(password)
-            user.save()
+        user.set_unusable_password()
+        user.save(update_fields=['password'])
         if user.role == User.RoleChoices.INSTRUCTOR:
             sync_instructor_sections(user, assigned_sections)
         return user
@@ -556,6 +576,7 @@ class PasswordResetTokenValidationSerializer(serializers.Serializer):
 
 class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
     token = serializers.CharField(required=True, allow_blank=False, write_only=True)
+    verification_code = serializers.RegexField(r'^\d{6}$', required=True, write_only=True)
     username = serializers.CharField(required=True, allow_blank=False, max_length=150)
     role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR])
     student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
@@ -571,6 +592,23 @@ class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError({'instructor_id': 'Instructor ID is required for instructor enrollment.'})
         if attrs['password'] != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
+
+
+class NFCEnrollmentIdentitySerializer(serializers.Serializer):
+    token = serializers.CharField(required=True, allow_blank=False, write_only=True)
+    role = serializers.ChoiceField(choices=[User.RoleChoices.STUDENT, User.RoleChoices.INSTRUCTOR])
+    student_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    instructor_id = serializers.CharField(required=False, allow_blank=True, max_length=50)
+
+    def validate(self, attrs):
+        role = attrs['role']
+        identifier_field = 'student_id' if role == User.RoleChoices.STUDENT else 'instructor_id'
+        identifier = attrs.get(identifier_field, '').strip()
+        if not identifier:
+            label = 'Student ID' if role == User.RoleChoices.STUDENT else 'Instructor ID'
+            raise serializers.ValidationError({identifier_field: f'{label} is required.'})
+        attrs[identifier_field] = identifier
         return attrs
 
 

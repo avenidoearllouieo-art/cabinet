@@ -102,13 +102,15 @@ describe('Users directory', () => {
         section_name: 'Section Blue',
         nfc_registered: true,
         nfc_uid: 'PRIVATE-STUDENT-UID',
+        registration_status: 'registered',
       },
       {
         ...directoryUser(43, 'instructor'),
         instructor_id: 'INS-43',
         assigned_sections: [{ section_id: 7, section_name: 'Section Green' }],
+        registration_status: 'pending_registration',
       },
-      directoryUser(44, 'admin'),
+      { ...directoryUser(44, 'admin', false), registration_status: 'inactive' },
     ]
     const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
@@ -118,12 +120,12 @@ describe('Users directory', () => {
 
     await screen.findByText('Student Record 42')
     const expectedDetails = [
-      ['Student ID / User ID', 'STU-42', 'Section Blue', 'Registered'],
-      ['Instructor ID / User ID', 'INS-43', 'Section Green', 'Not registered'],
-      ['User ID', '44', 'Not assigned', 'Not registered'],
+      ['Student ID / User ID', 'STU-42', 'Section Blue', 'Registered', 'Registered'],
+      ['Instructor ID / User ID', 'INS-43', 'Section Green', 'Not registered', 'Pending Registration'],
+      ['User ID', '44', 'Not assigned', 'Not registered', 'Inactive'],
     ]
 
-    for (const [index, [identifierLabel, identifier, section, nfcStatus]] of expectedDetails.entries()) {
+    for (const [index, [identifierLabel, identifier, section, nfcStatus, registrationStatus]] of expectedDetails.entries()) {
       const expandButton = screen.getByRole('button', { name: `Expand row ${index + 1}` })
       fireEvent.click(expandButton)
       const expandedRow = expandButton.closest('tr').nextElementSibling
@@ -132,7 +134,9 @@ describe('Users directory', () => {
       expect(within(expandedRow).getByText(identifierLabel)).toBeTruthy()
       expect(within(expandedRow).getByText(identifier)).toBeTruthy()
       expect(within(expandedRow).getByText(section)).toBeTruthy()
-      expect(within(expandedRow).getByText(nfcStatus)).toBeTruthy()
+      expect(within(expandedRow).getByText('NFC registration').nextElementSibling.textContent).toBe(nfcStatus)
+      expect(within(expandedRow).getByText('Registration status').nextElementSibling.textContent).toBe(registrationStatus)
+      if (registrationStatus === 'Pending Registration') expect(within(expandedRow).getByText('Pending Registration')).toBeTruthy()
       expect(within(expandedRow).getByText('Date joined')).toBeTruthy()
       expect(within(expandedRow).queryByText('PRIVATE-STUDENT-UID')).toBeNull()
 
@@ -162,8 +166,8 @@ describe('Users directory', () => {
       expect(within(article).getByText('Email address')).toBeTruthy()
       expect(within(article).getByText('Account role')).toBeTruthy()
       expect(within(article).getByText('Account status')).toBeTruthy()
-      expect(within(article).getByText('NFC registration')).toBeTruthy()
-      expect(within(article).getAllByText('Registered')).toHaveLength(2)
+      expect(within(article).getByText('NFC registration').nextElementSibling.textContent).toBe('Registered')
+      expect(within(article).getByText('Registration status').nextElementSibling.textContent).toBe('Registered')
       expect(within(article).queryByText('PRIVATE-STUDENT-UID')).toBeNull()
       expect(within(article).getByText('Date joined')).toBeTruthy()
       expect(within(article).getByRole('button', { name: 'View Profile' })).toBeTruthy()

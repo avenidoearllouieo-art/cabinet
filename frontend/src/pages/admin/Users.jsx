@@ -212,6 +212,16 @@ export default function Users() {
     return <StatusBadge status={registered ? 'registered' : 'not assigned'} label={registered ? 'Registered' : 'Not Assigned'} />
   }
 
+  const registrationStatusBadge = (user) => {
+    const status = !user?.is_active
+      ? 'inactive'
+      : user?.registration_status || (user?.username ? 'registered' : 'pending_registration')
+    const label = status === 'inactive'
+      ? 'Inactive'
+      : status === 'registered' ? 'Registered' : 'Pending Registration'
+    return <StatusBadge status={status === 'pending_registration' ? 'pending' : status} label={label} />
+  }
+
   const roleBadge = (role) => {
     const normalized = (role || '').toLowerCase()
     const label = normalized === 'administrator' || normalized === 'admin' ? 'Administrator' : normalized === 'instructor' ? 'Instructor' : normalized === 'student' ? 'Student' : role || 'Unknown'
@@ -247,6 +257,7 @@ export default function Users() {
     { key: 'email', label: 'Email', className: 'w-[20%]' },
     { key: 'role', label: 'Role', className: 'w-[10%]', render: (_v, row) => roleBadge(row.role) },
     { key: 'nfc_status', label: 'NFC Status', className: 'w-[11%]', render: (_v, row) => nfcStatusBadge(row) },
+    { key: 'registration_status', label: 'Registration Status', className: 'w-[16%]', render: (_v, row) => registrationStatusBadge(row) },
     { key: 'status', label: 'Account Status', className: 'w-[12%]', render: (_v, row) => statusBadge(row) },
     {
       key: 'actions',

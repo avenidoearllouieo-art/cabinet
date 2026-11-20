@@ -793,6 +793,16 @@ class NFCEnrollmentSession(models.Model):
         blank=True,
         related_name='nfc_enrollment_sessions',
     )
+    identity_target_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pending_nfc_identity_checks',
+    )
+    identity_code_hash = models.CharField(max_length=128, blank=True, default='')
+    identity_code_expires_at = models.DateTimeField(null=True, blank=True)
+    identity_code_attempts = models.PositiveSmallIntegerField(default=0)
     def set_token(self, token):
         self.token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
         self.token_hash = make_password(token)
