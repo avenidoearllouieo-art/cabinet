@@ -3318,15 +3318,6 @@ class VerifyNFCView(APIView):
             reason='NFC UID is not registered',
             device_context=device_context,
         )
-        if registration_target_user is None:
-            return Response({
-                **self._event_payload(access_log),
-                'success': False,
-                'registered': False,
-                'registration_required': False,
-                'code': 'REGISTRATION_AUTHORIZATION_REQUIRED',
-                'error': 'This ID card is not authorized for enrollment. Contact an administrator to assign it to a pending account.',
-            }, status=status.HTTP_403_FORBIDDEN)
         token = secrets.token_urlsafe(32)
         now = timezone.now()
         expires_at = now + timedelta(seconds=600)
@@ -3621,11 +3612,24 @@ class NFCEnrollmentRegistrationView(APIView):
 
             user = enrollment.registration_target_user
             if not user:
-                logger.warning('nfc_registration_authorization_required enrollment_id=%s', enrollment.pk)
-                return Response({
-                    'code': 'REGISTRATION_AUTHORIZATION_REQUIRED',
-                    'error': 'Registration could not be authorized. Please contact an administrator to assign this ID card.'
-                }, status=status.HTTP_403_FORBIDDEN)
+                candidate_filters = (
+                    Q(student_id=identifier_value)
+                    | Q(instructor_id=identifier_value)
+                    | Q(administrator_id=identifier_value)
+                )
+                candidate_rows = list(
+                    User.objects.select_for_update()
+                    .filter(candidate_filters, email__iexact=str(data['email']).strip(), is_active=True)
+                    [:10]
+                )
+                candidates = [candidate for candidate in candidate_rows if not candidate.has_usable_password()]
+                if len(candidates) != 1:
+                    logger.info('nfc_registration_account_lookup_failed enrollment_id=%s candidates=%s', enrollment.pk, len(candidates))
+                    return Response({
+                        'code': 'IDENTITY_MISMATCH',
+                        'error': 'The ID number or email does not match an eligible pending account.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                user = candidates[0]
             user = User.objects.select_for_update().get(pk=user.pk)
             identifier_field = (
                 'student_id' if user.role == User.RoleChoices.STUDENT else
@@ -3656,6 +3660,12 @@ class NFCEnrollmentRegistrationView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
             normalized_assigned_uid = ''.join(str(user.nfc_uid or '').split()).upper()
             normalized_enrollment_uid = ''.join(str(enrollment.nfc_uid or '').split()).upper()
+            if User.objects.filter(nfc_uid__iexact=normalized_enrollment_uid).exclude(pk=user.pk).exists():
+                logger.warning('nfc_registration_uid_already_assigned enrollment_id=%s', enrollment.pk)
+                return Response({
+                    'code': 'NFC_OWNERSHIP_CONFLICT',
+                    'error': 'This ID card is assigned to a different account.'
+                }, status=status.HTTP_400_BAD_REQUEST)
             if normalized_assigned_uid and normalized_assigned_uid != normalized_enrollment_uid:
                 logger.warning('nfc_registration_ownership_conflict enrollment_id=%s', enrollment.pk)
                 return Response({

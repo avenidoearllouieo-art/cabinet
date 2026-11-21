@@ -5901,6 +5901,29 @@ class NFCEnrollmentRegistrationTests(TestCase):
         else:
             os.environ['DEVICE_API_KEY'] = self.previous_device_key
 
+    def test_unregistered_card_always_starts_registration_qr_session(self):
+        pending = User.objects.create_user(
+            username='pending-no-card',
+            email='pending-no-card@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='NO-CARD-PENDING-001',
+        )
+        pending.set_unusable_password()
+        pending.save(update_fields=['password'])
+        response = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'BRAND-NEW-CARD'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(response.status_code, 404, response.json())
+        self.assertTrue(response.json()['registration_required'])
+        self.assertIn('/register?token=', response.json()['registration_url'])
+        expires_at = datetime.fromisoformat(response.json()['expires_at'].replace('Z', '+00:00'))
+        server_time = datetime.fromisoformat(response.json()['server_time'].replace('Z', '+00:00'))
+        self.assertEqual(expires_at - server_time, timedelta(seconds=600))
+
     def test_enrollment_lifetime_is_exactly_600_seconds(self):
         pending = User.objects.create_user(
             username='enrollment-expires-pending',
