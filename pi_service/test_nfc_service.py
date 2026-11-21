@@ -569,7 +569,9 @@ class NFCServiceTests(unittest.TestCase):
             'registered': False,
             'registration_required': True,
             'registration_url': 'http://portal/register?token=fake-test-token',
-            'expires_at': '2026-10-01T12:00:00+00:00',
+            'expires_at': '2026-10-01T12:10:00+00:00',
+            'server_time': '2026-10-01T12:00:00+00:00',
+            'session_id': 42,
             'error': 'NFC card not registered.',
         }
         verifier = FakeVerifier((404, payload))
@@ -581,6 +583,8 @@ class NFCServiceTests(unittest.TestCase):
         self.assertTrue(event['registration_required'])
         self.assertEqual(event['registration_url'], payload['registration_url'])
         self.assertEqual(event['expires_at'], payload['expires_at'])
+        self.assertEqual(event['server_time'], payload['server_time'])
+        self.assertEqual(event['session_id'], payload['session_id'])
         self.assertEqual(event['error'], payload['error'])
         self.assertEqual(event['http_status'], 404)
         self.assertEqual(len(verifier.calls), 1)

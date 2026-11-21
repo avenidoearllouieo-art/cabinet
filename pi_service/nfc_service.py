@@ -846,9 +846,13 @@ class SQLiteScanEventStore:
                 'http_status': row['http_status'],
                 'django_response': json.loads(row['response_json']),
             }
+            django_response = event['django_response']
             for key in ('name', 'student_id', 'role', 'registration_url', 'expires_at', 'error'):
                 if row[key] is not None:
                     event[key] = row[key]
+            for key in ('server_time', 'session_id'):
+                if django_response.get(key) is not None:
+                    event[key] = django_response[key]
             if row['registration_required'] is not None:
                 event['registration_required'] = bool(row['registration_required'])
             events.append(event)
@@ -865,7 +869,7 @@ def _safe_django_response(status_code: int, payload: dict, verifier: DjangoVerif
         return {key: payload[key] for key in allowed if key in payload}
     if status_code == 404 and payload.get('registration_required') is True:
         allowed = (
-            'success', 'registered', 'registration_required', 'registration_url', 'expires_at', 'error',
+            'success', 'registered', 'registration_required', 'registration_url', 'expires_at', 'server_time', 'session_id', 'error',
             'event_id', 'status', 'action', 'nfc_uid', 'user', 'cabinet',
             'station', 'cabinet_session_id', 'reason',
         )
@@ -923,7 +927,7 @@ def make_scan_event(uid: str, verifier: DjangoVerifier) -> dict:
                 event[key] = safe_response[key]
     elif status == 'unregistered':
         event['registration_required'] = True
-        for key in ('registration_url', 'expires_at', 'error'):
+        for key in ('registration_url', 'expires_at', 'server_time', 'session_id', 'error'):
             if key in safe_response:
                 event[key] = safe_response[key]
     else:

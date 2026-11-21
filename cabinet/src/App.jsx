@@ -474,7 +474,13 @@ export default function App() {
           })
           if (view === 'participant-scan') {
             pauseAfterDecision = true
-            setPendingRegistration({ uid, registrationUrl })
+            setPendingRegistration({
+              uid,
+              registrationUrl,
+              expiresAt: event.expires_at,
+              serverTime: event.server_time,
+              sessionId: event.session_id,
+            })
             setStatusMessage('This NFC card is not linked to a student.')
             setView('unregistered-card')
           }
