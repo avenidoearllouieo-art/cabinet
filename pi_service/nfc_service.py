@@ -1275,7 +1275,11 @@ class NFCService:
             elif status_code == HTTPStatus.UNAUTHORIZED:
                 result['message'] = 'Django rejected device authentication. Contact support.'
             elif status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
-                result['message'] = 'Password-reset service unavailable. Start a new recovery request.'
+                logger.warning('password_recovery_verify_django_error status=%s', status_code)
+                result['message'] = (
+                    f'Django password-reset verification returned HTTP {status_code}. '
+                    'The selected request may still be pending; retry NFC recovery with the same request.'
+                )
             elif status_code == HTTPStatus.OK:
                 result['message'] = 'Django returned an invalid NFC verification response.'
         except (DjangoRequestError, ValueError) as error:

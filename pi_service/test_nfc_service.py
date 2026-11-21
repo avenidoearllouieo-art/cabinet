@@ -1476,6 +1476,29 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertNotIn('does not match', result['message'])
         self.assertEqual(self.service.verifier.calls, [])
 
+    def test_recovery_reports_django_server_error_as_retryable_without_leaking_response_details(self):
+        class ServerErrorRecoveryVerifier(FakeVerifier):
+            def password_reset_request(self, endpoint, payload):
+                self.password_reset_calls.append((endpoint, payload))
+                if endpoint == 'cabinet-handoff':
+                    return 200, {'request_id': payload['request_id']}
+                return 503, {'error': 'private database diagnostic'}
+
+        self.service.verifier = ServerErrorRecoveryVerifier((200, {'success': True}))
+        self.post_json('/password-reset/handoff', {'request_id': 'same-pending-request'})
+
+        result = self.service.process_uid('AA-BB-CC')
+
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('HTTP 503', result['message'])
+        self.assertIn('same request', result['message'])
+        self.assertNotIn('private database diagnostic', result['message'])
+        self.assertNotIn('AA-BB-CC', result['message'])
+        self.assertEqual(
+            self.service.password_recovery_snapshot('same-pending-request')['state'],
+            'failed',
+        )
+
     def test_decoy_recovery_request_does_not_reveal_account_mismatch(self):
         class DecoyRecoveryVerifier(FakeVerifier):
             def password_reset_request(self, endpoint, payload):
@@ -1858,8 +1881,8 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             'http://localhost:5177,http://127.0.0.1:5177,https://cabinet.example.edu',
         )
         self.assertEqual(configured_origins, frozenset({
-            'http://localhost:5173',
-            'http://localhost:4000',
+            'http://localhost:5177',
+            'http://127.0.0.1:5177',
             'https://cabinet.example.edu',
         }))
         for invalid_configuration in (
