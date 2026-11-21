@@ -5901,14 +5901,41 @@ class NFCEnrollmentRegistrationTests(TestCase):
         else:
             os.environ['DEVICE_API_KEY'] = self.previous_device_key
 
+    def test_enrollment_lifetime_is_exactly_600_seconds(self):
+        pending = User.objects.create_user(
+            username='enrollment-expires-pending',
+            email='enrollment-expires@example.test',
+            password=None,
+            role=User.RoleChoices.STUDENT,
+            student_id='EXPIRES-600-001',
+            nfc_uid='ENROLLMENT-600-CARD',
+        )
+        pending.set_unusable_password()
+        pending.save(update_fields=['password'])
+        before = timezone.now()
+        response = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'ENROLLMENT-600-CARD'},
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        after = timezone.now()
+        self.assertEqual(response.status_code, 404, response.json())
+        expires_at = datetime.fromisoformat(response.json()['expires_at'].replace('Z', '+00:00'))
+        server_time = datetime.fromisoformat(response.json()['server_time'].replace('Z', '+00:00'))
+        self.assertGreaterEqual(expires_at, before + timedelta(seconds=600))
+        self.assertLessEqual(expires_at, after + timedelta(seconds=600))
+        self.assertEqual(expires_at - server_time, timedelta(seconds=600))
+
     def make_enrollment(self, uid, token):
         enrollment = NFCEnrollmentSession(
             nfc_uid=uid,
             token_digest='',
             token_hash='',
-            expires_at=timezone.now() + timedelta(minutes=15),
+            expires_at=timezone.now() + timedelta(minutes=10),
         )
         enrollment.set_token(token)
+        enrollment.completion_expires_at = enrollment.expires_at
         enrollment.save()
         return enrollment
 
@@ -6052,8 +6079,8 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'duplicate-card-token', 'student', 'student_id', pending.student_id,
             'pending_duplicate', 'Cobalt!93-RiverQuartz',
         )
-        self.assertEqual(account_result.status_code, 400, account_result.json())
-        self.assertEqual(card_result.status_code, 409, card_result.json())
+        self.assertEqual(account_result.status_code, 409, account_result.json())
+        self.assertEqual(card_result.status_code, 400, card_result.json())
         already_registered.refresh_from_db()
         pending.refresh_from_db()
         account_enrollment.refresh_from_db()
@@ -6167,7 +6194,7 @@ class NFCEnrollmentRegistrationTests(TestCase):
                 'rollback_user', 'Cobalt!93-RiverQuartz',
             )
 
-        self.assertEqual(response.status_code, 409, response.json())
+        self.assertEqual(response.status_code, 400, response.json())
         student.refresh_from_db()
         enrollment.refresh_from_db()
         self.assertIsNone(student.nfc_uid)

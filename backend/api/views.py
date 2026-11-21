@@ -3318,9 +3318,18 @@ class VerifyNFCView(APIView):
             reason='NFC UID is not registered',
             device_context=device_context,
         )
+        if registration_target_user is None:
+            return Response({
+                **self._event_payload(access_log),
+                'success': False,
+                'registered': False,
+                'registration_required': False,
+                'code': 'REGISTRATION_AUTHORIZATION_REQUIRED',
+                'error': 'This ID card is not authorized for enrollment. Contact an administrator to assign it to a pending account.',
+            }, status=status.HTTP_403_FORBIDDEN)
         token = secrets.token_urlsafe(32)
         now = timezone.now()
-        expires_at = now + timedelta(seconds=60)
+        expires_at = now + timedelta(seconds=600)
         with transaction.atomic():
             device_id = str(device_context.get('device_id') or '').strip()
             if not device_id:
@@ -3339,6 +3348,7 @@ class VerifyNFCView(APIView):
                 token_digest='',
                 token_hash='',
                 expires_at=expires_at,
+                completion_expires_at=expires_at,
                 station=(active_session.station if active_session else '') or device_context.get('station') or '',
                 cabinet_name=device_context.get('cabinet_name') or settings.TAPTRACK_CABINET_NAME,
                 registration_target_user=registration_target_user,
@@ -3352,8 +3362,10 @@ class VerifyNFCView(APIView):
                 'success': False,
                 'registered': False,
                 'registration_required': True,
+                'session_id': enrollment.pk,
                 'registration_url': registration_url,
                 'expires_at': enrollment.expires_at.isoformat(),
+                'server_time': now.isoformat(),
                 'error': 'NFC card not registered.',
             },
             status=status.HTTP_404_NOT_FOUND,
@@ -3511,16 +3523,14 @@ class NFCEnrollmentValidationView(APIView):
                 token_digest=token_digest,
             ).first()
             if not enrollment or enrollment.status != NFCEnrollmentSession.StatusChoices.PENDING:
-                return Response(
-                    {'valid': False, 'error': 'Registration session expired. Please return to the cabinet and tap your NFC card again.'},
-                    status=status.HTTP_410_GONE,
-                )
+                return Response({
+                    'valid': False,
+                    'code': 'SESSION_ALREADY_USED',
+                    'error': 'Registration session expired or already used. Tap your ID card again.'
+                }, status=status.HTTP_410_GONE)
 
             now = timezone.now()
-            if enrollment.completion_expires_at:
-                expired = enrollment.completion_expires_at <= now
-            else:
-                expired = enrollment.expires_at <= now
+            expired = enrollment.expires_at <= now
             if expired:
                 enrollment.status = NFCEnrollmentSession.StatusChoices.EXPIRED
                 enrollment.token_hash = ''
@@ -3530,14 +3540,17 @@ class NFCEnrollmentValidationView(APIView):
                     status=status.HTTP_410_GONE,
                 )
 
-            if enrollment.completion_expires_at is None:
-                enrollment.completion_expires_at = now + timedelta(minutes=10)
+            if enrollment.completion_expires_at != enrollment.expires_at:
+                enrollment.completion_expires_at = enrollment.expires_at
                 enrollment.save(update_fields=['completion_expires_at'])
 
             return Response({
                 'valid': True,
+                'session_id': enrollment.pk,
                 'qr_expires_at': enrollment.expires_at.isoformat(),
-                'completion_expires_at': enrollment.completion_expires_at.isoformat(),
+                'expires_at': enrollment.expires_at.isoformat(),
+                'completion_expires_at': enrollment.expires_at.isoformat(),
+                'server_time': now.isoformat(),
             }, status=status.HTTP_200_OK)
 
 
@@ -3577,63 +3590,96 @@ class NFCEnrollmentRegistrationView(APIView):
         try:
             return self._register(data)
         except IntegrityError:
-            return Response(
-                {'error': 'The username or NFC card was registered by another request. Try different details or scan the card again.'},
-                status=status.HTTP_409_CONFLICT,
-            )
+            logger.warning('nfc_registration_integrity_conflict')
+            return Response({
+                'code': 'NFC_OWNERSHIP_CONFLICT',
+                'error': 'The username or ID card could not be registered because it was claimed by another account.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     def _register(self, data):
         token = data['token'].strip()
         token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
         identifier_value = data['id_number']
-        generic_identity_error = {
-            'error': 'Registration could not be completed. Check that the ID number and email belong to the account authorized by this card tap.'
-        }
-
         with transaction.atomic():
             enrollment = NFCEnrollmentSession.objects.select_for_update().filter(
                 token_digest=token_digest,
             ).first()
             if not enrollment or enrollment.status != NFCEnrollmentSession.StatusChoices.PENDING:
-                return Response(
-                    {'error': 'Registration session expired. Please return to the cabinet and tap your NFC card again.'},
-                    status=status.HTTP_410_GONE,
-                )
+                return Response({
+                    'code': 'SESSION_ALREADY_USED',
+                    'error': 'Registration session expired or already used. Tap your ID card again.'
+                }, status=status.HTTP_410_GONE)
             now = timezone.now()
-            if not enrollment.completion_expires_at or enrollment.completion_expires_at <= now:
+            if enrollment.expires_at <= now:
                 enrollment.status = NFCEnrollmentSession.StatusChoices.EXPIRED
                 enrollment.token_hash = ''
                 enrollment.save(update_fields=['status', 'token_hash'])
-                return Response(
-                    {'error': 'Registration session expired. Please return to the cabinet and tap your NFC card again.'},
-                    status=status.HTTP_410_GONE,
-                )
+                return Response({
+                    'code': 'SESSION_EXPIRED',
+                    'error': 'Registration session expired. Please return to the cabinet and tap your ID card again.'
+                }, status=status.HTTP_410_GONE)
 
             user = enrollment.registration_target_user
             if not user:
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
+                logger.warning('nfc_registration_authorization_required enrollment_id=%s', enrollment.pk)
+                return Response({
+                    'code': 'REGISTRATION_AUTHORIZATION_REQUIRED',
+                    'error': 'Registration could not be authorized. Please contact an administrator to assign this ID card.'
+                }, status=status.HTTP_403_FORBIDDEN)
             user = User.objects.select_for_update().get(pk=user.pk)
             identifier_field = (
                 'student_id' if user.role == User.RoleChoices.STUDENT else
                 'instructor_id' if user.role == User.RoleChoices.INSTRUCTOR else
                 'administrator_id'
             )
+            if not user.is_active:
+                logger.warning('nfc_registration_account_not_eligible enrollment_id=%s', enrollment.pk)
+                return Response({
+                    'code': 'ACCOUNT_NOT_ELIGIBLE',
+                    'error': 'This account is not eligible for registration.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            if user.has_usable_password():
+                return Response({
+                    'code': 'SESSION_ALREADY_USED',
+                    'error': 'This account has already been registered.'
+                }, status=status.HTTP_409_CONFLICT)
+            normalized_identifier = str(getattr(user, identifier_field, '') or '').strip()
+            normalized_input_identifier = str(identifier_value or '').strip()
             if (
-                not user.is_active
-                or user.has_usable_password()
-                or getattr(user, identifier_field, None) != identifier_value
-                or user.email.lower() != data['email'].lower()
-                or (user.nfc_uid and user.nfc_uid != enrollment.nfc_uid)
-                or (user.role == User.RoleChoices.ADMIN and not (user.is_staff or user.is_superuser))
+                normalized_identifier != normalized_input_identifier
+                or str(user.email or '').strip().lower() != str(data['email']).strip().lower()
             ):
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
+                logger.info('nfc_registration_identity_mismatch enrollment_id=%s', enrollment.pk)
+                return Response({
+                    'code': 'IDENTITY_MISMATCH',
+                    'error': 'The ID number or email does not match the account authorized for this card tap.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            normalized_assigned_uid = ''.join(str(user.nfc_uid or '').split()).upper()
+            normalized_enrollment_uid = ''.join(str(enrollment.nfc_uid or '').split()).upper()
+            if normalized_assigned_uid and normalized_assigned_uid != normalized_enrollment_uid:
+                logger.warning('nfc_registration_ownership_conflict enrollment_id=%s', enrollment.pk)
+                return Response({
+                    'code': 'NFC_OWNERSHIP_CONFLICT',
+                    'error': 'This ID card is assigned to a different account.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            if user.role == User.RoleChoices.ADMIN and not (user.is_staff or user.is_superuser):
+                return Response({
+                    'code': 'REGISTRATION_AUTHORIZATION_REQUIRED',
+                    'error': 'This administrator account is not authorized for registration.'
+                }, status=status.HTTP_403_FORBIDDEN)
             try:
                 validate_password(data['password'], user=user)
             except DjangoValidationError as exc:
-                return Response({'password': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    'code': 'INVALID_PASSWORD',
+                    'password': exc.messages,
+                }, status=status.HTTP_400_BAD_REQUEST)
             username = data['username'].strip()
             if User.objects.filter(username__iexact=username).exclude(pk=user.pk).exists():
-                return Response({'username': ['That username is already in use.']}, status=status.HTTP_409_CONFLICT)
+                return Response({
+                    'code': 'USERNAME_ALREADY_EXISTS',
+                    'username': ['That username is unavailable. Please choose another.']
+                }, status=status.HTTP_409_CONFLICT)
 
             user.username = username
             user.nfc_uid = enrollment.nfc_uid

@@ -13,6 +13,7 @@ export default function NfcRegistration() {
   const [state, setState] = useState(() => ({ status: token ? 'loading' : 'missing', error: '' }))
   const [expiresAt, setExpiresAt] = useState(null)
   const [secondsRemaining, setSecondsRemaining] = useState(null)
+  const [serverClockOffset, setServerClockOffset] = useState(0)
   const [form, setForm] = useState({ id_number: '', email: '', username: '', password: '', confirm_password: '' })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -30,7 +31,11 @@ export default function NfcRegistration() {
           setState({ status: 'invalid', error: response.data.error || 'This registration session has expired or is no longer valid.' })
           return
         }
-        setExpiresAt(response.data.completion_expires_at || response.data.expires_at)
+        const authoritativeExpiresAt = response.data.expires_at || response.data.completion_expires_at
+        setExpiresAt(authoritativeExpiresAt)
+        if (response.data.server_time) {
+          setServerClockOffset(new Date(response.data.server_time).getTime() - Date.now())
+        }
         setState({ status: 'valid', error: '' })
       })
       .catch((error) => {
@@ -43,14 +48,15 @@ export default function NfcRegistration() {
   useEffect(() => {
     if (!expiresAt) return undefined
     const tick = () => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+      const estimatedServerNow = Date.now() + serverClockOffset
+      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - estimatedServerNow) / 1000))
       setSecondsRemaining(remaining)
       if (remaining === 0) setState({ status: 'invalid', error: 'Registration session expired. Please return to the cabinet and tap your ID card again.' })
     }
     tick()
     const interval = window.setInterval(tick, 1000)
     return () => window.clearInterval(interval)
-  }, [expiresAt])
+  }, [expiresAt, serverClockOffset])
 
   function updateField(event) {
     const { name, value } = event.target

@@ -92,6 +92,11 @@ function stationLabel(station) {
   return /^station\s/i.test(value) ? value : `Station ${value}`
 }
 
+function formatCountdown(totalSeconds) {
+  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0))
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, '0')}`
+}
+
 function formatDuration(start, end = new Date()) {
   if (!start) return 'Unavailable'
   const elapsedSeconds = Math.max(0, Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000))
@@ -130,7 +135,7 @@ export default function App() {
   const [selectedStation, setSelectedStation] = useState(null)
   const [participants, setParticipants] = useState([])
   const [pendingRegistration, setPendingRegistration] = useState(null)
-  const [registrationCountdown, setRegistrationCountdown] = useState(60)
+  const [registrationCountdown, setRegistrationCountdown] = useState(600)
   const [closedSession, setClosedSession] = useState(null)
   const [closingParticipants, setClosingParticipants] = useState([])
   const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
@@ -167,16 +172,17 @@ export default function App() {
 
   useEffect(() => {
     if (!pendingRegistration?.registrationUrl) {
-      setRegistrationCountdown(60)
+      setRegistrationCountdown(600)
       return undefined
     }
-    setRegistrationCountdown(60)
-    let seconds = 60
-    const intervalId = window.setInterval(() => {
-      seconds -= 1
-      setRegistrationCountdown(seconds)
-      if (seconds <= 0) {
-        window.clearInterval(intervalId)
+    const expiresAt = new Date(pendingRegistration.expiresAt).getTime()
+    const serverTime = new Date(pendingRegistration.serverTime).getTime()
+    const clockOffset = Number.isFinite(serverTime) ? serverTime - Date.now() : 0
+    const fallbackExpiresAt = Number.isFinite(expiresAt) ? expiresAt : Date.now() + 600000
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((fallbackExpiresAt - (Date.now() + clockOffset)) / 1000))
+      setRegistrationCountdown(remaining)
+      if (remaining <= 0) {
         const token = new URL(pendingRegistration.registrationUrl).searchParams.get('token')
         if (token) {
           void fetch('/api/cabinet/enrollment/cancel/', {
@@ -189,7 +195,9 @@ export default function App() {
         setPendingRegistration(null)
         setView('registration-expired')
       }
-    }, 1000)
+    }
+    tick()
+    const intervalId = window.setInterval(tick, 1000)
     return () => window.clearInterval(intervalId)
   }, [pendingRegistration?.registrationUrl])
 
@@ -400,6 +408,8 @@ export default function App() {
         }
 
         setAccessState({ status: 'success', name, studentId, role, message: '', registrationUrl: '' })
+        setPendingRegistration(null)
+        setRegistrationCountdown(600)
         if (view === 'participant-scan') {
           if (role !== 'student') {
             setScanFeedback({ type: 'warning', message: 'Only student cards can join', participant: null })
@@ -459,6 +469,8 @@ export default function App() {
             role: '',
             message: 'Please scan this QR code to register your card.',
             registrationUrl,
+            expiresAt: event.expires_at,
+            serverTime: event.server_time,
           })
           if (view === 'participant-scan') {
             pauseAfterDecision = true
@@ -773,7 +785,7 @@ export default function App() {
       }
     }
     setPendingRegistration(null)
-    setRegistrationCountdown(60)
+    setRegistrationCountdown(600)
     resumeParticipantScan({ skipped: true })
   }
 
@@ -1091,8 +1103,8 @@ export default function App() {
         <Screen>
           <div className="panel status-panel">
             <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>ID CARD NOT REGISTERED</strong></div>
-            <h2>This ID card is not linked to a TapTrack account.</h2>
-            <p className="muted">Your added participants are saved. Register this ID card, skip it, or return to card tapping.</p>
+            <h2>Register Your ID Card</h2>
+            <p className="muted">Scan the QR code with your phone to begin registration.</p>
             <div className="confirm-list">
               <div className="confirm-row">
                 <span>Participants already scanned</span>
@@ -1112,7 +1124,7 @@ export default function App() {
                 <div className="registration-qr">
                   <QRCodeSVG value={pendingRegistration.registrationUrl} size={280} bgColor="#ffffff" fgColor="#002B5B" level="M" />
                 </div>
-                <p className="muted" role="timer">Registration QR expires in {registrationCountdown} seconds.</p>
+                <p className="muted" role="timer">QR Code Expires In: {formatCountdown(registrationCountdown)}</p>
               </>
             )}
             <div className="button-row stacked">
