@@ -13,7 +13,7 @@ function jsonResponse(payload, status = 200) {
   }
 }
 
-function createFetchForStation(station, djangoEventId, { photoAvailable = false, unregistered = false } = {}) {
+function createFetchForStation(station, djangoEventId, { photoAvailable = false, unregistered = false, enrollmentStatus = 'pending' } = {}) {
   let photoStatusReads = 0
   let workflowStarted = false
   const fetcher = vi.fn(async (url, options = {}) => {
@@ -51,6 +51,9 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false,
           closed_by: [],
         },
       })
+    }
+    if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/enrollment/status')) {
+      return jsonResponse({ status: enrollmentStatus })
     }
     if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
       const after = Number(new URL(requestUrl).searchParams.get('after'))
@@ -244,6 +247,23 @@ describe('Cabinet photo scan integration', () => {
 
     expect(await screen.findByRole('heading', { name: 'Open Workflow Complete' })).toBeTruthy()
     expect(screen.getByText(/physical shutter movement was not verified/i)).toBeTruthy()
+  })
+
+  it('detects completed registration through the Pi bridge and removes the QR', async () => {
+    const fetcher = createFetchForStation('Station 1', 4305, { unregistered: true, enrollmentStatus: 'completed' })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click(screen.getByText('STATION 1').closest('button'))
+
+    expect(await screen.findByRole('heading', { name: 'ID Card Registered' })).toBeTruthy()
+    expect(container.querySelector('.registration-qr svg')).toBeNull()
+    expect(fetcher.mock.calls.some(([url]) => (
+      String(url) === 'http://localhost:3000/nfc-bridge/enrollment/status?token=fixture-token'
+    ))).toBe(true)
+    expect(screen.getByRole('button', { name: 'Back to Card Tapping' })).toBeTruthy()
   })
 
   it('uses Django registration URLs for the QR link without applying a Cabinet URL override', async () => {

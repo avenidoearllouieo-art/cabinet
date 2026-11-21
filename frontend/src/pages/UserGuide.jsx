@@ -89,7 +89,7 @@ export default function UserGuide() {
 
       <section className="border-b border-[#cbd8e6] py-7">
         <h2 className="flex items-center gap-2 text-xl font-bold text-[#082B53]"><MapPin size={21} aria-hidden="true" />Where Is the TapTrack Cabinet Located?</h2>
-        <p className="mt-3 text-sm leading-7 text-[#526780]">The designated TapTrack cabinet location is along the hallway near the CITC Office, inside the College of Information Technology and Computing (CITC) Building at the University of Science and Technology of Southern Philippines (USTP).</p>
+        <p className="mt-3 text-sm leading-7 text-[#526780]">4th Floor Hallway, near the College of Information Technology and Computing (CITC) Office, University of Science and Technology of Southern Philippines (USTP).</p>
         <dl className="mt-4 grid gap-3 sm:grid-cols-2">
           {[['Institution', location.institution_name], ['College', location.college_name], ['Building', location.building_name], ['Location', location.location_description]].map(([label, value]) => <div key={label} className="rounded-md border border-[#dbe5f0] bg-white p-4"><dt className="text-xs font-bold uppercase text-[#526780]">{label}</dt><dd className="mt-1 font-semibold text-[#082B53]">{value}</dd></div>)}
         </dl>

@@ -6,6 +6,7 @@ import { getRegistrationSubmissionError, getRegistrationValidationError } from '
 
 const MISSING_TOKEN_MESSAGE = 'Please tap your ID card at the TapTrack Cabinet first.'
 const WEB_PORTAL_URL = (import.meta.env.VITE_TAPTRACK_WEB_PORTAL_URL || 'https://taptrack-web.onrender.com').replace(/\/$/, '')
+const WEB_PORTAL_LOGIN_URL = `${WEB_PORTAL_URL}/`
 const fieldClass = 'min-h-12 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-lg text-slate-900 outline-none focus:border-[#082B53] focus:ring-2 focus:ring-[#082B53]/20 disabled:bg-slate-100'
 
 export default function NfcRegistration() {
@@ -28,6 +29,10 @@ export default function NfcRegistration() {
     api.get('/cabinet/enrollment/validate/', { params: { token } })
       .then((response) => {
         if (cancelled) return
+        if (response.data.status === 'completed') {
+          setState({ status: 'already-completed', error: '' })
+          return
+        }
         if (!response.data.valid) {
           setState({ status: 'invalid', error: response.data.error || 'This registration session has expired or is no longer valid.' })
           return
@@ -52,7 +57,11 @@ export default function NfcRegistration() {
       const estimatedServerNow = Date.now() + serverClockOffset
       const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - estimatedServerNow) / 1000))
       setSecondsRemaining(remaining)
-      if (remaining === 0) setState({ status: 'invalid', error: 'Registration session expired. Please return to the cabinet and tap your ID card again.' })
+      if (remaining === 0) {
+        setState((current) => current.status === 'valid'
+          ? { status: 'invalid', error: 'Registration session expired. Please return to the cabinet and tap your ID card again.' }
+          : current)
+      }
     }
     tick()
     const interval = window.setInterval(tick, 1000)
@@ -86,6 +95,13 @@ export default function NfcRegistration() {
         password: form.password,
         confirm_password: form.confirm_password,
       })
+      if (
+        response.data?.success !== true
+        || response.data?.registration_status !== 'registered'
+        || response.data?.nfc_registered !== true
+      ) {
+        throw new Error('Registration could not be confirmed. Please return to the cabinet and tap your ID card again.')
+      }
       setResult(response.data)
       setState({ status: 'completed', error: '' })
     } catch (error) {
@@ -117,6 +133,12 @@ export default function NfcRegistration() {
               <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.history.back()}>
                 Back to Card Tapping
               </button>
+            </>
+          )}
+          {state.status === 'already-completed' && (
+            <>
+              <h2 className="text-lg font-bold">Registration Already Completed</h2>
+              <p className="leading-7 text-slate-600">This registration link has already been used. Tap your ID card at the cabinet again.</p>
             </>
           )}
           {state.status === 'valid' && (
@@ -184,11 +206,11 @@ export default function NfcRegistration() {
                 <ReadOnlyItem label="Account Name" value={result?.name} />
                 <ReadOnlyItem label="Role" value={result?.role} capitalize />
                 <ReadOnlyItem label="ID Number" value={result?.administrator_id || result?.instructor_id || result?.student_id} />
-                <ReadOnlyItem label="NFC Card" value={result?.nfc_registered ? 'Registered' : 'Not confirmed'} />
+                <ReadOnlyItem label="NFC Card Status" value={result?.nfc_registered ? 'Registered' : 'Not confirmed'} />
               </dl>
-              <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.location.assign(`${WEB_PORTAL_URL}/`)}>
+              <a href={WEB_PORTAL_LOGIN_URL} className="flex min-h-14 w-full items-center justify-center rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white">
                 Go to TapTrack Portal
-              </button>
+              </a>
               <p className="text-center text-sm leading-6 text-slate-600">You can now return to the cabinet and tap your ID card again.</p>
             </section>
           )}

@@ -41,7 +41,7 @@ The checked-in `cabinet/.env.production` contains only public same-origin paths;
 
 The production Nginx server on port 5177 serves `dist/`, proxies `/nfc-bridge/*` to the Pi-local NFC service on `127.0.0.1:5001`, and proxies `/api/*` to `https://taptrack-api.onrender.com/api/`. Browser requests stay same-origin. Nginx resolves the Render hostname on demand so the local UI can start while the internet is unavailable. The Pi NFC service independently uses the same Render API base and adds its device key server-side.
 
-The Cabinet uses the registration URL returned by Django without rewriting its host or token. Configure `TAPTRACK_NFC_REGISTRATION_URL_BASE=https://taptrack-web.onrender.com/register` in the deployed Django environment so registration QR codes open the public Portal, not the Cabinet UI:
+The Cabinet uses the registration URL returned by Django without rewriting its host or token. Configure `TAPTRACK_NFC_REGISTRATION_URL_BASE=https://taptrack-registration.onrender.com/register` in the deployed Django environment so registration QR codes open the public registration site, not the Web Portal or Cabinet UI:
 
 ```bash
 cd /home/taptrack/tap-track/cabinet

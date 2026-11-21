@@ -1855,7 +1855,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
 
     def test_recovery_origin_policy_accepts_development_and_production_origins_exactly(self):
         configured_origins = load_allowed_origins(
-            'http://localhost:5173,http://localhost:4000,https://cabinet.example.edu',
+            'http://localhost:5177,http://127.0.0.1:5177,https://cabinet.example.edu',
         )
         self.assertEqual(configured_origins, frozenset({
             'http://localhost:5173',

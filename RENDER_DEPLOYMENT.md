@@ -45,7 +45,7 @@ The Blueprint generates `DJANGO_SECRET_KEY` and connects `DATABASE_URL` to the c
 | API | `DJANGO_LEGACY_MEDIA_ROOT` | Source directory used only by the one-time copier; never used for new upload storage |
 | API | `DJANGO_CORS_ALLOWED_ORIGINS` | `https://<actual-frontend-host>` (origin only) |
 | API | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://<actual-frontend-host>` (include scheme, no path) |
-| API | `TAPTRACK_NFC_REGISTRATION_URL_BASE` | `https://<actual-frontend-host>/register` |
+| API | `TAPTRACK_NFC_REGISTRATION_URL_BASE` | `https://taptrack-registration.onrender.com/register` |
 | API | `DJANGO_EMAIL_HOST` | SMTP provider hostname |
 | API | `DJANGO_EMAIL_PORT` | `587` |
 | API | `DJANGO_EMAIL_HOST_USER` | SMTP user (secret) |
@@ -53,8 +53,9 @@ The Blueprint generates `DJANGO_SECRET_KEY` and connects `DATABASE_URL` to the c
 | API | `DJANGO_EMAIL_USE_TLS` | `true` |
 | API | `DJANGO_DEFAULT_FROM_EMAIL` | Verified sender address |
 | Frontend | `VITE_API_BASE_URL` | `https://taptrack-api.onrender.com/api` |
+| Registration static site | `VITE_TAPTRACK_WEB_PORTAL_URL` | `https://taptrack-web.onrender.com` |
 
-The frontend build is configured with the public Django API URL in the Blueprint; it contains no credentials. Render assigns the static site its public hostname after creation. Set the three API origin/registration variables to that actual HTTPS hostname in the Render dashboard; do not use a Pi address or guess the service domain. SMTP values are required for self-registration email codes. Keep SMTP username/password secret and configure them only on the API service.
+The frontend build is configured with the public Django API URL in the Blueprint; it contains no credentials. Set `TAPTRACK_NFC_REGISTRATION_URL_BASE` to the public registration site's `/register` URL and `VITE_TAPTRACK_WEB_PORTAL_URL` on the registration static site to the separate Web Portal origin. Set the API CORS/CSRF origins to the origin that hosts the registration site. SMTP values are required for self-registration email codes. Keep SMTP username/password secret and configure them only on the API service.
 
 The API uses `DJANGO_FILE_UPLOAD_TEMP_DIR` only for transient multipart request buffers. Persisted uploads use private S3-compatible object storage and remain behind Django's authenticated, role-checked preview/download endpoints. Keep the bucket private, disable public access, and issue a least-privilege storage key for this application. The API hostname is automatically added to `ALLOWED_HOSTS`. If deployed NFC readers are part of the test, add `TAPTRACK_NFC_DEVICE_MAP` as a secret using the existing test-device mapping. `DEVICE_API_KEY` is only for development mock mode; it is not used as a production device credential. Add custom hostnames through `DJANGO_ALLOWED_HOSTS` if needed.
 

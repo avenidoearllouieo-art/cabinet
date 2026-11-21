@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Boxes, CircuitBoard, Cloud, Cpu, Fingerprint, GraduationCap, MapPin,
+  Boxes, CircuitBoard, Cpu, Fingerprint, GraduationCap, MapPin,
   Monitor, Server, Video,
 } from 'lucide-react'
 import api from '../services/api.js'
@@ -12,7 +12,6 @@ const architecture = [
   { icon: Server, name: 'Django REST API', detail: 'Authentication, scoped permissions, academic records, password recovery, and file-access authorization.' },
   { icon: Fingerprint, name: 'Raspberry Pi NFC service', detail: 'Reads NFC scans and coordinates cabinet verification and recovery with Django using device credentials kept on the Pi.' },
   { icon: Cpu, name: 'ESP32 controller', detail: 'A separate motor-control firmware prototype communicates with the Pi service. Physical actuation is disarmed by default.' },
-  { icon: Cloud, name: 'Django media and Tigris', detail: 'Attachments use Django’s configured media storage. Hosted deployments can use Tigris S3-compatible object storage for larger video uploads.' },
 ]
 
 const roles = [
@@ -40,7 +39,7 @@ export default function AboutTapTrack() {
     <InfoPageLayout
       eyebrow="Capstone Project"
       title="About TapTrack"
-      description="An NFC-enabled smart cabinet management system that connects physical cabinet access with secure, role-based web monitoring."
+      description="An NFC-enabled cabinet management system that connects physical cabinet access with secure, role-based web monitoring."
     >
       <section className="grid items-start gap-8 border-b border-[#cbd8e6] pb-9 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <div className="flex items-center gap-4">
@@ -51,14 +50,14 @@ export default function AboutTapTrack() {
           </div>
         </div>
         <div className="space-y-4 text-sm leading-7 text-[#526780]">
-          <p>TapTrack is an NFC-enabled smart cabinet management system developed to improve the security, organization, accessibility, and monitoring of laboratory equipment through digital identification and web-based management.</p>
+          <p>TapTrack is an NFC-enabled cabinet management system developed to improve the security, organization, accessibility, and monitoring of laboratory equipment through digital identification and web-based management.</p>
           <p>TapTrack is a capstone project for managing access to laboratory equipment using NFC-enabled identification cards, Raspberry Pi hardware, and a centralized monitoring platform.</p>
         </div>
       </section>
 
       <section className="border-b border-[#cbd8e6] py-8">
         <h2 className="flex items-center gap-2 text-lg font-bold text-[#082B53]"><MapPin size={21} aria-hidden="true" />Where to Find TapTrack</h2>
-        <p className="mt-3 max-w-4xl text-sm leading-7 text-[#526780]">The TapTrack smart cabinet is designed for installation along the hallway near the College of Information Technology and Computing (CITC) Office at the University of Science and Technology of Southern Philippines (USTP). The cabinet provides an organized location for storing and accessing laboratory equipment used during academic activities.</p>
+        <p className="mt-3 max-w-4xl text-sm leading-7 text-[#526780]">The TapTrack cabinet is designed for installation along the hallway near the College of Information Technology and Computing (CITC) Office at the University of Science and Technology of Southern Philippines (USTP). The cabinet provides an organized location for storing and accessing laboratory equipment used during academic activities.</p>
         <dl className="mt-5 grid gap-3 rounded-lg border border-[#dbe5f0] bg-[#F8FAFC] p-5 sm:grid-cols-2">
           {[['Institution', location.institution_name], ['College', location.college_name], ['Building', location.building_name], ['Designated Cabinet Location', location.location_description], ['Purpose', location.purpose]].map(([label, value]) => (
             <div key={label} className="rounded-md border border-[#dbe5f0] bg-white p-4"><dt className="text-xs font-bold uppercase text-[#526780]">{label}</dt><dd className="mt-1 font-semibold text-[#082B53]">{value}</dd></div>
@@ -104,12 +103,15 @@ export default function AboutTapTrack() {
         </div>
         <div className="border-t border-[#cbd8e6] pt-6 md:border-l md:border-t-0 md:pl-8 md:pt-0">
           <h2 className="text-lg font-bold text-[#082B53]">Acknowledgments</h2>
-          <p className="mt-2 text-sm leading-6 text-[#526780]">Editable placeholders for the capstone presentation:</p>
           <ul className="mt-4 space-y-2 text-sm text-[#28415f]">
-            <li><span className="font-semibold">Project team:</span> [Project Team Members]</li>
-            <li><span className="font-semibold">Faculty adviser:</span> [Faculty Adviser]</li>
-            <li><span className="font-semibold">Department / institution:</span> [Department or Institution]</li>
-            <li><span className="font-semibold">Project partners:</span> [Acknowledged Partners]</li>
+            <li><span className="font-semibold">Project team:</span></li>
+            <li>Ramiro, Christian Joseph F.</li>
+            <li>Avenido, Earl Louie O.</li>
+            <li>Bagares, Kurt P.</li>
+            <li>Bulanon, Shelly Marie S.</li>
+            <li>Paderanga, Ryan Ulrich E.</li>
+            <li><span className="font-semibold">Capstone Adviser:</span> Engr. Jay Noel Rojo</li>
+            <li><span className="font-semibold">Department / Institution:</span> College of Information Technology and Computing (CITC), University of Science and Technology of Southern Philippines (USTP).</li>
           </ul>
         </div>
       </section>

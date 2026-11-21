@@ -185,14 +185,6 @@ export default function App() {
     const tick = () => {
       const remaining = Math.max(0, Math.floor((fallbackExpiresAt - (Date.now() + clockOffset)) / 1000))
       setRegistrationCountdown(remaining)
-      if (remaining <= 0) {
-        const token = new URL(pendingRegistration.registrationUrl).searchParams.get('token')
-        if (token) {
-          void cancelEnrollmentRegistration(token).catch(() => {})
-        }
-        setPendingRegistration(null)
-        setView('registration-expired')
-      }
     }
     tick()
     const intervalId = window.setInterval(tick, 1000)
@@ -818,9 +810,23 @@ export default function App() {
     const token = registrationUrl ? new URL(registrationUrl).searchParams.get('token') : null
     if (token) {
       try {
-        await cancelEnrollmentRegistration(token)
-      } catch {
-        // The backend remains the source of truth for session validity.
+        const cancellation = await cancelEnrollmentRegistration(token)
+        if (!cancellation.cancelled) {
+          const status = await getEnrollmentStatus(token)
+          if (status.status === 'completed') {
+            setPendingRegistration(null)
+            setRegistrationCountdown(600)
+            setView('registration-success')
+            return
+          }
+          if (status.status !== 'expired' && status.status !== 'cancelled') {
+            setErrorMessage('Registration could not be cancelled. The QR code is still active.')
+            return
+          }
+        }
+      } catch (error) {
+        setErrorMessage(error.message || 'Registration could not be cancelled. The QR code is still active.')
+        return
       }
     }
     setPendingRegistration(null)
@@ -1157,6 +1163,7 @@ export default function App() {
                 <p className="muted" role="timer">QR Code Expires In: {formatCountdown(registrationCountdown)}</p>
               </>
             )}
+            {errorMessage && <div className="error-banner" role="alert">{errorMessage}</div>}
             <div className="button-row stacked">
               <button className="btn secondary" type="button" onClick={cancelRegistration}>Cancel Registration</button>
             </div>

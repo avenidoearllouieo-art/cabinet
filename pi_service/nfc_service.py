@@ -56,6 +56,8 @@ DEFAULT_ALLOWED_ORIGINS = frozenset({
     'http://localhost:5173',
     'http://127.0.0.1:5176',
     'http://localhost:5176',
+    'http://127.0.0.1:5177',
+    'http://localhost:5177',
 })
 
 

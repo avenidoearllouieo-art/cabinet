@@ -5664,7 +5664,7 @@ class CabinetDeviceIntegrationTests(TestCase):
             nfc_uid='CARD-ENROLLMENT-003',
             token_digest='',
             token_hash='',
-            expires_at=timezone.now() + timedelta(minutes=15),
+            expires_at=timezone.now() - timedelta(minutes=1),
             status=NFCEnrollmentSession.StatusChoices.COMPLETED,
         )
         enrollment.set_token('completed-token')
@@ -5963,6 +5963,31 @@ class NFCEnrollmentRegistrationTests(TestCase):
         enrollment.completion_expires_at = enrollment.expires_at
         enrollment.save()
         return enrollment
+
+    def test_cancellation_revokes_pending_but_not_completed_enrollment(self):
+        pending = self.make_enrollment('CANCEL-PENDING-CARD', 'pending-cancel-token')
+        cancelled = self.client.post(
+            '/api/cabinet/enrollment/cancel/',
+            {'token': 'pending-cancel-token'},
+            format='json',
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertTrue(cancelled.json()['cancelled'])
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, NFCEnrollmentSession.StatusChoices.CANCELLED)
+
+        completed_session = self.make_enrollment('CANCEL-COMPLETED-CARD', 'completed-cancel-token')
+        completed_session.status = NFCEnrollmentSession.StatusChoices.COMPLETED
+        completed_session.save(update_fields=['status'])
+        not_cancelled = self.client.post(
+            '/api/cabinet/enrollment/cancel/',
+            {'token': 'completed-cancel-token'},
+            format='json',
+        )
+        self.assertEqual(not_cancelled.status_code, 200)
+        self.assertFalse(not_cancelled.json()['cancelled'])
+        completed_session.refresh_from_db()
+        self.assertEqual(completed_session.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
 
     def register(self, token, role, identifier_field, identifier, username, password, confirm_password=None):
         return register_nfc_with_email_code(self.client, {
