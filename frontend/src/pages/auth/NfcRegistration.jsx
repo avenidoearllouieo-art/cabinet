@@ -5,6 +5,7 @@ import api from '../../services/api'
 import { getRegistrationSubmissionError, getRegistrationValidationError } from './registrationErrors'
 
 const MISSING_TOKEN_MESSAGE = 'Please tap your ID card at the TapTrack Cabinet first.'
+const WEB_PORTAL_URL = (import.meta.env.VITE_TAPTRACK_WEB_PORTAL_URL || 'https://taptrack-web.onrender.com').replace(/\/$/, '')
 const fieldClass = 'min-h-12 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-lg text-slate-900 outline-none focus:border-[#082B53] focus:ring-2 focus:ring-[#082B53]/20 disabled:bg-slate-100'
 
 export default function NfcRegistration() {
@@ -176,18 +177,19 @@ export default function NfcRegistration() {
           {state.status === 'completed' && (
             <section className="space-y-4" aria-labelledby="success-title">
               <div className="border-l-4 border-[#FFBE0B] bg-[#EAF2FB] p-4">
-                <h2 id="success-title" className="text-2xl font-bold text-[#082B53]">Registration Successful</h2>
+                <h2 id="success-title" className="text-2xl font-bold text-[#082B53]">Registration Successful!</h2>
                 <p className="mt-1 text-base text-slate-700">Your TapTrack account has been created and your ID card is now registered.</p>
               </div>
               <dl className="grid grid-cols-1 gap-3 rounded-md border border-slate-200 p-4 sm:grid-cols-2">
                 <ReadOnlyItem label="Account Name" value={result?.name} />
                 <ReadOnlyItem label="Role" value={result?.role} capitalize />
-                <ReadOnlyItem label={result?.role === 'instructor' ? 'Instructor ID' : 'Student ID'} value={result?.instructor_id || result?.student_id} />
+                <ReadOnlyItem label="ID Number" value={result?.administrator_id || result?.instructor_id || result?.student_id} />
                 <ReadOnlyItem label="NFC Card" value={result?.nfc_registered ? 'Registered' : 'Not confirmed'} />
               </dl>
-              <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.location.assign('/login')}>
-                Continue to Login
+              <button type="button" className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white" onClick={() => window.location.assign(`${WEB_PORTAL_URL}/`)}>
+                Go to TapTrack Portal
               </button>
+              <p className="text-center text-sm leading-6 text-slate-600">You can now return to the cabinet and tap your ID card again.</p>
             </section>
           )}
         </div>

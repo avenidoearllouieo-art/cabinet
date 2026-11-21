@@ -43,8 +43,9 @@ def register_nfc_with_pin(client, payload):
             'id_type': id_type,
             'id_number': payload.get(identifier_field, ''),
             'email': payload.get('email') or User.objects.filter(**{identifier_field: payload.get(identifier_field, '')}).values_list('email', flat=True).first() or 'pending@example.test',
-            'username': payload['username'],
+            'username': payload.get('username', ''),
             'password': payload['password'],
+            'confirm_password': payload.get('confirm_password', payload['password']),
         }
     else:
         normalized = dict(payload)
@@ -78,7 +79,7 @@ def register_nfc_with_pin(client, payload):
             enrollment.save(update_fields=['registration_target_user', 'completion_expires_at'])
     return client.post(
         '/api/cabinet/enrollment/register/',
-        {**normalized, 'confirm_password': normalized['password']},
+        {**normalized, 'confirm_password': normalized.get('confirm_password', normalized['password'])},
         format='json',
     )
 
@@ -5669,7 +5670,8 @@ class CabinetDeviceIntegrationTests(TestCase):
         enrollment.set_token('completed-token')
         enrollment.save()
         completed = self.client.get('/api/cabinet/enrollment/validate/', {'token': 'completed-token'})
-        self.assertEqual(completed.status_code, 410)
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()['status'], 'completed')
 
     def test_pending_student_registration_links_nfc_and_consumes_token(self):
         student = User.objects.create_user(

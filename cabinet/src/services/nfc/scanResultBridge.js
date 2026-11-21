@@ -11,6 +11,8 @@ const recoveryHandoffUrl = bridgeEndpoint('/password-reset/handoff')
 const recoveryCancelUrl = bridgeEndpoint('/password-reset/cancel')
 const recoveryStatusUrl = bridgeEndpoint('/password-reset/bridge-status')
 const recoveryQueueUrl = bridgeEndpoint('/password-reset/queue')
+const enrollmentStatusUrl = bridgeEndpoint('/enrollment/status')
+const enrollmentCancelUrl = bridgeEndpoint('/enrollment/cancel')
 const djangoApiBase = (import.meta.env?.VITE_DJANGO_API_BASE_URL || '/api').replace(/\/$/, '')
 const passwordResetStatusUrl = `${djangoApiBase}/auth/password-reset/status/`
 
@@ -119,6 +121,33 @@ export async function fetchPasswordRecoveryQueue({ signal, fetcher = fetch } = {
             account_reference,
             status,
         }))
+}
+
+export async function getEnrollmentStatus(token, options = {}) {
+  if (!token) throw new Error('A registration token is required.')
+  const fetcher = options.fetcher || fetch
+  const signal = options.signal
+  const url = new URL(enrollmentStatusUrl)
+  url.searchParams.set('token', token)
+  const response = await fetcher(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok && response.status !== 410) throw new Error(payload.error || 'Registration status could not be checked.')
+  if (typeof payload.status !== 'string') throw new Error('The enrollment status response is invalid.')
+  return payload
+}
+
+export async function cancelEnrollmentRegistration(token, options = {}) {
+  if (!token) throw new Error('A registration token is required.')
+  const fetcher = options.fetcher || fetch
+  const response = await fetcher(enrollmentCancelUrl, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+    cache: 'no-store',
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload.error || 'Registration could not be cancelled.')
+  return payload
 }
 
 export async function cancelPasswordRecovery(requestId, options = {}) {

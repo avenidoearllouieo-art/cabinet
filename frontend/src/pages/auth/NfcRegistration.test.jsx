@@ -43,7 +43,9 @@ describe('NfcRegistration', () => {
     fireEvent.change(screen.getByLabelText('Confirm Password'), { target: { value: 'Student-Password-123!' } })
     fireEvent.click(screen.getByRole('button', { name: 'Complete Registration' }))
 
-    expect(await screen.findByRole('heading', { name: 'Registration Successful' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Registration Successful!' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Go to TapTrack Portal' })).toBeTruthy()
+    expect(screen.getByText('You can now return to the cabinet and tap your ID card again.')).toBeTruthy()
     expect(api.post).toHaveBeenCalledWith('/cabinet/enrollment/register/', {
       token: 'valid-enrollment-token',
       id_number: 'STU-001',

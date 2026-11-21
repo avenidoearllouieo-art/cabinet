@@ -68,16 +68,6 @@
 .home-error { grid-column: 1 / -1; margin: 0; }
 .status-panel,
 .confirm-panel { width: min(1100px, 100%); margin: 0 auto; }
-.nfc-registration-panel { width: min(1100px, 100%); }
-.nfc-registration-frame {
-  display: block;
-  width: 100%;
-  height: min(70dvh, 760px);
-  margin: 18px 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-}
 .hero-card,
 .panel-card,
 .feedback-card,
@@ -667,7 +657,6 @@
   .participant-shell > .button-row:last-child { position: sticky; bottom: -1px; z-index: 2; padding: 8px 0 2px; background: var(--surface); }
   .registration-qr { padding: 8px; margin: 4px auto 8px; }
   .registration-qr svg { width: min(240px, 38dvh); }
-  .nfc-registration-frame { height: min(42dvh, 240px); margin: 8px 0; }
   .button-row { gap: 8px; margin-top: 10px; }
   .btn { min-height: 60px; padding: 10px 16px; }
   .participant-card { min-height: 60px; padding: 10px 12px; }

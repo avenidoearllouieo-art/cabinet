@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from motor_controller import (
@@ -556,6 +556,62 @@ class DjangoVerifier:
             payload = {}
         if 'error' in payload:
             payload['error'] = self._sanitize_error(payload['error'])
+        return status_code, payload
+
+    def enrollment_status(self, token: str) -> tuple[int, dict]:
+        if not self.api_key:
+            raise DjangoRequestError('Django device API key is not configured.')
+        if not token:
+            raise ValueError('A valid registration token is required.')
+        url = f'{self.api_base_url}/cabinet/enrollment/validate/?token={quote(token, safe="")}'
+        request = urllib.request.Request(url, headers={'Accept': 'application/json', 'X-API-Key': self.api_key}, method='GET')
+        try:
+            opener = self.opener or urllib.request.urlopen
+            response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                status_code = response.status
+                body = response.read()
+        except urllib.error.HTTPError as error:
+            status_code = error.code
+            body = error.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise DjangoRequestError('Unable to reach the Django enrollment service.') from error
+        try:
+            payload = json.loads(body.decode('utf-8')) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return status_code, payload
+
+    def enrollment_cancel(self, token: str) -> tuple[int, dict]:
+        if not self.api_key:
+            raise DjangoRequestError('Django device API key is not configured.')
+        if not token:
+            raise ValueError('A valid registration token is required.')
+        request = urllib.request.Request(
+            f'{self.api_base_url}/cabinet/enrollment/cancel/',
+            data=json.dumps({'token': token}).encode('utf-8'),
+            headers={'Accept': 'application/json', 'Content-Type': 'application/json', 'X-API-Key': self.api_key},
+            method='POST',
+        )
+        try:
+            opener = self.opener or urllib.request.urlopen
+            response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            with response:
+                status_code = response.status
+                body = response.read()
+        except urllib.error.HTTPError as error:
+            status_code = error.code
+            body = error.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise DjangoRequestError('Unable to reach the Django enrollment service.') from error
+        try:
+            payload = json.loads(body.decode('utf-8')) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
         return status_code, payload
 
     def workflow(self, command: str | None = None, station: str | None = None) -> tuple[int, dict]:
@@ -1795,6 +1851,18 @@ class NFCHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if path == '/enrollment/status':
+            parameters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            tokens = parameters.get('token', [])
+            if len(tokens) != 1:
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'A single registration token is required.'})
+                return
+            try:
+                status_code, payload = self.server.service.verifier.enrollment_status(tokens[0])
+                self._send_json(HTTPStatus(status_code), payload)
+            except (DjangoRequestError, ValueError) as error:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error, getattr(self.server.service.verifier, 'api_key', ''))})
+            return
         if path == '/nfc/status':
             self._send_json(HTTPStatus.OK, self.server.service.status_snapshot())
             return
@@ -1862,6 +1930,17 @@ class NFCHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         service = self.server.service
+        if path == '/enrollment/cancel':
+            try:
+                payload = self._read_json_body()
+                token = payload.get('token') if isinstance(payload, dict) else None
+                if not isinstance(token, str) or not token:
+                    raise ValueError('A valid registration token is required.')
+                status_code, response_payload = self.server.service.verifier.enrollment_cancel(token)
+                self._send_json(HTTPStatus(status_code), response_payload)
+            except (DjangoRequestError, ValueError) as error:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error, getattr(self.server.service.verifier, 'api_key', ''))})
+            return
         if path in ('/password-reset/handoff', '/password-reset/cancel'):
             if not self._recovery_origin_is_allowed():
                 self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Password-recovery bridge origin is not allowed.'})

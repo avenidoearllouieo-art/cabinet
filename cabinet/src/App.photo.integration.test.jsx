@@ -300,10 +300,10 @@ describe('Cabinet photo scan integration', () => {
     await user.click(screen.getByText('STATION 1').closest('button'))
 
     await waitFor(() => expect(container.querySelector('.registration-qr svg')).toBeTruthy())
-    await user.click(await screen.findByRole('button', { name: 'REGISTER ID CARD' }))
-    const registrationFrame = screen.getByTitle('NFC card registration')
-    expect(registrationFrame.getAttribute('src')).toBe(registrationUrl)
-    expect(screen.getByRole('link', { name: /open registration in this cabinet window/i }).getAttribute('href')).toBe(registrationUrl)
+    expect(screen.queryByTitle('NFC card registration')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'REGISTER ID CARD' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel Registration' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'SKIP FOR NOW' })).toBeNull()
   })
 
   it('records Station 2 closing attendance when the photo status API fails', async () => {

@@ -4,6 +4,7 @@ import { getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 import {
+  cancelEnrollmentRegistration,
   cancelPasswordRecovery,
   captureAccessLogPhoto,
   fetchCabinetWorkflow,
@@ -11,6 +12,7 @@ import {
   fetchPasswordRecoveryBridgeStatus,
   fetchPasswordRecoveryQueue,
   fetchPasswordRecoveryStatus,
+  getEnrollmentStatus,
   fetchScanEvents,
   sendCabinetWorkflow,
   startPasswordRecovery,
@@ -20,6 +22,7 @@ import './App.css'
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
 const RECOVERY_STATUS_POLL_INTERVAL_MS = 2000
+const ENROLLMENT_STATUS_POLL_INTERVAL_MS = 2000
 const RECOVERY_STATUS_MAX_BACKOFF_MS = 30000
 const PHOTO_STATUS_ATTEMPTS = 12
 const PHOTO_STATUS_RETRY_DELAY_MS = 750
@@ -185,12 +188,7 @@ export default function App() {
       if (remaining <= 0) {
         const token = new URL(pendingRegistration.registrationUrl).searchParams.get('token')
         if (token) {
-          void fetch('/api/cabinet/enrollment/cancel/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ token }),
-            cache: 'no-store',
-          }).catch(() => {})
+          void cancelEnrollmentRegistration(token).catch(() => {})
         }
         setPendingRegistration(null)
         setView('registration-expired')
@@ -200,6 +198,46 @@ export default function App() {
     const intervalId = window.setInterval(tick, 1000)
     return () => window.clearInterval(intervalId)
   }, [pendingRegistration?.registrationUrl])
+
+  useEffect(() => {
+    if (!pendingRegistration?.registrationUrl) return undefined
+    let cancelled = false
+    let timeoutId
+    const poll = async () => {
+      const token = new URL(pendingRegistration.registrationUrl).searchParams.get('token')
+      if (!token) return
+      try {
+        const status = await getEnrollmentStatus(token)
+        if (cancelled) return
+        if (status.status === 'completed') {
+          setPendingRegistration(null)
+          setRegistrationCountdown(600)
+          setView('registration-success')
+          return
+        }
+        if (status.status === 'expired' || status.status === 'cancelled') {
+          setPendingRegistration(null)
+          setRegistrationCountdown(600)
+          setView('registration-expired')
+          return
+        }
+      } catch {
+        // Keep the existing QR active if this poll is temporarily unavailable.
+      }
+      if (!cancelled) timeoutId = window.setTimeout(poll, ENROLLMENT_STATUS_POLL_INTERVAL_MS)
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timeoutId) window.clearTimeout(timeoutId)
+    }
+  }, [pendingRegistration?.registrationUrl])
+
+  useEffect(() => {
+    if (view !== 'registration-success') return undefined
+    const timeoutId = window.setTimeout(() => resetToHome(), 5000)
+    return () => window.clearTimeout(timeoutId)
+  }, [view])
 
   async function runWorkflowCommand(command) {
     if (workflowRequestRef.current) return null
@@ -780,12 +818,7 @@ export default function App() {
     const token = registrationUrl ? new URL(registrationUrl).searchParams.get('token') : null
     if (token) {
       try {
-        await fetch('/api/cabinet/enrollment/cancel/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ token }),
-          cache: 'no-store',
-        })
+        await cancelEnrollmentRegistration(token)
       } catch {
         // The backend remains the source of truth for session validity.
       }
@@ -793,15 +826,6 @@ export default function App() {
     setPendingRegistration(null)
     setRegistrationCountdown(600)
     resumeParticipantScan({ skipped: true })
-  }
-
-  function openRegistrationPage() {
-    if (!pendingRegistration?.registrationUrl) {
-      setErrorMessage('A registration link is not available. Tap the unregistered card again.')
-      return
-    }
-    setErrorMessage('')
-    setView('nfc-registration')
   }
 
   function resumeParticipantScan({ skipped = false } = {}) {
@@ -1134,10 +1158,7 @@ export default function App() {
               </>
             )}
             <div className="button-row stacked">
-              <button className="btn primary registration-link" type="button" onClick={openRegistrationPage} disabled={!pendingRegistration?.registrationUrl}>REGISTER ID CARD</button>
               <button className="btn secondary" type="button" onClick={cancelRegistration}>Cancel Registration</button>
-              <button className="btn secondary" onClick={() => resumeParticipantScan({ skipped: true })}>SKIP FOR NOW</button>
-              <button className="btn ghost" onClick={() => resumeParticipantScan()}>BACK TO CARD TAPPING</button>
             </div>
           </div>
         </Screen>
@@ -1155,27 +1176,14 @@ export default function App() {
         </Screen>
       )}
 
-      {view === 'nfc-registration' && (
+      {view === 'registration-success' && (
         <Screen>
-          <div className="panel nfc-registration-panel">
-            <h2>Register NFC Card</h2>
-            {pendingRegistration?.registrationUrl ? (
-              <>
-                <p className="muted">Complete the existing TapTrack registration form below. If this link has expired or was already used, tap the card again to get a fresh link.</p>
-                <iframe
-                  className="nfc-registration-frame"
-                  src={pendingRegistration.registrationUrl}
-                  title="NFC card registration"
-                  referrerPolicy="no-referrer"
-                />
-                <p className="muted">If the form cannot load here, <a href={pendingRegistration.registrationUrl} rel="noreferrer">open registration in this Cabinet window</a>.</p>
-              </>
-            ) : (
-              <p className="error-banner" role="alert">A registration link is not available. Tap the unregistered card again.</p>
-            )}
+          <div className="panel status-panel">
+            <div className="large-state is-open"><span className="status-dot good" /><strong>REGISTRATION COMPLETE</strong></div>
+            <h2>ID Card Registered</h2>
+            <p className="muted">Registration complete. Tap your ID card again to continue.</p>
             <div className="button-row">
-              <button className="btn secondary" type="button" onClick={() => setView('unregistered-card')}>BACK TO CARD</button>
-              <button className="btn ghost" type="button" onClick={() => resumeParticipantScan()}>BACK TO CARD TAPPING</button>
+              <button className="btn primary" type="button" onClick={resetToHome}>Back to Card Tapping</button>
             </div>
           </div>
         </Screen>
