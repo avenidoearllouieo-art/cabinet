@@ -3725,41 +3725,92 @@ class PasswordResetFlowTests(TestCase):
             'student_id': 'STU-001',
             'email': 'student-a@example.com',
         }, format='json')
-        invalid_response = self.client.post('/api/auth/password-reset/request/', {
-            'student_id': 'STU-001',
-            'email': 'other@example.com',
-        }, format='json')
+        invalid_responses = [
+            self.client.post('/api/auth/password-reset/request/', {
+                'student_id': 'STU-001',
+                'email': self.student_b.email,
+            }, format='json'),
+            self.client.post('/api/auth/password-reset/request/', {
+                'student_id': 'UNKNOWN-STUDENT',
+                'email': 'student-a@example.com',
+            }, format='json'),
+            self.client.post('/api/auth/password-reset/request/', {
+                'student_id': 'UNKNOWN-STUDENT',
+                'email': 'other@example.com',
+            }, format='json'),
+        ]
 
-        self.assertEqual(valid_response.status_code, invalid_response.status_code)
         self.assertEqual(valid_response.status_code, 200)
-        self.assertEqual(set(valid_response.json()), set(invalid_response.json()))
-        self.assertEqual(valid_response.json()['message'], invalid_response.json()['message'])
-        self.assertNotEqual(valid_response.json()['request_id'], invalid_response.json()['request_id'])
-        self.assertNotIn('user_id', invalid_response.json())
-        invalid_reset_request = PasswordResetRequest.objects.get(
-            request_id=invalid_response.json()['request_id'],
-        )
-        self.assertIsNone(invalid_reset_request.user_id)
-        pending = self.client.post('/api/auth/password-reset/status/', {
-            'request_id': invalid_reset_request.request_id,
-        }, format='json')
-        self.assertEqual(pending.json(), {'status': 'pending'})
+        for invalid_response in invalid_responses:
+            self.assertEqual(valid_response.status_code, invalid_response.status_code)
+            self.assertEqual(set(valid_response.json()), set(invalid_response.json()))
+            self.assertEqual(valid_response.json()['message'], invalid_response.json()['message'])
+            self.assertNotEqual(valid_response.json()['request_id'], invalid_response.json()['request_id'])
+            self.assertNotIn('user_id', invalid_response.json())
+            invalid_reset_request = PasswordResetRequest.objects.get(
+                request_id=invalid_response.json()['request_id'],
+            )
+            self.assertIsNone(invalid_reset_request.user_id)
+            pending = self.client.post('/api/auth/password-reset/status/', {
+                'request_id': invalid_reset_request.request_id,
+            }, format='json')
+            self.assertEqual(pending.json(), {'status': 'pending'})
 
-        valid_reset_request = PasswordResetRequest.objects.get(
-            request_id=valid_response.json()['request_id'],
+        valid_reset_request = PasswordResetRequest.objects.get(request_id=valid_response.json()['request_id'])
+        invalid_reset_requests = PasswordResetRequest.objects.filter(
+            request_id__in=[response.json()['request_id'] for response in invalid_responses],
         )
+        queue = self.client.get(
+            '/api/auth/password-reset/cabinet-queue/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+        self.assertEqual(queue.status_code, 200, queue.json())
+        self.assertEqual([item['request_id'] for item in queue.json()['results']], [valid_reset_request.request_id])
+        self.assertEqual(invalid_reset_requests.count(), len(invalid_responses))
         past = timezone.now() - timedelta(minutes=1)
         PasswordResetRequest.objects.filter(
-            pk__in=[valid_reset_request.pk, invalid_reset_request.pk],
+            pk__in=[valid_reset_request.pk, *invalid_reset_requests.values_list('pk', flat=True)],
         ).update(expires_at=past)
         valid_expired = self.client.post('/api/auth/password-reset/status/', {
             'request_id': valid_reset_request.request_id,
         }, format='json')
-        invalid_expired = self.client.post('/api/auth/password-reset/status/', {
-            'request_id': invalid_reset_request.request_id,
+        for invalid_response in invalid_responses:
+            invalid_expired = self.client.post('/api/auth/password-reset/status/', {
+                'request_id': invalid_response.json()['request_id'],
+            }, format='json')
+            self.assertEqual(valid_expired.status_code, invalid_expired.status_code)
+            self.assertEqual(valid_expired.json(), invalid_expired.json())
+
+    def test_student_without_registered_nfc_card_gets_generic_nonselectable_request(self):
+        no_card_student = User.objects.create_user(
+            username='student-no-nfc',
+            email='student-no-nfc@example.com',
+            password='old-password-3',
+            role=User.RoleChoices.STUDENT,
+            first_name='Student',
+            last_name='No Card',
+            student_id='STU-NO-CARD',
+            nfc_uid=None,
+        )
+
+        response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': no_card_student.student_id,
+            'email': no_card_student.email,
         }, format='json')
-        self.assertEqual(valid_expired.status_code, invalid_expired.status_code)
-        self.assertEqual(valid_expired.json(), invalid_expired.json())
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(
+            response.json()['message'],
+            'If the supplied details match an eligible account, continue verification at the cabinet.',
+        )
+        decoy_request = PasswordResetRequest.objects.get(request_id=response.json()['request_id'])
+        self.assertIsNone(decoy_request.user_id)
+        queue = self.client.get(
+            '/api/auth/password-reset/cabinet-queue/',
+            HTTP_X_API_KEY=self.device_api_key,
+        )
+        self.assertEqual(queue.status_code, 200, queue.json())
+        self.assertNotIn(response.json()['request_id'], [item['request_id'] for item in queue.json()['results']])
 
     def test_password_reset_request_rejects_missing_and_malformed_fields(self):
         invalid_payloads = [

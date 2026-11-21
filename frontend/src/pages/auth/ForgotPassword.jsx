@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, KeyRound, LockKeyhole, Mail, ShieldCheck, UserRound } from 'lucide-react'
+import { ArrowLeft, ArrowRight, LockKeyhole, Mail, ShieldCheck, UserRound } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import TapTrackLogo from '../../components/TapTrackLogo.jsx'
@@ -183,7 +183,7 @@ export default function ForgotPassword() {
       setRequestId(nextRequestId)
       setRequestExpiresAt(typeof payload.expires_at === 'string' ? payload.expires_at : '')
       setVerificationEnded(false)
-      setSuccess('Your recovery reference is ready. Enter it on the Cabinet UI, then tap your registered NFC card.')
+      setSuccess('Your request was submitted. Waiting for the cabinet to verify your registered NFC card.')
       setStep(1)
     } catch (requestError) {
       setError(getApiError(requestError, 'We could not start the password reset. Please try again.'))
@@ -289,12 +289,10 @@ export default function ForgotPassword() {
     return (
       <ResetShell currentStep={1} title="Verify at the cabinet" description="The cabinet confirms that the registered NFC card belongs to this reset request.">
         <div className="space-y-5">
-          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-[#31577f]"><div className="mb-2 flex items-center gap-2 font-bold text-[#002B5B]"><KeyRound size={18} aria-hidden="true" /> Cabinet verification</div>Enter the recovery reference below on the Cabinet UI, then tap your registered NFC card. This page will automatically check for the cabinet’s verification.</div>
-          <div className="rounded-xl border border-[#dbe3ed] bg-white p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#718096]">Recovery reference</p>
-            <code className="mt-2 block break-all rounded-lg bg-[#F4F7FB] px-3 py-3 text-sm font-bold text-[#002B5B]" data-testid="recovery-reference">{requestId}</code>
-            {requestExpiresAt && <p className="mt-2 text-xs text-[#718096]">Request expires: {requestExpiresAt}</p>}
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-[#31577f]">
+            Go to the TapTrack cabinet and select your name from the pending password-recovery requests. Tap START NFC RECOVERY, then scan your registered NFC identification card to verify your identity. This page will automatically update once verification is complete.
           </div>
+          {requestExpiresAt && <p className="text-xs text-[#718096]">Request expires: {requestExpiresAt}</p>}
           <InlineFeedback type={success ? 'success' : 'error'}>{success || error}</InlineFeedback>
           <button type="button" onClick={() => void checkVerificationStatus()} disabled={isCheckingStatus || verificationEnded} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20 disabled:cursor-not-allowed disabled:opacity-70">{isCheckingStatus ? 'Checking status...' : 'Check verification status'} <ShieldCheck size={16} /></button>
           <button type="button" onClick={startOver} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dbe3ed] bg-white px-5 py-2.5 text-sm font-semibold text-[#002B5B] transition hover:bg-[#EEF4FA]"><ArrowLeft size={16} /> Start over</button>

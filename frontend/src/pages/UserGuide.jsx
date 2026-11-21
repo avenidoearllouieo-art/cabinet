@@ -21,7 +21,7 @@ const roles = {
       [CheckCircle2, 'Read submission statuses', 'Activities can be pending, submitted, overdue, due today, late, or closed. Submission History shows review, graded, and returned-for-revision states when available.'],
       [ShieldCheck, 'Register an NFC card', 'Open the registration link or QR supplied for your account and complete the form. Registration tokens are temporary; keep them private.'],
       [MonitorCheck, 'Use cabinet access', 'Tap your registered card at the cabinet reader. Your allowed access events appear in Access Logs; contact your instructor if a scan is rejected.'],
-      [KeyRound, 'Recover your password', 'Start Forgot password? with your Student ID and registered email. Take the recovery reference to the Cabinet UI and tap your registered card, then choose a new password on the web page.'],
+      [KeyRound, 'Recover your password', 'Start Forgot password? with your Student ID and registered email. Select your name from the pending requests on the Cabinet UI, start NFC recovery, then tap your registered card. Choose a new password on the web page after verification.'],
     ],
   },
   instructor: {
@@ -59,7 +59,9 @@ export default function UserGuide() {
   })
   useEffect(() => {
     api.get('/cabinet/location/')
-      .then((response) => setLocation(response.data || location))
+      .then((response) => {
+        if (response.data) setLocation(response.data)
+      })
       .catch(() => {})
   }, [])
   const role = roles[selectedRole]

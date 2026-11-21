@@ -3859,7 +3859,10 @@ class PasswordResetRequestView(APIView):
             student_id=student_id,
             email__iexact=email,
             is_active=True,
+            role=User.RoleChoices.STUDENT,
         ).first()
+        if user and not str(user.nfc_uid or '').strip():
+            user = None
 
         with transaction.atomic():
             if user:

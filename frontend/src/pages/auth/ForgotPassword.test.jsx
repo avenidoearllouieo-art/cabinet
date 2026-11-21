@@ -83,7 +83,7 @@ describe('ForgotPassword', () => {
     expect(screen.queryByTestId('recovery-reference')).toBeNull()
   })
 
-  it('shows the recovery reference, reports pending verification, and never calls the Pi directly', async () => {
+  it('shows cabinet name-selection instructions without exposing the internal reference', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const user = userEvent.setup()
     api.post
@@ -93,9 +93,11 @@ describe('ForgotPassword', () => {
 
     await submitRequest(user)
 
-    expect(await screen.findByTestId('recovery-reference')).toHaveProperty('textContent', 'opaque-ref-7f4a')
+    expect(await screen.findByText(/Go to the TapTrack cabinet and select your name from the pending password-recovery requests/)).toBeTruthy()
     expect(await screen.findByText(/Waiting for the cabinet/)).toBeTruthy()
     expect(screen.getByText(/Request expires:/)).toBeTruthy()
+    expect(screen.queryByTestId('recovery-reference')).toBeNull()
+    expect(screen.queryByText('opaque-ref-7f4a')).toBeNull()
     expect(api.post).toHaveBeenNthCalledWith(1, '/auth/password-reset/request/', {
       student_id: 'STU-1042',
       email: 'student@example.test',
@@ -208,6 +210,6 @@ describe('ForgotPassword', () => {
     expect(api.post).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: /Starting request/ }).disabled).toBe(true)
     resolveRequest({ data: { request_id: 'opaque-loading' } })
-    await screen.findByTestId('recovery-reference')
+    expect(await screen.findByText(/Go to the TapTrack cabinet and select your name/)).toBeTruthy()
   })
 })
