@@ -31,6 +31,7 @@ from .models import (
     NFCEnrollmentSession,
     PasswordResetRequest,
     PasswordRecoveryAuditEvent,
+    CabinetLocation,
 )
 from .student_import import (
     build_instructor,
@@ -633,6 +634,13 @@ class SubmissionAdmin(admin.ModelAdmin):
                 field.widget.attrs.update({'placeholder': 'Choose student...', 'data-placeholder': 'Choose student...'})
             return field
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+@admin.register(CabinetLocation)
+class CabinetLocationAdmin(admin.ModelAdmin):
+    list_display = ('cabinet_name', 'building_name', 'location_description', 'is_active', 'updated_at')
+    list_filter = ('is_active', 'building_name')
+    search_fields = ('cabinet_name', 'institution_name', 'college_name', 'location_description')
 
 
 @admin.register(CabinetSession)

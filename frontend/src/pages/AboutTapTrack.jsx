@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react'
 import {
-  Boxes, CircuitBoard, Cloud, Cpu, Fingerprint, GraduationCap,
+  Boxes, CircuitBoard, Cloud, Cpu, Fingerprint, GraduationCap, MapPin,
   Monitor, Server, Video,
 } from 'lucide-react'
+import api from '../services/api.js'
 import InfoPageLayout from '../components/InfoPageLayout.jsx'
 import TapTrackLogo from '../components/TapTrackLogo.jsx'
 
@@ -19,12 +21,26 @@ const roles = [
   ['Student', 'Views assigned activities, submits or updates work, and checks personal submission and cabinet history.'],
 ]
 
+const documentedLocation = {
+  institution_name: 'University of Science and Technology of Southern Philippines',
+  college_name: 'College of Information Technology and Computing',
+  building_name: 'CITC Building',
+  location_description: 'Hallway near the CITC Office',
+  purpose: 'Laboratory Equipment Storage and Monitoring',
+}
+
 export default function AboutTapTrack() {
+  const [location, setLocation] = useState(documentedLocation)
+  useEffect(() => {
+    api.get('/cabinet/location/')
+      .then((response) => setLocation(response.data || documentedLocation))
+      .catch(() => setLocation(documentedLocation))
+  }, [])
   return (
     <InfoPageLayout
       eyebrow="Capstone Project"
       title="About TapTrack"
-      description="An NFC-enabled cabinet access and coursework tracking system designed to connect physical cabinet use with clear, role-based academic workflows."
+      description="An NFC-enabled smart cabinet management system that connects physical cabinet access with secure, role-based web monitoring."
     >
       <section className="grid items-start gap-8 border-b border-[#cbd8e6] pb-9 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <div className="flex items-center gap-4">
@@ -35,9 +51,19 @@ export default function AboutTapTrack() {
           </div>
         </div>
         <div className="space-y-4 text-sm leading-7 text-[#526780]">
-          <p>TapTrack is a capstone project combining cabinet access monitoring with digital activity and submission management. Its purpose is to make cabinet use traceable while giving students and instructors one place to manage coursework.</p>
-          <p>The project cabinet is located at the University of Science and Technology of Southern Philippines (USTP), Cagayan de Oro, CITC 4th Floor. The web application records role-scoped activity, submission, and cabinet information. NFC registration links a user account to a card; cabinet scans are verified by the Django API before access outcomes are recorded.</p>
+          <p>TapTrack is an NFC-enabled smart cabinet management system developed to improve the security, organization, accessibility, and monitoring of laboratory equipment through digital identification and web-based management.</p>
+          <p>TapTrack is a capstone project for managing access to laboratory equipment using NFC-enabled identification cards, Raspberry Pi hardware, and a centralized monitoring platform.</p>
         </div>
+      </section>
+
+      <section className="border-b border-[#cbd8e6] py-8">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-[#082B53]"><MapPin size={21} aria-hidden="true" />Where to Find TapTrack</h2>
+        <p className="mt-3 max-w-4xl text-sm leading-7 text-[#526780]">The TapTrack smart cabinet is designed for installation along the hallway near the College of Information Technology and Computing (CITC) Office at the University of Science and Technology of Southern Philippines (USTP). The cabinet provides an organized location for storing and accessing laboratory equipment used during academic activities.</p>
+        <dl className="mt-5 grid gap-3 rounded-lg border border-[#dbe5f0] bg-[#F8FAFC] p-5 sm:grid-cols-2">
+          {[['Institution', location.institution_name], ['College', location.college_name], ['Building', location.building_name], ['Designated Cabinet Location', location.location_description], ['Purpose', location.purpose]].map(([label, value]) => (
+            <div key={label} className="rounded-md border border-[#dbe5f0] bg-white p-4"><dt className="text-xs font-bold uppercase text-[#526780]">{label}</dt><dd className="mt-1 font-semibold text-[#082B53]">{value}</dd></div>
+          ))}
+        </dl>
       </section>
 
       <section className="grid gap-8 border-b border-[#cbd8e6] py-8 md:grid-cols-2">

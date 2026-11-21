@@ -11,7 +11,6 @@ from .permissions import (
     IsInstructorOrSuperuser,
     IsStudentRole, HasDeviceAPIKey, PasswordResetRateThrottle,
     PasswordResetStatusRateThrottle, NFCEnrollmentRateThrottle,
-    RegistrationPinIssuanceThrottle,
     CanReadAccessLogPhoto,
     CanReadAccessLogPhotoImage,
 )
@@ -47,7 +46,7 @@ import re
 import secrets
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, ActivityDiscussion, ActivityDiscussionAttachment, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, MultipartUploadSession, ActivityAnnouncement
-from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, PrivilegedUserAuditEvent
+from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, PrivilegedUserAuditEvent, CabinetLocation
 from .student_import import (
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_ROWS,
@@ -1443,57 +1442,7 @@ class UserViewSet(viewsets.ModelViewSet):
             'can_provision_administrators': bool(
                 user.is_superuser or user.has_perm('api.provision_administrator')
             ),
-            'can_issue_registration_pins': bool(
-                user.is_superuser or user.has_perm('api.issue_registration_pin')
-            ),
         })
-
-    @action(
-        detail=True,
-        methods=['post'],
-        url_path='registration-pin',
-        throttle_classes=[RegistrationPinIssuanceThrottle],
-    )
-    def registration_pin(self, request, pk=None):
-        actor = request.user
-        if not (actor.is_superuser or actor.has_perm('api.issue_registration_pin')):
-            return Response({'detail': 'You are not authorized to issue registration PINs.'}, status=status.HTTP_403_FORBIDDEN)
-
-        user = self.get_object()
-        if user.role == User.RoleChoices.ADMIN and not (
-            actor.is_superuser or actor.has_perm('api.provision_administrator')
-        ):
-            return Response({'detail': 'Only a privileged administrator can issue an administrator registration PIN.'}, status=status.HTTP_403_FORBIDDEN)
-        if not user.is_active or user.has_usable_password():
-            return Response({'detail': 'A PIN can only be issued to an active pending account.'}, status=status.HTTP_409_CONFLICT)
-        if not user.nfc_uid:
-            return Response({'detail': 'Assign the intended NFC card to this profile before issuing its PIN.'}, status=status.HTTP_409_CONFLICT)
-
-        pin = f'{secrets.randbelow(10_000_000_000):010d}'
-        user.registration_pin_hash = make_password(pin)
-        user.registration_pin_expires_at = timezone.now() + timedelta(hours=24)
-        user.registration_pin_attempts = 0
-        user.registration_pin_issued_at = timezone.now()
-        user.registration_pin_issued_by = actor
-        user.save(update_fields=[
-            'registration_pin_hash', 'registration_pin_expires_at',
-            'registration_pin_attempts', 'registration_pin_issued_at',
-            'registration_pin_issued_by',
-        ])
-        PrivilegedUserAuditEvent.objects.create(
-            actor=actor,
-            target_user=user,
-            event_type=PrivilegedUserAuditEvent.EventType.REGISTRATION_PIN_ISSUED,
-            previous_role=user.role,
-            new_role=user.role,
-        )
-        response = Response({
-            'pin': pin,
-            'expires_at': user.registration_pin_expires_at.isoformat(),
-            'delivery_instruction': 'Give this PIN directly to the intended account owner through a private channel. It will not be shown again.',
-        }, status=status.HTTP_201_CREATED)
-        patch_cache_control(response, no_store=True, no_cache=True, must_revalidate=True)
-        return response
 
     @action(detail=False, methods=['post'], url_path='export-excel')
     def export_excel(self, request):
@@ -3490,6 +3439,59 @@ class VerifyNFCView(APIView):
         return self._unregistered_response(nfc_uid, device_context)
 
 
+class CabinetLocationView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        cabinet_name = str(request.query_params.get('cabinet_name') or '').strip()
+        location = None
+        if cabinet_name:
+            location = CabinetLocation.objects.filter(cabinet_name=cabinet_name, is_active=True).first()
+        if location is None:
+            location = CabinetLocation.objects.filter(is_active=True).order_by('cabinet_name').first()
+        if location is None:
+            location = {
+                'cabinet_name': 'TapTrack Cabinet',
+                'institution_name': 'University of Science and Technology of Southern Philippines',
+                'college_name': 'College of Information Technology and Computing',
+                'building_name': 'CITC Building',
+                'location_description': 'Hallway near the CITC Office',
+                'purpose': 'Laboratory Equipment Storage and Monitoring',
+            }
+        else:
+            location = {
+                'cabinet_name': location.cabinet_name,
+                'institution_name': location.institution_name,
+                'college_name': location.college_name,
+                'building_name': location.building_name,
+                'location_description': location.location_description,
+                'purpose': location.purpose,
+            }
+        return Response(location, status=status.HTTP_200_OK)
+
+    def patch(self, request, *args, **kwargs):
+        if not request.user.is_authenticated or request.user.role != User.RoleChoices.ADMIN:
+            return Response({'detail': 'Only authorized administrators can edit cabinet location.'}, status=status.HTTP_403_FORBIDDEN)
+        cabinet_name = str(request.data.get('cabinet_name') or '').strip()
+        if not cabinet_name:
+            return Response({'cabinet_name': 'Cabinet name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        location, _ = CabinetLocation.objects.get_or_create(cabinet_name=cabinet_name)
+        allowed = {'institution_name', 'college_name', 'building_name', 'location_description', 'purpose', 'is_active'}
+        for field in allowed:
+            if field in request.data:
+                setattr(location, field, request.data[field])
+        location.save()
+        return Response({
+            'cabinet_name': location.cabinet_name,
+            'institution_name': location.institution_name,
+            'college_name': location.college_name,
+            'building_name': location.building_name,
+            'location_description': location.location_description,
+            'purpose': location.purpose,
+        }, status=status.HTTP_200_OK)
+
+
 class NFCEnrollmentValidationView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -3583,15 +3585,9 @@ class NFCEnrollmentRegistrationView(APIView):
     def _register(self, data):
         token = data['token'].strip()
         token_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
-        account_types = {
-            'student': (User.RoleChoices.STUDENT, 'student_id'),
-            'instructor': (User.RoleChoices.INSTRUCTOR, 'instructor_id'),
-            'administrator': (User.RoleChoices.ADMIN, 'administrator_id'),
-        }
-        role, identifier_field = account_types[data['id_type']]
         identifier_value = data['id_number']
         generic_identity_error = {
-            'error': 'Registration could not be completed. Check your details and private registration PIN, or request a new PIN from an authorized administrator.'
+            'error': 'Registration could not be completed. Check that the ID number and email belong to the account authorized by this card tap.'
         }
 
         with transaction.atomic():
@@ -3613,52 +3609,23 @@ class NFCEnrollmentRegistrationView(APIView):
                     status=status.HTTP_410_GONE,
                 )
 
-            user = User.objects.select_for_update().filter(
-                role=role,
-                **{identifier_field: identifier_value},
-            ).filter(
-                email__iexact=data['email'],
-            ).first()
+            user = enrollment.registration_target_user
+            if not user:
+                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
+            user = User.objects.select_for_update().get(pk=user.pk)
+            identifier_field = (
+                'student_id' if user.role == User.RoleChoices.STUDENT else
+                'instructor_id' if user.role == User.RoleChoices.INSTRUCTOR else
+                'administrator_id'
+            )
             if (
-                not user
-                or not user.is_active
+                not user.is_active
                 or user.has_usable_password()
+                or getattr(user, identifier_field, None) != identifier_value
+                or user.email.lower() != data['email'].lower()
                 or (user.nfc_uid and user.nfc_uid != enrollment.nfc_uid)
-                or enrollment.registration_target_user_id != user.pk
-                or (role == User.RoleChoices.ADMIN and not user.is_staff)
+                or (user.role == User.RoleChoices.ADMIN and not (user.is_staff or user.is_superuser))
             ):
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
-            if not user.registration_pin_hash or not user.registration_pin_expires_at:
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
-            if user.registration_pin_expires_at <= now:
-                user.registration_pin_hash = ''
-                user.registration_pin_expires_at = None
-                user.registration_pin_attempts = 0
-                user.save(update_fields=[
-                    'registration_pin_hash', 'registration_pin_expires_at', 'registration_pin_attempts',
-                ])
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
-            if user.registration_pin_attempts >= 5:
-                user.registration_pin_hash = ''
-                user.registration_pin_expires_at = None
-                enrollment.status = NFCEnrollmentSession.StatusChoices.CANCELLED
-                enrollment.token_hash = ''
-                user.save(update_fields=['registration_pin_hash', 'registration_pin_expires_at'])
-                enrollment.save(update_fields=['status', 'token_hash'])
-                return Response(generic_identity_error, status=status.HTTP_429_TOO_MANY_REQUESTS)
-            if not check_password(data['registration_pin'], user.registration_pin_hash):
-                user.registration_pin_attempts += 1
-                update_fields = ['registration_pin_attempts']
-                if user.registration_pin_attempts >= 5:
-                    user.registration_pin_hash = ''
-                    user.registration_pin_expires_at = None
-                    update_fields.extend(['registration_pin_hash', 'registration_pin_expires_at'])
-                    enrollment.status = NFCEnrollmentSession.StatusChoices.CANCELLED
-                    enrollment.token_hash = ''
-                    enrollment.save(update_fields=['status', 'token_hash'])
-                user.save(update_fields=update_fields)
-                return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
-            if role == User.RoleChoices.ADMIN and not (user.is_staff or user.is_superuser):
                 return Response(generic_identity_error, status=status.HTTP_400_BAD_REQUEST)
             try:
                 validate_password(data['password'], user=user)
@@ -3671,12 +3638,8 @@ class NFCEnrollmentRegistrationView(APIView):
             user.username = username
             user.nfc_uid = enrollment.nfc_uid
             user.set_password(data['password'])
-            user.registration_pin_hash = ''
-            user.registration_pin_expires_at = None
-            user.registration_pin_attempts = 0
             user.save(update_fields=[
-                'username', 'nfc_uid', 'password', 'registration_pin_hash',
-                'registration_pin_expires_at', 'registration_pin_attempts', 'updated_at',
+                'username', 'nfc_uid', 'password', 'updated_at',
             ])
             enrollment.status = NFCEnrollmentSession.StatusChoices.COMPLETED
             enrollment.completed_at = now
@@ -3707,7 +3670,7 @@ class NFCEnrollmentRegistrationView(APIView):
                 'message': 'Registration successful.',
                 'role': user.role,
                 'registration_status': 'registered',
-                'administrator_id': user.administrator_id if role == User.RoleChoices.ADMIN else None,
+                'administrator_id': user.administrator_id if user.role == User.RoleChoices.ADMIN else None,
                 'student_id': user.student_id,
                 'instructor_id': user.instructor_id,
                 'name': user.get_full_name().strip(),

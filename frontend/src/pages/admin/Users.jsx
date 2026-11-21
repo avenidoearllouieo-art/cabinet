@@ -42,8 +42,7 @@ export default function Users() {
   const [pendingAction, setPendingAction] = useState(null)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState('')
-  const [issuedPin, setIssuedPin] = useState('')
-  const [provisioningPermissions, setProvisioningPermissions] = useState({ can_provision_administrators: false, can_issue_registration_pins: false })
+  const [provisioningPermissions, setProvisioningPermissions] = useState({ can_provision_administrators: false })
   const [currentAdmin] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user') || '{}') } catch { return {} }
   })
@@ -124,7 +123,7 @@ export default function Users() {
     api.get('/users/provisioning-permissions/').then((response) => {
       setProvisioningPermissions(response.data || {})
     }).catch(() => {
-      setProvisioningPermissions({ can_provision_administrators: false, can_issue_registration_pins: false })
+      setProvisioningPermissions({ can_provision_administrators: false })
     })
   }, [])
 
@@ -276,7 +275,7 @@ export default function Users() {
       render: (_v, row) => (
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => handleRowAction('view', row)} className="min-h-9 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">View</button>
-          <ActionsMenu user={row} onAction={handleRowAction} protectedAccount={isProtectedAccount(row)} canIssueRegistrationPins={provisioningPermissions.can_issue_registration_pins} />
+          <ActionsMenu user={row} onAction={handleRowAction} protectedAccount={isProtectedAccount(row)} />
         </div>
       ),
     },
@@ -444,7 +443,7 @@ export default function Users() {
                       <p className="break-words text-sm font-semibold text-[#102a4c]">{name}</p>
                       <p className="break-all text-xs text-slate-500">@{row.username}</p>
                     </div>
-                    <ActionsMenu user={row} onAction={handleRowAction} protectedAccount={isProtectedAccount(row)} canIssueRegistrationPins={provisioningPermissions.can_issue_registration_pins} />
+                    <ActionsMenu user={row} onAction={handleRowAction} protectedAccount={isProtectedAccount(row)} />
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 pl-6">
                     {roleBadge(row.role)}{statusBadge(row)}{nfcStatusBadge(row)}
@@ -513,7 +512,7 @@ export default function Users() {
         onSaved={handleUserSaved}
         canProvisionAdministrators={provisioningPermissions.can_provision_administrators}
       />
-      <UserDrawer key={getUserId(drawerUser) || 'closed'} user={drawerUser} onClose={closeUserDrawer} onAction={handleRowAction} canIssueRegistrationPins={provisioningPermissions.can_issue_registration_pins} />
+      <UserDrawer key={getUserId(drawerUser) || 'closed'} user={drawerUser} onClose={closeUserDrawer} onAction={handleRowAction} />
       <UserActionDialog
         key={`${pendingAction?.type || 'closed'}:${getUserId(pendingAction?.user) || pendingAction?.ids?.join(',') || ''}`}
         action={pendingAction?.type}
@@ -521,7 +520,6 @@ export default function Users() {
         count={pendingAction?.ids?.length || 0}
         busy={actionBusy}
         error={actionError}
-        issuedPin={issuedPin}
         onClose={() => { if (!actionBusy) { setPendingAction(null); setActionError('') } }}
         onConfirm={handleConfirmAction}
       />
@@ -561,19 +559,6 @@ export default function Users() {
 
   async function handleConfirmAction(payload) {
     if (!pendingAction || actionBusy) return
-    if (pendingAction.type === 'issue_registration_pin') {
-      setActionBusy(true)
-      setActionError('')
-      try {
-        const response = await api.post(`/users/${getUserId(pendingAction.user)}/registration-pin/`)
-        setIssuedPin(response.data.pin)
-      } catch (error) {
-        setActionError(error.response?.data?.detail || 'The registration PIN could not be issued.')
-      } finally {
-        setActionBusy(false)
-      }
-      return
-    }
     if (pendingAction.type === 'reset_password') {
       setPendingAction(null)
       navigate('/forgot-password')

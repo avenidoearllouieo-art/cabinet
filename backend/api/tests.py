@@ -65,10 +65,6 @@ def register_nfc_with_pin(client, payload):
     if not user:
         return client.post('/api/cabinet/enrollment/register/', normalized, format='json')
     pin = '1234567890'
-    user.registration_pin_hash = make_password(pin)
-    user.registration_pin_expires_at = timezone.now() + timedelta(hours=24)
-    user.registration_pin_attempts = 0
-    user.save(update_fields=['registration_pin_hash', 'registration_pin_expires_at', 'registration_pin_attempts'])
     token_digest = hashlib.sha256(normalized['token'].encode('utf-8')).hexdigest()
     enrollment = NFCEnrollmentSession.objects.filter(token_digest=token_digest).first()
     if enrollment:
@@ -82,7 +78,7 @@ def register_nfc_with_pin(client, payload):
             enrollment.save(update_fields=['registration_target_user', 'completion_expires_at'])
     return client.post(
         '/api/cabinet/enrollment/register/',
-        {**normalized, 'registration_pin': pin},
+        {**normalized, 'confirm_password': normalized['password']},
         format='json',
     )
 
@@ -513,40 +509,21 @@ class InstructorSectionAssignmentTests(TestCase):
         self.section_b = Section.objects.create(section_name='API Section B', subject_code='API-B')
         self.client.force_authenticate(user=self.admin)
 
-    def test_authorized_superuser_can_issue_registration_pin_once(self):
+    def test_pending_profile_has_no_registration_pin_requirement(self):
         pending = User.objects.create_user(
-            username='pending-pin-user',
-            email='pending-pin@example.com',
+            username='pending-no-pin',
+            email='pending-no-pin@example.com',
             password=None,
             role=User.RoleChoices.STUDENT,
-            student_id='PIN-TEST-001',
-            nfc_uid='PIN-TEST-CARD',
+            student_id='NO-PIN-TEST-001',
+            nfc_uid='NO-PIN-CARD',
         )
         pending.set_unusable_password()
         pending.save(update_fields=['password'])
-        self.admin.is_staff = True
-        self.admin.is_superuser = True
-        self.admin.save(update_fields=['is_staff', 'is_superuser'])
         response = self.client.post(f'/api/users/{pending.pk}/registration-pin/', {}, format='json')
-        self.assertEqual(response.status_code, 201, response.json())
-        self.assertRegex(response.json()['pin'], r'^\d{10}$')
+        self.assertIn(response.status_code, (404, 405))
         pending.refresh_from_db()
-        self.assertTrue(pending.registration_pin_hash)
-        self.assertIsNotNone(pending.registration_pin_expires_at)
-
-    def test_ordinary_admin_cannot_issue_registration_pin(self):
-        pending = User.objects.create_user(
-            username='pending-ordinary-pin',
-            email='pending-ordinary-pin@example.com',
-            password=None,
-            role=User.RoleChoices.STUDENT,
-            student_id='PIN-ORDINARY-001',
-            nfc_uid='PIN-ORDINARY-CARD',
-        )
-        pending.set_unusable_password()
-        pending.save(update_fields=['password'])
-        response = self.client.post(f'/api/users/{pending.pk}/registration-pin/', {}, format='json')
-        self.assertEqual(response.status_code, 403, response.json())
+        self.assertFalse(pending.registration_pin_hash)
 
     def test_create_instructor_accepts_ids_and_returns_section_objects(self):
         response = self.client.post('/api/users/', {

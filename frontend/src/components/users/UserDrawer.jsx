@@ -62,7 +62,7 @@ const SummaryStat = ({ icon, label, value }) => (
   </div>
 )
 
-export default function UserDrawer({ user, onClose, onAction, canIssueRegistrationPins = false }) {
+export default function UserDrawer({ user, onClose, onAction }) {
   const [logs, setLogs] = useState([])
   const [submissions, setSubmissions] = useState([])
   const [activities, setActivities] = useState([])
@@ -244,11 +244,6 @@ export default function UserDrawer({ user, onClose, onAction, canIssueRegistrati
               <button type="button" onClick={() => onAction?.('assign_nfc', user)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-semibold text-[#002B5B] hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFC107]">
                 <Wifi size={16} />{user.nfc_uid ? 'Change NFC UID' : 'Assign NFC UID'}
               </button>
-              {canIssueRegistrationPins && user.registration_status === 'pending_registration' && (
-                <button type="button" onClick={() => onAction?.('issue_registration_pin', user)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 text-sm font-semibold text-amber-900 hover:bg-amber-100">
-                  Issue Registration PIN
-                </button>
-              )}
             </div>
           </section>
 

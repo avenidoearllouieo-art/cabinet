@@ -20,6 +20,7 @@ from .views import (
     NFCEnrollmentValidationView,
     NFCEnrollmentCancellationView,
     NFCEnrollmentRegistrationView,
+    CabinetLocationView,
     CabinetRegistrationView,
     DashboardStatisticsView,
     CustomTokenObtainPairView,
@@ -90,6 +91,7 @@ urlpatterns = [
     path('cabinet/enrollment/cancel/', NFCEnrollmentCancellationView.as_view(), name='nfc_enrollment_cancel'),
     path('cabinet/enrollment/register/', NFCEnrollmentRegistrationView.as_view(), name='nfc_enrollment_register'),
     path('cabinet/register/', CabinetRegistrationView.as_view(), name='cabinet_register'),
+    path('cabinet/location/', CabinetLocationView.as_view(), name='cabinet_location'),
     path('dashboard/', DashboardStatisticsView.as_view(), name='dashboard_statistics'),
     path('student/submissions/upload', StudentSubmissionUpload.as_view(), name='student_submission_upload'),
 ]

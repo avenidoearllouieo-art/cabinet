@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity, BookOpen, CheckCircle2, CircleHelp, ClipboardList,
-  FileUp, KeyRound, LockKeyhole, MonitorCheck, ShieldCheck, UserRound,
+  FileUp, KeyRound, LockKeyhole, MapPin, MonitorCheck, ShieldCheck, UserRound,
   Users, Video,
 } from 'lucide-react'
 import InfoPageLayout from '../components/InfoPageLayout.jsx'
+import api from '../services/api.js'
 
 const roles = {
   student: {
@@ -42,12 +43,25 @@ const roles = {
 
 const faqs = [
   ['An activity is missing. What should I check?', 'Students should confirm that their account is assigned to the correct section and that the instructor has published the activity. Instructors should check the activity section assignments.'],
-  ['How does password recovery work?', 'The account holder starts a request with their registered account details, then the production cabinet verifies the registered NFC card. The web page accepts a new password only after successful verification.'],
+  ['What should I do if the ID card is not detected?', 'Clean the card area, hold the card steadily over the reader, and ask authorized personnel to check the cabinet connection.'],
+  ['What should I do if the registration session expired?', 'Tap your authorized ID card again at the cabinet to start a fresh, short-lived QR session.'],
+  ['How does password recovery work?', 'The account holder starts a request with their registered account details, then taps their own registered NFC card through the cabinet verification flow. Tapping another person’s card cannot authorize recovery for the selected account.'],
   ['Who can view cabinet access records?', 'Students see their own access history. Instructors see records for students in their assigned sections.'],
 ]
 
 export default function UserGuide() {
   const [selectedRole, setSelectedRole] = useState('student')
+  const [location, setLocation] = useState({
+    institution_name: 'University of Science and Technology of Southern Philippines',
+    college_name: 'College of Information Technology and Computing',
+    building_name: 'CITC Building',
+    location_description: 'Hallway near the CITC Office',
+  })
+  useEffect(() => {
+    api.get('/cabinet/location/')
+      .then((response) => setLocation(response.data || location))
+      .catch(() => {})
+  }, [])
   const role = roles[selectedRole]
   const RoleIcon = role.icon
 
@@ -57,7 +71,32 @@ export default function UserGuide() {
       title="TapTrack User Guide"
       description="A practical guide to account access, coursework workflows, and NFC-enabled cabinet features. Choose a role to see its available actions."
     >
-      <div className="flex flex-wrap gap-2 border-b border-[#cbd8e6] pb-5" role="group" aria-label="Choose guide role">
+      <section className="border-b border-[#cbd8e6] py-7">
+        <h2 className="text-xl font-bold text-[#082B53]">How to Register</h2>
+        <ol className="mt-4 grid gap-3 md:grid-cols-2">
+          {[
+            'Tap your authorized ID card at the cabinet NFC reader.',
+            'Follow the instructions shown on the Cabinet UI.',
+            'Scan the registration QR code using your phone.',
+            'Open the TapTrack registration page.',
+            'Enter your authorized ID number and email address.',
+            'Create your username and password.',
+            'Confirm your password and complete the secure identity check.',
+            'Wait for the registration success message, then log in.',
+          ].map((text, index) => <li key={text} className="rounded-md border border-[#dbe5f0] bg-white p-4 text-sm leading-6 text-[#526780]"><span className="mr-2 font-bold text-[#a66e00]">{index + 1}.</span>{text}</li>)}
+        </ol>
+      </section>
+
+      <section className="border-b border-[#cbd8e6] py-7">
+        <h2 className="flex items-center gap-2 text-xl font-bold text-[#082B53]"><MapPin size={21} aria-hidden="true" />Where Is the TapTrack Cabinet Located?</h2>
+        <p className="mt-3 text-sm leading-7 text-[#526780]">The designated TapTrack cabinet location is along the hallway near the CITC Office, inside the College of Information Technology and Computing (CITC) Building at the University of Science and Technology of Southern Philippines (USTP).</p>
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+          {[['Institution', location.institution_name], ['College', location.college_name], ['Building', location.building_name], ['Location', location.location_description]].map(([label, value]) => <div key={label} className="rounded-md border border-[#dbe5f0] bg-white p-4"><dt className="text-xs font-bold uppercase text-[#526780]">{label}</dt><dd className="mt-1 font-semibold text-[#082B53]">{value}</dd></div>)}
+        </dl>
+        <p className="mt-4 text-sm leading-6 text-[#526780]">If you cannot locate the cabinet, please contact an authorized TapTrack administrator or CITC personnel.</p>
+      </section>
+
+      <div className="flex flex-wrap gap-2 border-b border-[#cbd8e6] py-5" role="group" aria-label="Choose guide role">
         {Object.entries(roles).map(([key, item]) => {
           const Icon = item.icon
           return (
@@ -105,6 +144,18 @@ export default function UserGuide() {
             </details>
           ))}
         </div>
+      </section>
+
+      <section className="border-t border-[#cbd8e6] py-7">
+        <h2 className="text-lg font-bold text-[#082B53]">Safety and Security</h2>
+        <ul className="mt-3 grid gap-2 text-sm leading-6 text-[#526780] sm:grid-cols-2">
+          <li>Keep passwords private.</li>
+          <li>Do not lend ID cards to unauthorized users.</li>
+          <li>Do not force cabinet components.</li>
+          <li>Follow cabinet access instructions.</li>
+          <li>Report damaged equipment.</li>
+          <li>Contact authorized personnel for assistance.</li>
+        </ul>
       </section>
 
       <p className="border-l-4 border-[#FFBE0B] bg-[#EAF2FB] px-4 py-3 text-sm leading-6 text-[#28415f]">

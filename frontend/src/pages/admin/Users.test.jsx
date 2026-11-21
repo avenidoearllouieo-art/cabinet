@@ -35,7 +35,7 @@ describe('Users directory', () => {
     const lastPage = [{ ...directoryUser(21, 'student', false), profile_image_url: 'https://storage.example/student-21.jpg' }]
     api.get.mockImplementation((url, options = {}) => {
       if (url === '/users/provisioning-permissions/') {
-        return Promise.resolve({ data: { can_provision_administrators: true, can_issue_registration_pins: true } })
+        return Promise.resolve({ data: { can_provision_administrators: true } })
       }
       const params = options.params || { page: 1 }
       return Promise.resolve({

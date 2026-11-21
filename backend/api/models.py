@@ -185,7 +185,6 @@ class User(AbstractUser):
         ordering = ['last_name', 'first_name']
         permissions = [
             ('provision_administrator', 'Can provision administrator accounts'),
-            ('issue_registration_pin', 'Can issue registration PINs'),
         ]
 
 
@@ -828,6 +827,24 @@ class PasswordRecoveryAuditEvent(models.Model):
             models.Index(fields=['recovery_request', 'timestamp'], name='api_prae_req_ts_idx'),
             models.Index(fields=['timestamp'], name='api_prae_ts_idx'),
         ]
+
+
+class CabinetLocation(models.Model):
+    cabinet_name = models.CharField(max_length=100, unique=True)
+    institution_name = models.CharField(max_length=200, default='University of Science and Technology of Southern Philippines')
+    college_name = models.CharField(max_length=200, default='College of Information Technology and Computing')
+    building_name = models.CharField(max_length=100, default='CITC Building')
+    location_description = models.CharField(max_length=200, default='Hallway near the CITC Office')
+    purpose = models.CharField(max_length=200, default='Laboratory Equipment Storage and Monitoring')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.cabinet_name
+
+    class Meta:
+        ordering = ['cabinet_name']
 
 
 class NFCEnrollmentSession(models.Model):

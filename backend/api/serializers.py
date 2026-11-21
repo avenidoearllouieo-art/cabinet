@@ -519,9 +519,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'can_provision_administrators': bool(
                 self.user.is_superuser or self.user.has_perm('api.provision_administrator')
             ),
-            'can_issue_registration_pins': bool(
-                self.user.is_superuser or self.user.has_perm('api.issue_registration_pin')
-            ),
         }
         self.expected_role = expected_role
         return data
@@ -632,10 +629,8 @@ class PasswordResetTokenValidationSerializer(serializers.Serializer):
 
 class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
     token = serializers.CharField(required=True, allow_blank=False, write_only=True)
-    id_type = serializers.ChoiceField(choices=['student', 'instructor', 'administrator'])
     id_number = serializers.CharField(required=True, allow_blank=False, max_length=50, trim_whitespace=False)
     email = serializers.EmailField(required=True)
-    registration_pin = serializers.RegexField(r'^\d{10}$', required=True, write_only=True)
     username = serializers.CharField(
         required=True,
         allow_blank=False,
@@ -643,12 +638,15 @@ class NFCEnrollmentRegistrationSerializer(serializers.Serializer):
         validators=User._meta.get_field('username').validators,
     )
     password = serializers.CharField(required=True, write_only=True, min_length=8)
+    confirm_password = serializers.CharField(required=True, write_only=True)
 
     def validate(self, attrs):
         if not attrs['id_number'].strip():
             raise serializers.ValidationError({'id_number': 'ID number is required.'})
         attrs['id_number'] = attrs['id_number'].strip()
         attrs['email'] = attrs['email'].strip()
+        if attrs['password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Password and confirmation do not match.'})
         return attrs
 
 
