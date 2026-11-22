@@ -84,12 +84,15 @@ describe('StudentProfile', () => {
     expect(await screen.findByRole('heading', { name: 'Review profile changes' })).toBeTruthy()
     expect(screen.getByText('updated@example.test')).toBeTruthy()
     expect(screen.getByText('555-0002')).toBeTruthy()
+    expect(api.patch).not.toHaveBeenCalled()
 
     const editDialog = screen.getByRole('dialog', { name: 'Edit Profile' })
     fireEvent.click(within(editDialog).getByRole('button', { name: 'Back' }))
     expect(within(editDialog).getByRole('textbox', { name: /Email Address/ }).value).toBe('updated@example.test')
     fireEvent.click(within(editDialog).getByRole('button', { name: 'Continue' }))
-    fireEvent.click(within(editDialog).getByRole('button', { name: 'Save Changes' }))
+    const saveButton = within(editDialog).getByRole('button', { name: 'Save Changes' })
+    fireEvent.click(saveButton)
+    fireEvent.click(saveButton)
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
     expect(api.patch).toHaveBeenCalledWith('/users/update_profile/', {
@@ -97,6 +100,26 @@ describe('StudentProfile', () => {
       contact_number: '555-0002',
     })
     expect(api.post).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('updated@example.test')).toBeTruthy()
+    expect(screen.getByText('555-0002')).toBeTruthy()
+  })
+
+  it('preserves the draft and displays a safe field error when profile save fails', async () => {
+    const currentProfile = { username: 'student', role: 'student', email: 'student@example.test', contact_number: '555-0001' }
+    api.get.mockResolvedValue({ data: currentProfile })
+    api.patch.mockRejectedValue({ response: { status: 400, data: { email: ['Email address is already in use.'] } } })
+
+    render(<MemoryRouter><StudentProfile /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Profile' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Email Address/ }), { target: { value: 'new@example.test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    const editDialog = screen.getByRole('dialog', { name: 'Edit Profile' })
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Save Changes' }))
+
+    expect(await screen.findByText('This value is already in use.')).toBeTruthy()
+    expect(within(editDialog).getByRole('textbox', { name: /Email Address/ }).value).toBe('new@example.test')
+    expect(api.patch).toHaveBeenCalledTimes(1)
   })
 
   it('shows required email validation and does not advance until corrected', async () => {

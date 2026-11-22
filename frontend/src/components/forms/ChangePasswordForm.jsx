@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import PageHeader from '../PageHeader.jsx'
 import { FormSection, InlineFeedback, LoadingSpinner, PasswordField } from './FormPrimitives.jsx'
+import { getPasswordValidationMessage } from '../../utils/passwordValidation.js'
 
 export default function ChangePasswordForm({ role }) {
   const navigate = useNavigate()
@@ -14,7 +15,7 @@ export default function ChangePasswordForm({ role }) {
   const [feedback, setFeedback] = useState({ type: 'error', message: '' })
   const [loading, setLoading] = useState(false)
 
-  const passwordScore = !newPassword ? 0 : [newPassword.length >= 8, /[A-Z]/.test(newPassword), /[a-z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword)].filter(Boolean).length
+  const passwordScore = !newPassword ? 0 : [8, 10, 12, 16, 20].filter((minimum) => newPassword.length >= minimum).length
   const dirty = Boolean(currentPassword || newPassword || confirmPassword)
 
   const goBack = () => {
@@ -36,7 +37,6 @@ export default function ChangePasswordForm({ role }) {
     if (!newPassword) nextErrors.new_password = 'Enter a new password.'
     else if (newPassword.length < 8) nextErrors.new_password = 'Use at least 8 characters.'
     else if (currentPassword && newPassword === currentPassword) nextErrors.new_password = 'Your new password must be different from your current password.'
-    else if (![ /[A-Z]/.test(newPassword), /[a-z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword) ].every(Boolean)) nextErrors.new_password = 'Use upper- and lowercase letters, a number, and a symbol.'
     if (!confirmPassword) nextErrors.confirm_password = 'Confirm your new password.'
     else if (newPassword !== confirmPassword) nextErrors.confirm_password = 'The passwords do not match.'
     if (Object.keys(nextErrors).length) return setErrors(nextErrors)
@@ -58,8 +58,17 @@ export default function ChangePasswordForm({ role }) {
       }, 1500)
     } catch (error) {
       const data = error.response?.data || {}
-      setErrors({ current_password: data.current_password, new_password: data.new_password, confirm_password: data.confirm_password })
-      setFeedback({ type: 'error', message: data.detail || 'Password change failed. Review the fields and try again.' })
+      const nextErrors = {
+        current_password: data.current_password ? 'Current password is incorrect.' : undefined,
+        new_password: getPasswordValidationMessage(data.new_password),
+        confirm_password: data.confirm_password ? 'The passwords do not match.' : undefined,
+      }
+      const hasFieldErrors = Object.values(nextErrors).some(Boolean)
+      setErrors(nextErrors)
+      setFeedback({
+        type: 'error',
+        message: hasFieldErrors ? '' : 'Password change failed. Review the fields and try again.',
+      })
     } finally {
       setLoading(false)
     }
@@ -76,9 +85,9 @@ export default function ChangePasswordForm({ role }) {
         <FormSection icon={KeyRound} title="Verify your identity" description="Enter your current password before choosing a replacement.">
           <PasswordField label="Current password" required value={currentPassword} onChange={update(setCurrentPassword, 'current_password')} error={errors.current_password} autoComplete="current-password" />
         </FormSection>
-        <FormSection icon={ShieldCheck} title="Choose a new password" description="A longer password with mixed character types is harder to guess.">
+        <FormSection icon={ShieldCheck} title="Choose a new password" description="A long, unique password or passphrase is harder to guess.">
           <div className="space-y-5">
-            <PasswordField label="New password" required value={newPassword} onChange={update(setNewPassword, 'new_password')} error={errors.new_password} helper="Use at least 8 characters with upper- and lowercase letters, a number, and a symbol." />
+            <PasswordField label="New password" required value={newPassword} onChange={update(setNewPassword, 'new_password')} error={errors.new_password} helper="Use at least 8 characters. Avoid common passwords, personal information, and passwords you have already used." />
             {currentPassword && newPassword === currentPassword && !errors.new_password && <p role="alert" className="-mt-3 text-sm text-rose-700">Your new password must be different from your current password.</p>}
             {newPassword && <div aria-label={`Password strength ${passwordScore} out of 5`}><div className="flex gap-1">{[1, 2, 3, 4, 5].map((value) => <span key={value} className={`h-1.5 flex-1 rounded-full ${value <= passwordScore ? passwordScore < 3 ? 'bg-rose-500' : passwordScore < 5 ? 'bg-amber-500' : 'bg-emerald-500' : 'bg-slate-200'}`} />)}</div><p className="mt-1 text-xs text-slate-500">Strength: {passwordScore < 3 ? 'Weak' : passwordScore < 5 ? 'Good' : 'Strong'}</p></div>}
             <PasswordField label="Confirm new password" required value={confirmPassword} onChange={update(setConfirmPassword, 'confirm_password')} error={errors.confirm_password} />

@@ -53,6 +53,8 @@ describe('InstructorProfile', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))
     expect(screen.getByLabelText(/Employee ID/)).toBeTruthy()
     expect(screen.getByLabelText(/Username/)).toBeTruthy()
+    expect(screen.getByLabelText(/Username/).readOnly).toBe(true)
+    expect(screen.getByText(/Login credentials are managed/)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Change Password' }))
     expect(await screen.findByText('Change Password Page')).toBeTruthy()
@@ -81,6 +83,7 @@ describe('InstructorProfile', () => {
     fireEvent.click(within(editDialog).getByRole('button', { name: 'Continue' }))
     expect(await screen.findByRole('heading', { name: 'Review profile changes' })).toBeTruthy()
     expect(screen.getByText('555-2000')).toBeTruthy()
+    expect(api.patch).not.toHaveBeenCalled()
 
     fireEvent.click(within(editDialog).getByRole('button', { name: 'Back' }))
     expect(within(editDialog).getByRole('textbox', { name: /Contact Number/ }).value).toBe('555-2000')
@@ -92,11 +95,29 @@ describe('InstructorProfile', () => {
       first_name: 'Rae',
       last_name: 'Santos',
       instructor_id: 'EMP-8',
-      username: 'rae.teacher',
       email: 'rae@example.edu',
       contact_number: '555-2000',
     })
     expect(api.post).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('555-2000')).toBeTruthy()
+  })
+
+  it('preserves the instructor draft and shows a safe field error after a rejected save', async () => {
+    api.get.mockResolvedValue({ data: profile })
+    api.patch.mockRejectedValue({ response: { status: 400, data: { email: ['Enter a valid email address.'] } } })
+    render(<MemoryRouter><InstructorProfile /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Profile' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Contact Number/ }), { target: { value: '555-2000' } })
+    const editDialog = screen.getByRole('dialog', { name: 'Edit Profile' })
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Continue' }))
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Save Changes' }))
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeTruthy()
+    expect(within(editDialog).getByRole('textbox', { name: /Contact Number/ }).value).toBe('555-2000')
+    expect(within(editDialog).getByRole('textbox', { name: /Username/ }).value).toBe('rae.teacher')
+    expect(api.patch).toHaveBeenCalledTimes(1)
+    expect(api.patch.mock.calls[0][1]).not.toHaveProperty('username')
   })
 
   it('shows required Employee ID validation and stays on profile details', async () => {

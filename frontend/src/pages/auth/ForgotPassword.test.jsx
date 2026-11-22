@@ -203,8 +203,11 @@ describe('ForgotPassword', () => {
     await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
     await user.click(screen.getByRole('button', { name: 'Change password' }))
 
-    expect(await screen.findByText('The password is too similar to the username.')).toBeTruthy()
+    expect(await screen.findByText('The password is too similar to your username. Please choose a different password.')).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+    expect(screen.getByText('Reset authorization verified')).toBeTruthy()
+    expect(screen.getByLabelText(/New password/).value).toBe('New-Password-123!')
+    expect(screen.getByLabelText(/Confirm password/).value).toBe('New-Password-123!')
 
     await user.clear(screen.getByLabelText(/New password/))
     await user.type(screen.getByLabelText(/New password/), 'Corrected-Password-456!')
@@ -223,11 +226,13 @@ describe('ForgotPassword', () => {
   })
 
   it.each([
-    ['minimum length', 'This password is too short. It must contain at least 8 characters.'],
-    ['commonly used', 'This password is too common.'],
-    ['numeric only', 'This password is entirely numeric.'],
-    ['previous password reuse', 'Your new password must be different from your current password.'],
-  ])('shows the Django %s validation message inline', async (_rule, message) => {
+    ['minimum length', 'This password is too short. It must contain at least 8 characters.', 'Use at least 8 characters.'],
+    ['commonly used', 'This password is too common.', 'This password is too common. Choose a more unique password.'],
+    ['numeric only', 'This password is entirely numeric.', 'Your password cannot contain only numbers.'],
+    ['previous password reuse', 'Your new password must be different from your current password.', "Choose a password you haven't used for this account."],
+    ['unexpected safe validation', 'A server-side validation message.', 'A server-side validation message.'],
+    ['unsafe validation details', '<script>private backend detail</script>', 'Choose a different password that meets the account security requirements.'],
+  ])('shows the Django %s validation message inline', async (_rule, message, expectedMessage) => {
     const user = userEvent.setup()
     api.post
       .mockResolvedValueOnce({ data: { request_id: 'opaque-validator-message' } })
@@ -244,7 +249,7 @@ describe('ForgotPassword', () => {
     await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
     await user.click(screen.getByRole('button', { name: 'Change password' }))
 
-    expect(await screen.findByText(message)).toBeTruthy()
+    expect(await screen.findByText(expectedMessage)).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
     expect(document.body.textContent).not.toContain('safe-auth')
   })

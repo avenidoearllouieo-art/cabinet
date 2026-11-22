@@ -9,6 +9,7 @@ import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
 import UserAvatar from '../../components/UserAvatar.jsx'
 import { FormActions, FormDialog, FormField, FormSection, FormStepper, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
+import { getProfileApiErrors } from '../../utils/profileApiErrors.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
 const emptyProfileForm = { first_name: '', last_name: '', instructor_id: '', username: '', email: '', contact_number: '' }
@@ -132,7 +133,6 @@ export default function InstructorProfile() {
     if (!trimmedForm.first_name) nextErrors.first_name = 'Enter your first name.'
     if (!trimmedForm.last_name) nextErrors.last_name = 'Enter your last name.'
     if (!trimmedForm.instructor_id) nextErrors.instructor_id = 'Enter your Employee ID.'
-    if (!trimmedForm.username) nextErrors.username = 'Enter your username.'
     if (!trimmedForm.email) nextErrors.email = 'Enter your email address.'
     else if (!/^\S+@\S+\.\S+$/.test(trimmedForm.email)) nextErrors.email = 'Enter a valid email address.'
     setValidationErrors(nextErrors)
@@ -172,12 +172,19 @@ export default function InstructorProfile() {
       email: form.email.trim(),
       contact_number: form.contact_number.trim(),
     }
+    const profileChanges = {
+      first_name: trimmedForm.first_name,
+      last_name: trimmedForm.last_name,
+      instructor_id: trimmedForm.instructor_id,
+      email: trimmedForm.email,
+      contact_number: trimmedForm.contact_number,
+    }
 
     setSaving(true)
     setError('')
 
     try {
-      const response = await api.patch('/users/update_profile/', trimmedForm)
+      const response = await api.patch('/users/update_profile/', profileChanges)
       const updatedProfile = { ...profile, ...response.data }
       setProfile(updatedProfile)
       publishProfileUpdate(response.data)
@@ -202,14 +209,10 @@ export default function InstructorProfile() {
       setToastMessage('Profile details updated successfully.')
       window.setTimeout(() => setToastMessage(''), 4000)
     } catch (err) {
-      console.error('Error updating profile', err)
-      setError('Unable to update profile. Please check your input.')
-      const data = err.response?.data || {}
-      setValidationErrors(Object.fromEntries(
-        ['first_name', 'last_name', 'instructor_id', 'username', 'email', 'contact_number']
-          .filter((field) => data[field])
-          .map((field) => [field, Array.isArray(data[field]) ? data[field].join(' ') : data[field]]),
-      ))
+      const { fieldErrors, message } = getProfileApiErrors(err, ['first_name', 'last_name', 'instructor_id', 'email', 'contact_number'])
+      setValidationErrors(fieldErrors)
+      setError(message)
+      if (Object.keys(fieldErrors).length) setEditStep(0)
     } finally {
       saveInFlightRef.current = false
       setSaving(false)
@@ -388,13 +391,13 @@ export default function InstructorProfile() {
                   <FormField label="First name" required error={validationErrors.first_name}>{({ id, describedBy, invalid }) => <input id={id} value={form.first_name} onChange={handleInputChange('first_name')} className={controlClass(invalid)} autoComplete="given-name" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
                   <FormField label="Last name" required error={validationErrors.last_name}>{({ id, describedBy, invalid }) => <input id={id} value={form.last_name} onChange={handleInputChange('last_name')} className={controlClass(invalid)} autoComplete="family-name" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
                   <FormField label="Employee ID" required error={validationErrors.instructor_id}>{({ id, describedBy, invalid }) => <input id={id} value={form.instructor_id} onChange={handleInputChange('instructor_id')} className={controlClass(invalid)} aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
-                  <FormField label="Username" required error={validationErrors.username}>{({ id, describedBy, invalid }) => <input id={id} value={form.username} onChange={handleInputChange('username')} className={controlClass(invalid)} autoComplete="username" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
+                  <FormField label="Username" helper="Login credentials are managed through registration and account-security flows.">{({ id, describedBy }) => <input id={id} value={form.username} readOnly className={controlClass(false, 'bg-slate-100 text-slate-500')} autoComplete="username" aria-describedby={describedBy} aria-readonly="true" />}</FormField>
                   <FormField label="Email Address" required error={validationErrors.email}>{({ id, describedBy, invalid }) => <input id={id} type="email" value={form.email} onChange={handleInputChange('email')} className={controlClass(invalid)} autoComplete="email" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
                   <FormField label="Contact Number" optional error={validationErrors.contact_number}>{({ id, describedBy, invalid }) => <input id={id} type="tel" value={form.contact_number} onChange={handleInputChange('contact_number')} className={controlClass(invalid)} autoComplete="tel" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
                 </div>
               </FormSection>
 
-              <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
+              <FormSection icon={Camera} title="Profile picture" description="Selecting a photo previews it. Upload and Remove apply immediately, separately from profile changes. JPG, JPEG, or PNG, up to 5 MB.">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                   <UserAvatar imageUrl={profileImageUrl} initials={initials || 'I'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
                   <div className="flex flex-wrap gap-2">

@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api.js'
 import TapTrackLogo from '../../components/TapTrackLogo.jsx'
 import { FormField, InlineFeedback, PasswordField } from '../../components/forms/FormPrimitives.jsx'
+import { getPasswordValidationMessage } from '../../utils/passwordValidation.js'
 
 const steps = ['Account details', 'Cabinet verification', 'New password']
 const STATUS_POLL_INTERVAL_MS = 2500
@@ -20,11 +21,6 @@ function getApiError(error, fallback) {
   if (!error.response) return 'Could not reach the password-reset service. Check your connection and try again.'
   if (status === 404) return 'Password recovery is temporarily unavailable. Please try again later.'
   return fallback
-}
-
-function getFieldMessage(value) {
-  if (Array.isArray(value)) return value.filter((message) => typeof message === 'string').join(' ')
-  return typeof value === 'string' ? value : ''
 }
 
 function StepIndicator({ currentStep }) {
@@ -87,10 +83,10 @@ export default function ForgotPassword() {
   const pollingRef = useRef(false)
   const passwordScore = !newPassword ? 0 : [
     newPassword.length >= 8,
-    /[A-Z]/.test(newPassword),
-    /[a-z]/.test(newPassword),
-    /\d/.test(newPassword),
-    /[^A-Za-z0-9]/.test(newPassword),
+    newPassword.length >= 10,
+    newPassword.length >= 12,
+    newPassword.length >= 16,
+    newPassword.length >= 20,
   ].filter(Boolean).length
 
   const checkVerificationStatus = useCallback(async (isActive = () => true) => {
@@ -213,10 +209,6 @@ export default function ForgotPassword() {
       setFieldErrors({ new_password: 'Use at least 8 characters.' })
       return
     }
-    if (![ /[A-Z]/.test(newPassword), /[a-z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword) ].every(Boolean)) {
-      setFieldErrors({ new_password: 'Use upper- and lowercase letters, a number, and a symbol.' })
-      return
-    }
     if (newPassword !== confirmPassword) {
       setFieldErrors({ confirm_password: 'The passwords do not match.' })
       return
@@ -248,8 +240,8 @@ export default function ForgotPassword() {
     } catch (resetError) {
       const data = resetError.response?.data || {}
       const nextFieldErrors = {
-        new_password: getFieldMessage(data.new_password),
-        confirm_password: getFieldMessage(data.confirm_password),
+        new_password: getPasswordValidationMessage(data.new_password),
+        confirm_password: data.confirm_password ? 'The passwords do not match.' : '',
       }
       const hasFieldErrors = Object.values(nextFieldErrors).some(Boolean)
       setFieldErrors(nextFieldErrors)
@@ -357,7 +349,7 @@ export default function ForgotPassword() {
           }}
           error={fieldErrors.new_password}
           required
-          helper="Use at least 8 characters with upper- and lowercase letters, a number, and a symbol. TapTrack also rejects common passwords and passwords too similar to your account information."
+          helper="Use at least 8 characters. Avoid common passwords, personal information, and passwords you've already used."
         />
         {newPassword && (
           <div aria-label={`Password strength ${passwordScore} out of 5`}>

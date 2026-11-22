@@ -21,6 +21,28 @@ const blankForm = () => ({ student_id: '', instructor_id: '', administrator_id: 
 const sectionName = (section) => section?.section_name || section?.name || section?.title || `Section ${section?.id ?? ''}`
 const sectionId = (section) => section?.id ?? section?.section_id
 const snapshot = (form) => JSON.stringify(form)
+const fieldToStep = { first_name: 0, last_name: 0, email: 0, student_id: 1, instructor_id: 1, administrator_id: 1, section: 1, assigned_sections: 1, role: 1, nfc_uid: 2 }
+
+function safeUserFieldError(value) {
+  const message = (Array.isArray(value) ? value.filter((item) => typeof item === 'string').join(' ') : typeof value === 'string' ? value : '').trim()
+  const normalized = message.toLowerCase()
+  if (!message) return ''
+  if (/already in use|already exists|must be unique|unique constraint/.test(normalized)) return 'This value is already in use.'
+  if (message.length > 200 || /<\/?[a-z!][^>]*>|traceback|stack trace|exception|database|sql|password|token|secret/i.test(message)) {
+    return 'This value could not be saved. Check it and try again.'
+  }
+  return message
+}
+
+function safeUserRequestError(error, hasFieldErrors) {
+  if (!error.response) return 'Unable to connect. Please try again.'
+  if (error.response.status === 403) return 'You do not have permission to change this account.'
+  if (error.response.status === 409) return 'Some values are already in use. Review the highlighted fields.'
+  if (error.response.status === 429) return 'Too many changes were attempted. Wait a moment and try again.'
+  if (error.response.status === 400) return hasFieldErrors ? 'Please review the highlighted fields.' : 'The requested changes could not be saved.'
+  if (error.response.status >= 500) return 'The service is temporarily unavailable. Please try again later.'
+  return 'Unable to save changes. Please try again.'
+}
 
 export default function UserFormWorkflow(props) {
   const mode = props.mode || (props.userId ? 'edit' : 'create')
@@ -155,6 +177,7 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
     })
     return changed
   }
+  const changedFields = editing ? new Set(Object.keys(buildPayload())) : new Set()
 
   const submitFinalStep = async () => {
     if (saving || submitInFlightRef.current) return
@@ -183,13 +206,15 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
     } catch (error) {
       if (error.response?.status === 401) return onUnauthorized?.()
       const data = error.response?.data
-      if (data && typeof data === 'object') {
-        setErrors(data)
-        setFormError(typeof data.detail === 'string' ? data.detail : 'Some fields need your attention.')
-        const fieldToStep = { first_name: 0, last_name: 0, email: 0, student_id: 1, instructor_id: 1, administrator_id: 1, section: 1, assigned_sections: 1, role: 1, nfc_uid: 2 }
-        const firstField = Object.keys(data).find((field) => fieldToStep[field] !== undefined)
-        if (firstField) setStep(fieldToStep[firstField])
-      } else setFormError(`Failed to ${editing ? 'update' : 'create'} user. Please try again.`)
+      const fieldErrors = data && typeof data === 'object'
+        ? Object.fromEntries(Object.entries(data)
+          .filter(([field]) => fieldToStep[field] !== undefined)
+          .map(([field, value]) => [field, safeUserFieldError(value)]))
+        : {}
+      setErrors(fieldErrors)
+      setFormError(safeUserRequestError(error, Object.keys(fieldErrors).length > 0))
+      const firstField = Object.keys(fieldErrors)[0]
+      if (firstField) setStep(fieldToStep[firstField])
     } finally {
       submitInFlightRef.current = false
       setSaving(false)
@@ -200,9 +225,7 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
     event.preventDefault()
     if (step !== steps.length - 1) {
       goNext()
-      return
     }
-    if (editing) void submitFinalStep()
   }
 
   const selectedSections = useMemo(() => sections.filter((section) => form.assigned_sections.includes(sectionId(section))), [sections, form.assigned_sections])
@@ -218,7 +241,7 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
       description={editing ? 'Update profile details, role, and NFC access.' : 'Create a pending profile. The user sets up their login during registration.'}
       onClose={onClose} onSubmit={handleSubmit} dirty={dirty} busy={saving}
       stepper={<FormStepper steps={steps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} onFinalAction={!editing ? submitFinalStep : undefined} finalButtonType={editing ? 'submit' : 'button'} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Update user' : 'Add User'} busy={saving} busyLabel={editing ? 'Updating…' : 'Creating…'} disabled={loading || (loadingSections && step === 1 && form.role === 'student')} dirty={dirty} />}
+      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} onFinalAction={submitFinalStep} finalButtonType="button" isLastStep={step === steps.length - 1} submitLabel={editing ? 'Save Changes' : 'Add User'} busy={saving} busyLabel={editing ? 'Saving…' : 'Creating…'} disabled={loading || (loadingSections && step === 1 && form.role === 'student')} dirty={dirty} />}
     >
       <div className="space-y-4">
         <InlineFeedback>{formError}</InlineFeedback><InlineFeedback type="success">{successMessage}</InlineFeedback>
@@ -250,12 +273,12 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
             </div>
           </FormSection>
         ) : (
-          <FormSection icon={ShieldCheck} title="Review and create" description="Confirm identity, role, and access before saving.">
+          <FormSection icon={ShieldCheck} title={editing ? 'Review and update' : 'Review and create'} description="Confirm identity, role, and access before saving.">
             <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-              <ReviewItem label="Name" value={`${form.first_name} ${form.last_name}`.trim() || 'Not provided'} /><ReviewItem label="Email" value={form.email || 'Not provided'} />
-              <ReviewItem label="Role" value={roles.find((role) => role.value === form.role)?.label} /><ReviewItem label={idLabel} value={idValue || 'Not provided'} />
-              <ReviewItem label="NFC access" value={form.nfc_uid || 'Not assigned'} />
-              <ReviewItem label="Sections" value={form.role === 'student' ? sectionName(sections.find((section) => String(sectionId(section)) === String(form.section))) : form.role === 'instructor' ? selectedSections.map(sectionName).join(', ') || 'None assigned' : 'Not applicable'} /><ReviewItem label="Registration status" value={!form.is_active ? 'Inactive' : 'Pending Registration'} />
+              <ReviewItem label="Name" value={`${form.first_name} ${form.last_name}`.trim() || 'Not provided'} changed={changedFields.has('first_name') || changedFields.has('last_name')} /><ReviewItem label="Email" value={form.email || 'Not provided'} changed={changedFields.has('email')} />
+              <ReviewItem label="Role" value={roles.find((role) => role.value === form.role)?.label} changed={changedFields.has('role')} /><ReviewItem label={idLabel} value={idValue || 'Not provided'} changed={changedFields.has(form.role === 'student' ? 'student_id' : form.role === 'instructor' ? 'instructor_id' : 'administrator_id')} />
+              <ReviewItem label="NFC access" value={form.nfc_uid || 'Not assigned'} changed={changedFields.has('nfc_uid')} />
+              <ReviewItem label="Sections" value={form.role === 'student' ? sectionName(sections.find((section) => String(sectionId(section)) === String(form.section))) : form.role === 'instructor' ? selectedSections.map(sectionName).join(', ') || 'None assigned' : 'Not applicable'} changed={changedFields.has('section') || changedFields.has('assigned_sections')} /><ReviewItem label="Registration status" value={!form.is_active ? 'Inactive' : 'Pending Registration'} changed={changedFields.has('is_active')} />
             </dl>
           </FormSection>
         )}
@@ -264,6 +287,6 @@ function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student'
   </>
 }
 
-function ReviewItem({ label, value }) {
-  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 font-semibold text-[#0B1F3A]">{value}</dd></div>
+function ReviewItem({ label, value, changed = false }) {
+  return <div className={`rounded-xl border p-4 ${changed ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}><dt className="flex items-center justify-between gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">{label}{changed && <span className="text-[10px] font-semibold normal-case text-amber-800">Changed</span>}</dt><dd className="mt-1 font-semibold text-[#0B1F3A]">{value}</dd></div>
 }

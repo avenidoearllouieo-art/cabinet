@@ -187,7 +187,7 @@ export default function NfcRegistration() {
                       </button>
                     </div>
                   </label>
-                  <p className="text-sm leading-6 text-slate-600">Use at least 8 characters, including uppercase, lowercase, a number, and a symbol.</p>
+                  <p className="text-sm leading-6 text-slate-600">Use at least 8 characters. Avoid common passwords and personal information.</p>
                 </section>
                 <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Only complete registration for an account and ID card assigned to you.</p>
                 <button className="min-h-14 w-full rounded-md bg-[#082B53] px-5 py-3 text-lg font-bold text-white disabled:opacity-50" type="submit" disabled={busy || secondsRemaining === 0}>

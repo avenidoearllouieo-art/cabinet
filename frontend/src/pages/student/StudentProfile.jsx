@@ -8,6 +8,7 @@ import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
 import UserAvatar from '../../components/UserAvatar.jsx'
 import { FormActions, FormDialog, FormField, FormSection, FormStepper, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
+import { getProfileApiErrors } from '../../utils/profileApiErrors.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
 const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
@@ -180,8 +181,10 @@ export default function StudentProfile() {
       localStorage.setItem('user', JSON.stringify({ ...JSON.parse(localStorage.getItem('user') || '{}'), email: updatedProfile.email }))
       window.setTimeout(() => setToastMessage(''), 4000)
     } catch (err) {
-      console.error('Error updating profile', err)
-      setError('Unable to update profile. Please check your input.')
+      const { fieldErrors, message } = getProfileApiErrors(err, ['email', 'contact_number'])
+      setValidationErrors(fieldErrors)
+      setError(message)
+      if (Object.keys(fieldErrors).length) setEditStep(0)
     } finally {
       saveInFlightRef.current = false
       setSaving(false)
@@ -370,7 +373,7 @@ export default function StudentProfile() {
                   <FormField label="Contact Number" optional>{({ id, invalid }) => <input id={id} type="tel" value={form.contact_number} onChange={handleInputChange('contact_number')} className={controlClass(invalid)} autoComplete="tel" aria-invalid={invalid} />}</FormField>
                 </div>
               </FormSection>
-              <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
+              <FormSection icon={Camera} title="Profile picture" description="Selecting a photo previews it. Upload and Remove apply immediately, separately from profile changes. JPG, JPEG, or PNG, up to 5 MB.">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                   <UserAvatar imageUrl={profileImageUrl} initials={initials || 'S'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
                   <div className="flex flex-wrap gap-2">

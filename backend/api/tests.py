@@ -2094,10 +2094,8 @@ class InstructorProfileTests(TestCase):
             'first_name': 'Updated',
             'last_name': 'Instructor',
             'instructor_id': 'I005-UPDATED',
-            'username': 'updated-instructor5',
             'email': 'updated-instructor5@example.com',
             'contact_number': '09171234567',
-            'role': 'admin',
         })
 
         self.assertEqual(response.status_code, 200)
@@ -2105,10 +2103,24 @@ class InstructorProfileTests(TestCase):
         self.assertEqual(self.instructor.first_name, 'Updated')
         self.assertEqual(self.instructor.last_name, 'Instructor')
         self.assertEqual(self.instructor.instructor_id, 'I005-UPDATED')
-        self.assertEqual(self.instructor.username, 'updated-instructor5')
+        self.assertEqual(self.instructor.username, 'instructor5')
         self.assertEqual(self.instructor.email, 'updated-instructor5@example.com')
         self.assertEqual(self.instructor.contact_number, '09171234567')
         self.assertEqual(self.instructor.role, 'instructor')
+
+    def test_instructor_profile_rejects_username_changes_with_credentials_error(self):
+        self.client.force_authenticate(user=self.instructor)
+
+        response = self.client.patch('/api/users/update_profile/', {
+            'username': 'updated-instructor5',
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {
+            'credentials': ['Users manage login credentials through registration and account-security flows.'],
+        })
+        self.instructor.refresh_from_db()
+        self.assertEqual(self.instructor.username, 'instructor5')
 
     def test_instructor_profile_includes_assigned_section_academic_details(self):
         section = Section.objects.create(
@@ -3500,6 +3512,26 @@ class PasswordChangeApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password('Updated-Password-456!'))
+
+    def test_long_passphrase_without_a_symbol_works_for_students_and_instructors(self):
+        instructor = User.objects.create_user(
+            username='password-change-instructor',
+            email='password-change-instructor@example.com',
+            password='Current-Password-123!',
+            role=User.RoleChoices.INSTRUCTOR,
+            instructor_id='PASS-CHANGE-INSTRUCTOR',
+        )
+
+        for user in (self.user, instructor):
+            with self.subTest(role=user.role):
+                self.client.force_authenticate(user)
+                response = self.change_password(
+                    new_password='bright morning beside quiet rivers',
+                    confirm_password='bright morning beside quiet rivers',
+                )
+                self.assertEqual(response.status_code, 200, response.json())
+                user.refresh_from_db()
+                self.assertTrue(user.check_password('bright morning beside quiet rivers'))
 
     def test_incorrect_current_password_is_rejected_without_changing_password(self):
         response = self.change_password(current_password='Wrong-Password-123!')
