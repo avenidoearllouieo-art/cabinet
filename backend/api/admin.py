@@ -1,5 +1,6 @@
 import secrets
 
+from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
@@ -7,7 +8,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.http import HttpResponseRedirect
+from django.http import Http404, HttpResponseBadRequest, HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import path, reverse
 from django.http import FileResponse, Http404
@@ -32,6 +33,13 @@ from .models import (
     PasswordResetRequest,
     PasswordRecoveryAuditEvent,
     CabinetLocation,
+)
+from .cabinet_session_maintenance import (
+    CONFIRMATION_PHRASE,
+    SessionMaintenanceError,
+    get_open_sessions,
+    parse_session_ids,
+    reset_open_sessions,
 )
 from .student_import import (
     build_instructor,
@@ -651,6 +659,79 @@ class CabinetSessionAdmin(admin.ModelAdmin):
     ordering = ('-opened_at',)
     readonly_fields = ('opened_by', 'closed_by', 'opened_at', 'closed_at', 'created_at', 'updated_at')
     date_hierarchy = 'opened_at'
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'maintenance/preview/',
+                self.admin_site.admin_view(self.maintenance_preview_view),
+                name='api_cabinetsession_maintenance_preview',
+            ),
+            path(
+                'maintenance/reset/',
+                self.admin_site.admin_view(self.maintenance_reset_view),
+                name='api_cabinetsession_maintenance_reset',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def _check_maintenance_access(self, request):
+        if not settings.TAPTRACK_CABINET_SESSION_MAINTENANCE_ENABLED:
+            raise Http404
+        user = request.user
+        if not (
+            user.is_authenticated
+            and user.is_active
+            and user.is_staff
+            and user.is_superuser
+            and user.role == User.RoleChoices.ADMIN
+        ):
+            raise PermissionDenied
+
+    def _render_maintenance_page(self, request, *, error='', reset_ids=None, status=200):
+        try:
+            sessions = get_open_sessions()
+        except SessionMaintenanceError as exc:
+            return HttpResponseBadRequest(str(exc))
+        open_stations = {session.station for session in sessions}
+        context = {
+            **self.admin_site.each_context(request),
+            'opts': self.model._meta,
+            'title': 'Temporary cabinet session maintenance',
+            'sessions': sessions,
+            'station_status': {
+                station: 'OCCUPIED' if station in open_stations else 'AVAILABLE'
+                for station in ('Station 1', 'Station 2')
+            },
+            'confirmation_phrase': CONFIRMATION_PHRASE,
+            'error': error,
+            'reset_ids': reset_ids or [],
+        }
+        return render(
+            request,
+            'admin/api/cabinetsession/maintenance.html',
+            context,
+            status=status,
+        )
+
+    def maintenance_preview_view(self, request):
+        self._check_maintenance_access(request)
+        return self._render_maintenance_page(request)
+
+    def maintenance_reset_view(self, request):
+        self._check_maintenance_access(request)
+        if request.method != 'POST':
+            return HttpResponseBadRequest('Use POST to reset selected sessions.')
+
+        try:
+            selected_ids = parse_session_ids(request.POST.getlist('session_ids'))
+            if request.POST.get('confirmation') != CONFIRMATION_PHRASE:
+                raise SessionMaintenanceError('The confirmation phrase does not match.')
+            reset_ids = reset_open_sessions(selected_ids, request.user)
+        except SessionMaintenanceError as exc:
+            return self._render_maintenance_page(request, error=str(exc), status=400)
+
+        return self._render_maintenance_page(request, reset_ids=reset_ids)
 
     @admin.display(description='Opened by')
     def opened_by_students(self, obj):

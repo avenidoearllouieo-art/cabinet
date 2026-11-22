@@ -1,13 +1,15 @@
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
-from api.models import CabinetEvent, CabinetSession, User
-
-
-STATIONS = ('Station 1', 'Station 2')
-CONFIRMATION_PHRASE = 'RESET STATION 1 AND STATION 2'
-MAINTENANCE_REASON = 'One-time stale cabinet UI testing session reset.'
+from api.cabinet_session_maintenance import (
+    CONFIRMATION_PHRASE,
+    STATIONS,
+    SessionMaintenanceError,
+    ensure_configured_stations,
+    get_open_sessions,
+    parse_session_ids,
+    reset_open_sessions,
+)
+from api.models import CabinetSession, User
 
 
 class Command(BaseCommand):
@@ -30,13 +32,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        configured_stations = set(settings.TAPTRACK_CABINET_STATIONS)
-        missing_stations = set(STATIONS) - configured_stations
-        if missing_stations:
-            raise CommandError(
-                'The configured Cabinet UI does not include: '
-                + ', '.join(sorted(missing_stations))
-            )
+        try:
+            ensure_configured_stations()
+        except SessionMaintenanceError as exc:
+            raise CommandError(str(exc)) from exc
 
         selected_ids = self._parse_session_ids(options['session_ids'])
         confirm = options['confirm']
@@ -50,14 +49,10 @@ class Command(BaseCommand):
         if confirm is None and admin_user_id is not None:
             raise CommandError('--admin-user-id is only valid when applying a confirmed reset.')
 
-        candidates = list(
-            CabinetSession.objects.filter(
-                station__in=STATIONS,
-                status=CabinetSession.StatusChoices.OPEN,
-            )
-            .prefetch_related('opened_by')
-            .order_by('station', 'id')
-        )
+        try:
+            candidates = get_open_sessions()
+        except SessionMaintenanceError as exc:
+            raise CommandError(str(exc)) from exc
         candidate_ids = {session.pk for session in candidates}
 
         if selected_ids is None:
@@ -105,49 +100,13 @@ class Command(BaseCommand):
         if admin_user is None:
             raise CommandError(f'User {admin_user_id} is not an administrator.')
 
-        with transaction.atomic():
-            locked_sessions = list(
-                CabinetSession.objects.select_for_update()
-                .filter(
-                    pk__in=selected_ids,
-                    station__in=STATIONS,
-                    status=CabinetSession.StatusChoices.OPEN,
-                )
-                .order_by('station', 'id')
-            )
-            if {session.pk for session in locked_sessions} != selected_ids:
-                raise CommandError(
-                    'The selected sessions changed since preview. No records were changed; '
-                    'run the command again to review the current sessions.'
-                )
-            if any(
-                session.workflow_state != CabinetSession.WorkflowStateChoices.IDLE
-                for session in locked_sessions
-            ):
-                raise CommandError(
-                    'A selected session has an active opening or closing workflow. '
-                    'No records were changed; verify hardware/workflow state first.'
-                )
-
-            for session in locked_sessions:
-                session.status = CabinetSession.StatusChoices.CLOSED
-                session.workflow_state = CabinetSession.WorkflowStateChoices.IDLE
-                session.save(update_fields=['status', 'workflow_state', 'updated_at'])
-
-            CabinetEvent.objects.create(
-                user=admin_user,
-                event_type=CabinetEvent.EventTypeChoices.MAINTENANCE,
-                details={
-                    'action': 'stale_test_session_reset',
-                    'reason': MAINTENANCE_REASON,
-                    'session_ids': sorted(selected_ids),
-                    'stations': sorted({session.station for session in locked_sessions}),
-                    'door_state': 'unchanged; no hardware confirmation recorded',
-                },
-            )
+        try:
+            reset_ids = reset_open_sessions(selected_ids, admin_user)
+        except SessionMaintenanceError as exc:
+            raise CommandError(str(exc)) from exc
 
         self.stdout.write(
-            'Reset session IDs: ' + ', '.join(str(value) for value in sorted(selected_ids))
+            'Reset session IDs: ' + ', '.join(str(value) for value in reset_ids)
         )
         self.stdout.write(
             'Session status updated only. closed_at, participant links, closed_by, '
@@ -159,13 +118,10 @@ class Command(BaseCommand):
     def _parse_session_ids(value):
         if value is None:
             return None
-        parts = [part.strip() for part in value.split(',')]
-        if not parts or any(not part.isdecimal() for part in parts):
-            raise CommandError('--session-ids must be a comma-separated list of positive IDs.')
-        ids = [int(part) for part in parts]
-        if any(session_id < 1 for session_id in ids) or len(ids) != len(set(ids)):
-            raise CommandError('--session-ids must contain unique positive IDs.')
-        return set(ids)
+        try:
+            return parse_session_ids(value)
+        except SessionMaintenanceError as exc:
+            raise CommandError(str(exc)) from exc
 
     def _write_station_status(self):
         open_stations = set(

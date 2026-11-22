@@ -1,0 +1,67 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Temporary cabinet session maintenance</h1>
+  <p>Preview of open sessions that currently determine station occupancy. No records change until you submit the form.</p>
+
+  {% if error %}
+    <p class="errornote">{{ error }}</p>
+  {% endif %}
+
+  {% if reset_ids %}
+    <p class="success">Reset session IDs: {{ reset_ids|join:", " }}. Participant links, access logs, closed timestamps, and hardware state were not changed.</p>
+  {% endif %}
+
+  <ul>
+    {% for station, status in station_status.items %}
+      <li>{{ station }}: {{ status }}</li>
+    {% endfor %}
+  </ul>
+
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Select</th>
+        <th scope="col">Session ID</th>
+        <th scope="col">Station</th>
+        <th scope="col">Workflow state</th>
+        <th scope="col">Participants</th>
+        <th scope="col">Opened at</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for session in sessions %}
+        <tr>
+          <td>
+            {% if session.workflow_state == "idle" %}
+              <input type="checkbox" name="session_ids" value="{{ session.pk }}" form="maintenance-reset-form" aria-label="Select session {{ session.pk }}">
+            {% else %}
+              Not eligible
+            {% endif %}
+          </td>
+          <td>{{ session.pk }}</td>
+          <td>{{ session.station }}</td>
+          <td>{{ session.workflow_state }}</td>
+          <td>{{ session.opened_by.count }}</td>
+          <td>{{ session.opened_at }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6">No open sessions for Station 1 or Station 2.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if sessions %}
+    <form id="maintenance-reset-form" method="post" action="{% url 'admin:api_cabinetsession_maintenance_reset' %}">
+      {% csrf_token %}
+      <p>
+        <label for="confirmation">Enter exactly: {{ confirmation_phrase }}</label>
+        <input id="confirmation" name="confirmation" type="text" autocomplete="off" required>
+      </p>
+      <button type="submit" class="default">Reset selected idle sessions</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

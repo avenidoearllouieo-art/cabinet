@@ -91,6 +91,10 @@ TAPTRACK_CABINET_STATIONS = env_list(
     'TAPTRACK_CABINET_STATIONS',
     ['Station 1', 'Station 2'],
 )
+TAPTRACK_CABINET_SESSION_MAINTENANCE_ENABLED = env_bool(
+    'TAPTRACK_CABINET_SESSION_MAINTENANCE_ENABLED',
+    False,
+)
 try:
     TAPTRACK_NFC_DEVICE_MAP = json.loads(os.environ.get('TAPTRACK_NFC_DEVICE_MAP', '[]'))
 except json.JSONDecodeError as exc:
