@@ -1,0 +1,718 @@
+.app-root {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.kiosk-header {
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  gap: clamp(8px, 1.4vw, 18px);
+  min-height: clamp(58px, 9dvh, 76px);
+  padding: 6px clamp(12px, 1.8vw, 24px);
+}
+
+.kiosk-brand img {
+  width: clamp(112px, 13vw, 150px);
+  height: clamp(38px, 6dvh, 48px);
+}
+
+.kiosk-header-title {
+  display: block;
+  grid-row: auto;
+  grid-column: auto;
+  font-size: clamp(15px, 1.8vw, 22px);
+}
+
+.kiosk-header-meta {
+  gap: clamp(6px, 1vw, 14px);
+}
+
+.kiosk-header-clock {
+  font-size: clamp(13px, 1.35vw, 17px);
+}
+
+.screen {
+  flex: 1 1 0;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: clamp(8px, 1.4dvh, 14px) clamp(10px, 1.5vw, 20px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.screen > * {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.screen .panel,
+.screen .participant-shell {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.panel h2,
+.scan-hero h2 {
+  font-size: clamp(28px, 3.2vw, 40px);
+  line-height: 1.12;
+}
+
+.muted,
+.subtitle {
+  font-size: clamp(18px, 2vw, 25px);
+  line-height: 1.3;
+}
+
+.btn,
+.button-row .btn,
+.button-row .btn.primary {
+  min-height: clamp(70px, 11dvh, 92px);
+  font-size: clamp(20px, 2.1vw, 27px);
+}
+
+.button-row {
+  gap: clamp(10px, 1.3vw, 16px);
+  margin-top: clamp(10px, 1.5dvh, 16px);
+}
+
+.button-row .btn,
+.button-row .btn.primary {
+  min-width: 0;
+}
+
+.home-screen {
+  overflow: hidden;
+}
+
+.home-screen > .home-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: clamp(152px, 31dvh, 190px) minmax(0, 1fr) auto;
+  align-content: stretch;
+  align-items: stretch;
+  gap: clamp(10px, 1.5dvh, 16px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.home-screen .cabinet-home-card.hero-card {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.3fr);
+  align-items: stretch;
+  gap: clamp(12px, 2vw, 24px);
+  grid-row: 1;
+  min-height: 0;
+  padding: clamp(10px, 1.5vw, 18px);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.home-screen .title-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  grid-row: auto;
+  margin: 0;
+  text-align: left;
+}
+
+.home-screen .title {
+  margin: 0 0 6px;
+  font-size: clamp(27px, 3vw, 38px);
+}
+
+.home-screen .subtitle {
+  font-size: clamp(17px, 1.7vw, 22px);
+}
+
+.home-screen .station-status-grid {
+  grid-row: auto;
+  align-self: stretch;
+  grid-template-rows: minmax(0, 1fr);
+  gap: clamp(8px, 1vw, 12px);
+  min-height: 0;
+  margin: 0;
+}
+
+.home-screen .home-station-unavailable {
+  min-height: 0;
+}
+
+.home-screen .station-status-grid .station-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-content: center;
+  gap: 5px 10px;
+  min-height: 0;
+  padding: clamp(10px, 1.3vw, 16px);
+}
+
+.home-screen .station-status-grid .station-card-title {
+  font-size: clamp(21px, 2.4vw, 30px);
+}
+
+.home-screen .station-status-grid .station-card-detail,
+.home-screen .station-status-grid .station-card > small {
+  font-size: clamp(15px, 1.6vw, 20px);
+  line-height: 1.2;
+}
+
+.home-screen .station-status-grid .status-badge {
+  min-height: 40px;
+  font-size: clamp(15px, 1.5vw, 19px);
+}
+
+.home-screen .clock-card {
+  display: none;
+}
+
+.home-screen .home-actions {
+  grid-row: 2;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: clamp(10px, 1.5vw, 16px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.home-screen .home-action,
+.home-screen .btn.home-action {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: clamp(12px, 1.8vw, 24px);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: clamp(14px, 2vw, 26px);
+  border-radius: 12px;
+}
+
+.home-screen .home-action-icon {
+  width: clamp(54px, 7vw, 82px);
+  height: clamp(54px, 7vw, 82px);
+  flex: 0 0 auto;
+  border-radius: 14px;
+}
+
+.home-screen .home-action-icon svg {
+  width: clamp(34px, 4vw, 48px);
+  height: clamp(34px, 4vw, 48px);
+}
+
+.home-screen .home-action-copy strong {
+  font-size: clamp(20px, 2.4vw, 30px);
+  line-height: 1.15;
+}
+
+.home-screen .home-action-copy small {
+  font-size: clamp(16px, 1.7vw, 21px);
+  line-height: 1.25;
+}
+
+.home-screen .home-error {
+  grid-row: 3;
+}
+
+.station-select-screen > .station-select-panel,
+.close-select-screen > .panel,
+.password-recovery-screen > .recovery-panel,
+.status-screen > .status-panel,
+.confirm-session-screen > .confirm-panel,
+.close-scan-screen > .status-panel,
+.workflow-detail-screen > .status-panel,
+.workflow-complete-screen > .success-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 100%;
+  padding: clamp(12px, 1.8vw, 22px);
+  overflow: visible;
+  border-radius: 12px;
+}
+
+.station-select-panel h2,
+.close-select-screen .panel h2,
+.password-recovery-screen .panel h2,
+.status-screen .panel h2,
+.confirm-session-screen .panel h2 {
+  margin: 0 0 8px;
+}
+
+.station-select-screen .station-select-grid,
+.close-select-screen .close-station-grid {
+  flex: 1 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  gap: clamp(12px, 1.6vw, 18px);
+  width: 100%;
+  min-height: 0;
+  margin: 8px 0;
+}
+
+.station-select-screen .station-select-grid > .station-card,
+.close-select-screen .close-station-grid > .station-card {
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  gap: clamp(12px, 2vh, 20px);
+  padding: clamp(16px, 2.4vw, 30px);
+  border-radius: 14px;
+}
+
+.station-select-screen .station-card-title,
+.close-select-screen .station-card-title {
+  font-size: clamp(30px, 3.4vw, 40px);
+}
+
+.station-select-screen .station-card-detail,
+.close-select-screen .station-card-detail {
+  font-size: clamp(19px, 2.1vw, 26px);
+}
+
+.station-select-screen .station-card-action,
+.close-select-screen .station-card-action,
+.close-station-action {
+  font-size: clamp(18px, 2vw, 24px);
+}
+
+.close-select-screen .close-station-grid > .station-card {
+  gap: clamp(6px, 1.2vh, 10px);
+  padding: clamp(10px, 1.5vw, 16px);
+}
+
+.close-select-screen .close-station-grid .station-glyph {
+  width: 34px;
+  height: 34px;
+}
+
+.close-select-screen .close-station-grid .status-badge {
+  min-height: 34px;
+  padding: 5px 9px;
+  font-size: clamp(14px, 1.5vw, 18px);
+}
+
+.close-select-screen .close-station-grid .station-card-title {
+  font-size: clamp(22px, 2.5vw, 30px);
+}
+
+.close-select-screen .close-station-grid .station-card-detail {
+  font-size: clamp(16px, 1.7vw, 20px);
+  line-height: 1.15;
+}
+
+.close-select-screen .close-station-grid .close-station-action {
+  min-height: clamp(58px, 10dvh, 76px);
+  margin-top: 0;
+  padding: 8px;
+  font-size: clamp(16px, 1.8vw, 22px);
+}
+
+.station-select-screen .station-card .status-badge {
+  min-height: 46px;
+  padding: 8px 14px;
+  font-size: clamp(17px, 1.9vw, 23px);
+}
+
+.station-select-screen .button-row,
+.close-select-screen .button-row,
+.password-recovery-screen .button-row,
+.status-screen .button-row,
+.confirm-session-screen .button-row,
+.workflow-complete-screen .button-row {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.station-select-screen .button-row .btn,
+.close-select-screen .button-row .btn,
+.password-recovery-screen .button-row .btn,
+.status-screen .button-row .btn,
+.workflow-detail-screen .button-row .btn,
+.workflow-complete-screen .button-row .btn {
+  flex: 1 1 0;
+  width: 100%;
+}
+
+.participant-scan-screen {
+  overflow: hidden;
+}
+
+.participant-scan-screen > .participant-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: none;
+  align-content: stretch;
+  align-items: stretch;
+  gap: clamp(8px, 1.2vh, 14px) clamp(12px, 1.5vw, 20px);
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+}
+
+.scan-workflow-head {
+  display: grid;
+  grid-area: auto;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+  align-items: center;
+  gap: clamp(12px, 2vw, 24px);
+}
+
+.scan-workflow-head .workflow-progress {
+  justify-content: flex-start;
+  width: 100%;
+  margin: 0;
+}
+
+.scan-workflow-head .scan-hero {
+  display: block;
+  grid-area: auto;
+  min-width: 0;
+}
+
+.scan-workflow-head .nfc-scan-indicator {
+  width: 100%;
+  min-height: clamp(90px, 15dvh, 132px);
+  margin: 0;
+}
+
+.scan-context {
+  display: flex;
+  grid-area: auto;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  gap: clamp(8px, 1.2vh, 14px);
+}
+
+.scan-context .status-chip,
+.scan-context .feedback-card {
+  width: 100%;
+  margin: 0;
+}
+
+.scan-context .feedback-card:empty {
+  display: none;
+}
+
+.scan-context .status-chip,
+.scan-context .feedback-banner {
+  min-height: 64px;
+  font-size: clamp(17px, 1.8vw, 22px);
+}
+
+.scan-participant-panel {
+  display: flex;
+  grid-area: auto;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: clamp(10px, 1.4vw, 18px);
+}
+
+.scan-participant-panel .panel-card-header h3 {
+  font-size: clamp(24px, 2.8vw, 34px);
+}
+
+.scan-participant-panel .panel-card-header span {
+  font-size: clamp(16px, 1.7vw, 21px);
+}
+
+.scan-participant-panel .participant-list {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+}
+
+.scan-participant-panel .participant-card {
+  min-height: clamp(62px, 9dvh, 82px);
+  padding: 10px 14px;
+}
+
+.scan-participant-panel .participant-copy strong {
+  font-size: clamp(20px, 2vw, 25px);
+}
+
+.scan-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.participant-scan-screen .scan-actions {
+  grid-area: auto;
+  grid-column: 1 / -1;
+}
+
+.scan-actions .scan-prompt,
+.scan-actions .button-row.inline {
+  width: 100%;
+  margin: 0;
+}
+
+.scan-actions .scan-prompt {
+  min-height: 70px;
+  font-size: clamp(17px, 1.8vw, 22px);
+}
+
+.scan-actions .button-row.inline .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.close-scan-screen > .status-panel,
+.confirm-session-screen > .confirm-panel {
+  gap: clamp(8px, 1.1vh, 14px);
+}
+
+.close-scan-screen .participant-list,
+.confirm-session-screen .participant-list {
+  flex: 1 1 auto;
+  max-height: min(28dvh, 220px);
+  overflow-y: auto;
+}
+
+.password-recovery-screen .recovery-panel {
+  gap: clamp(8px, 1.3vh, 16px);
+}
+
+.password-recovery-screen .recovery-queue {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 100px;
+  overflow-y: auto;
+}
+
+.password-recovery-screen .recovery-request {
+  min-height: clamp(72px, 11dvh, 96px);
+}
+
+.password-recovery-screen .recovery-request strong {
+  font-size: clamp(19px, 2vw, 25px);
+}
+
+.status-screen .status-list {
+  flex: 1 1 auto;
+  align-content: start;
+}
+
+.status-screen .status-card {
+  min-height: 76px;
+  padding: clamp(12px, 1.5vw, 18px);
+}
+
+.status-screen .status-card strong {
+  font-size: clamp(19px, 2vw, 25px);
+}
+
+.status-screen .status-card p,
+.status-screen .status-card small,
+.status-screen .status-hardware-details p {
+  font-size: clamp(16px, 1.7vw, 21px);
+}
+
+.workflow-detail-screen > .status-panel,
+.workflow-complete-screen > .success-panel {
+  justify-content: center;
+}
+
+.workflow-complete-screen .session-participants {
+  max-height: min(24dvh, 190px);
+}
+
+.workflow-detail-screen .large-state,
+.workflow-complete-screen .large-state {
+  align-self: flex-start;
+  min-height: 54px;
+  font-size: clamp(17px, 1.9vw, 23px);
+}
+
+.workflow-detail-screen .cabinet-illustration {
+  width: min(360px, 42vw);
+}
+
+.workflow-detail-screen .cabinet-illustration svg {
+  max-height: min(30dvh, 210px);
+}
+
+@media (max-width: 900px) and (min-width: 621px) {
+  .kiosk-header {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  }
+
+  .kiosk-header-title {
+    display: none;
+  }
+
+  .home-screen .cabinet-home-card.hero-card {
+    grid-template-columns: minmax(180px, 0.68fr) minmax(0, 1.32fr);
+  }
+
+  .home-screen .station-status-grid .station-card {
+    gap: 3px 8px;
+    padding: 8px 10px;
+  }
+
+  .home-screen .station-status-grid .station-card-title {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    font-size: clamp(18px, 2.2vw, 22px);
+  }
+
+  .home-screen .station-status-grid .status-badge {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    min-height: 34px;
+    padding: 4px 9px;
+    font-size: clamp(14px, 1.5vw, 17px);
+  }
+
+  .home-screen .station-status-grid .station-card-detail {
+    grid-row: 3;
+    font-size: clamp(14px, 1.55vw, 16px);
+  }
+
+  .home-screen .station-status-grid .station-card > small {
+    grid-row: 4;
+    font-size: clamp(13px, 1.4vw, 15px);
+  }
+}
+
+@media (max-width: 760px) and (min-width: 621px) {
+  .kiosk-header-title {
+    display: none;
+  }
+
+  .participant-scan-screen > .participant-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(130px, 1fr) auto;
+    overflow-y: auto;
+  }
+
+  .scan-workflow-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scan-context,
+  .scan-participant-panel,
+  .scan-actions {
+    grid-column: 1;
+  }
+
+  .scan-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 520px) and (min-width: 621px) {
+  .home-screen .home-action-icon {
+    width: 52px;
+    height: 52px;
+  }
+
+  .home-screen .home-action-copy strong {
+    font-size: clamp(18px, 2.2vw, 24px);
+  }
+
+  .home-screen .home-action-copy small {
+    font-size: clamp(14px, 1.5vw, 17px);
+  }
+}
+
+@media (max-width: 620px) {
+  .kiosk-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .kiosk-header-title {
+    display: none;
+  }
+
+  .screen > * {
+    width: 100%;
+  }
+
+  .home-screen > .home-shell {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow-y: auto;
+  }
+
+  .home-screen .cabinet-home-card.hero-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-screen .station-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .station-select-screen .station-select-grid,
+  .close-select-screen .close-station-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .participant-scan-screen {
+    overflow-y: auto;
+  }
+
+  .participant-scan-screen > .participant-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(150px, 1fr) auto;
+    height: auto;
+    min-height: 100%;
+  }
+
+  .scan-workflow-head,
+  .scan-context,
+  .scan-participant-panel,
+  .scan-actions {
+    grid-column: 1;
+  }
+
+  .scan-workflow-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scan-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scan-actions .button-row.inline {
+    flex-direction: row;
+  }
+
+  .station-select-screen .button-row,
+  .close-select-screen .button-row,
+  .password-recovery-screen .button-row,
+  .status-screen .button-row,
+  .workflow-complete-screen .button-row {
+    flex-direction: row;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen {
+    animation: none;
+  }
+}

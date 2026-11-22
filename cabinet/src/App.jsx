@@ -34,6 +34,7 @@ import {
 import './App.css'
 import './kiosk.css'
 import './touchscreen.css'
+import './kiosk-layout.css'
 
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
@@ -1039,7 +1040,7 @@ export default function App() {
       )}
 
       {view === 'password-recovery' && (
-        <Screen>
+        <Screen className="password-recovery-screen">
           <div className="panel recovery-panel">
             <h2>Password Recovery</h2>
             <p className="muted">
@@ -1115,7 +1116,7 @@ export default function App() {
       )}
 
       {view === 'already-open' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>CABINET OPEN</strong></div>
             <h2>Cabinet is already open.</h2>
@@ -1134,7 +1135,7 @@ export default function App() {
       )}
 
       {view === 'close-scan' && (
-        <Screen>
+        <Screen className="close-scan-screen">
           <div className="panel status-panel">
             <WorkflowProgress steps={['Select station', 'Closing attendance', 'Confirm']} activeIndex={1} />
             <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />ACTIVE SESSION</StatusBadge></div>
@@ -1180,7 +1181,7 @@ export default function App() {
       )}
 
       {view === 'close-not-authorized' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <div className="large-state is-closed"><StatusBadge state="warning"><span className="status-indicator" />NOT AUTHORIZED</StatusBadge></div>
             <h2>You are not a member of the {stationLabel(selectedStation)} active session.</h2>
@@ -1194,7 +1195,7 @@ export default function App() {
       )}
 
       {view === 'already-closed' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <div className="large-state is-closed"><StatusBadge state="success"><span className="status-indicator" />NO ACTIVE SESSION</StatusBadge></div>
             <h2>{selectedStation ? `${stationLabel(selectedStation)} is already closed.` : 'Cabinet is already closed.'}</h2>
@@ -1206,7 +1207,7 @@ export default function App() {
       )}
 
       {view === 'unregistered-card' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel registration-panel">
             <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />ID CARD NOT REGISTERED</StatusBadge></div>
             <h2>Register Your ID Card</h2>
@@ -1236,7 +1237,7 @@ export default function App() {
       )}
 
       {view === 'registration-expired' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <StatusBadge state="warning"><span className="status-indicator" />REGISTRATION EXPIRED</StatusBadge>
             <h2>Registration Expired</h2>
@@ -1249,7 +1250,7 @@ export default function App() {
       )}
 
       {view === 'registration-success' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <div className="success-badge"><KioskIcon name="check" size={28} /></div>
             <StatusBadge state="success"><span className="status-indicator" />REGISTRATION COMPLETE</StatusBadge>
@@ -1263,14 +1264,14 @@ export default function App() {
       )}
 
       {view === 'station-select' && (
-        <Screen>
-          <div className="panel">
+        <Screen className="station-select-screen">
+          <div className="panel station-select-panel">
             <h2>Select Station</h2>
             {!workflowLoaded && <LoadingIndicator label="Loading configured stations" />}
             {workflowLoaded && readerStations.length === 0 && (
               <EmptyState title="No stations are configured" description="Check the Cabinet station configuration." />
             )}
-            <div className="station-grid">
+            <div className="station-grid station-select-grid">
               {readerStations.map((station) => {
                 const session = sessions.find((item) => item.status === 'open' && item.station === station)
                 const resuming = session?.workflow_state === 'opening'
@@ -1297,12 +1298,12 @@ export default function App() {
       )}
 
       {view === 'close-select' && (
-        <Screen>
+        <Screen className="close-select-screen">
           <div className="panel">
             <h2>Close Cabinet</h2>
             <p className="muted">Active sessions by station</p>
             {!occupiedStations.length && <EmptyState title="All stations are available" description="There are no active cabinet sessions to close." />}
-            <div className="station-grid">
+            <div className="station-grid close-station-grid">
               {readerStations.map((station) => {
                 const session = sessions.find((item) => item.status === 'open' && item.station === station)
                 const inProgress = session?.workflow_state === 'opening' || session?.workflow_state === 'closing'
@@ -1338,23 +1339,26 @@ export default function App() {
       )}
 
       {view === 'participant-scan' && (
-        <Screen>
+        <Screen className="participant-scan-screen">
           <div className="participant-shell">
-            <WorkflowProgress steps={['Select station', 'Opening attendance', 'Confirm']} activeIndex={1} />
-            <div className="scan-hero">
-              <NFCScanIndicator
-                title={scanFeedback?.type === 'success' ? 'Card recorded' : scanFeedback?.type === 'warning' ? 'Card needs attention' : 'Tap Your ID Card'}
-                description={`Hold a registered student card near the reader for ${stationLabel(selectedStation)}.`}
-                state={scanFeedback?.type === 'success' ? 'success' : scanFeedback?.type === 'warning' || scanFeedback?.type === 'bridge-error' ? 'error' : 'waiting'}
-              />
+            <div className="scan-workflow-head">
+              <WorkflowProgress steps={['Select station', 'Opening attendance', 'Confirm']} activeIndex={1} />
+              <div className="scan-hero">
+                <NFCScanIndicator
+                  title={scanFeedback?.type === 'success' ? 'Card recorded' : scanFeedback?.type === 'warning' ? 'Card needs attention' : 'Tap Your ID Card'}
+                  description={`Hold a registered student card near the reader for ${stationLabel(selectedStation)}.`}
+                  state={scanFeedback?.type === 'success' ? 'success' : scanFeedback?.type === 'warning' || scanFeedback?.type === 'bridge-error' ? 'error' : 'waiting'}
+                />
+              </div>
             </div>
 
-            <div className="status-chip">
-              <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
-              <span>{statusMessage}</span>
-            </div>
+            <div className="scan-context">
+              <div className="status-chip">
+                <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
+                <span>{statusMessage}</span>
+              </div>
 
-            <div className="feedback-card">
+              <div className="feedback-card">
               {scanFeedback?.type === 'success' && (
                 <div className="feedback-banner success">
                   <span className="feedback-check">✓</span>
@@ -1403,10 +1407,11 @@ export default function App() {
                   </div>
                 </div>
               )}
+              </div>
+              <ErrorMessage>{errorMessage}</ErrorMessage>
             </div>
-            <ErrorMessage>{errorMessage}</ErrorMessage>
 
-            <div className="panel-card">
+            <div className="panel-card scan-participant-panel">
               <div className="panel-card-header">
                 <h3>Participants</h3>
                 <span>Participants scanned: {participants.length}</span>
@@ -1422,7 +1427,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="button-row stacked">
+            <div className="button-row stacked scan-actions">
               <div className="scan-prompt" role="status">Hold your registered ID card near the reader.</div>
               <div className="button-row inline">
                 <button className="btn secondary" onClick={continueToConfirmation}>CONTINUE</button>
@@ -1434,7 +1439,7 @@ export default function App() {
       )}
 
       {view === 'confirm-session' && (
-        <Screen>
+        <Screen className="confirm-session-screen">
           <div className="panel confirm-panel">
             <WorkflowProgress
               steps={pendingAction === 'open' ? ['Select station', 'Opening attendance', 'Confirm'] : ['Select station', 'Closing attendance', 'Confirm']}
@@ -1477,7 +1482,7 @@ export default function App() {
       )}
 
       {view === 'cabinet-opening' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <WorkflowProgress steps={['Select station', 'Opening attendance', 'Confirm']} activeIndex={2} />
             <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />Opening</StatusBadge></div>
@@ -1492,7 +1497,7 @@ export default function App() {
       )}
 
       {view === 'cabinet-closing' && (
-        <Screen>
+        <Screen className="workflow-detail-screen">
           <div className="panel status-panel">
             <WorkflowProgress steps={['Select station', 'Closing attendance', 'Confirm']} activeIndex={2} />
             <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />Closing</StatusBadge></div>
@@ -1506,7 +1511,7 @@ export default function App() {
       )}
 
       {view === 'cabinet-opened' && (
-        <Screen>
+        <Screen className="workflow-complete-screen">
           <div className="panel status-panel success-panel">
             <div className="success-badge"><KioskIcon name="check" size={28} /></div>
             <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW RECORDED</strong></div>
@@ -1536,7 +1541,7 @@ export default function App() {
       )}
 
       {view === 'cabinet-closed' && (
-        <Screen>
+        <Screen className="workflow-complete-screen">
           <div className="panel status-panel success-panel">
             <div className="large-state is-closed"><span className="status-dot good" /><strong>CLOSE WORKFLOW COMPLETE</strong></div>
             <h2>Close Workflow Complete</h2>
@@ -1569,7 +1574,7 @@ export default function App() {
       )}
 
       {view === 'status-screen' && (
-        <Screen>
+        <Screen className="status-screen">
           <div className="panel status-panel">
             <h2>Cabinet Status</h2>
             <p className="muted">Current cabinet state and session history.</p>
