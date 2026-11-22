@@ -102,6 +102,7 @@ from .tigris_uploads import (
 )
 from .excel_exports import branded_excel_response, format_duration
 from django.contrib.auth.password_validation import validate_password
+from .password_validation import validate_taptrack_password
 import secrets
 import logging
 import traceback
@@ -4360,10 +4361,9 @@ class PasswordResetConfirmView(APIView):
                 return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
-                validate_password(new_password, user=reset_request.user)
-            except Exception as error:
-                messages = getattr(error, 'messages', [str(error)])
-                return Response({'new_password': messages}, status=status.HTTP_400_BAD_REQUEST)
+                validate_taptrack_password(new_password, reset_request.user)
+            except DjangoValidationError as error:
+                return Response({'new_password': error.messages}, status=status.HTTP_400_BAD_REQUEST)
 
             reset_request.user.set_password(new_password)
             reset_request.user.save(update_fields=['password'])

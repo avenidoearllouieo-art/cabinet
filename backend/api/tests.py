@@ -4027,6 +4027,113 @@ class PasswordResetFlowTests(TestCase):
             raise AssertionError(verify_response.json())
         return reset_request, verify_response
 
+    def _create_reset_authorization(self, user=None):
+        reset_request, _ = self._create_verified_reset_request(user)
+        status_response = self.client.post('/api/auth/password-reset/status/', {
+            'request_id': reset_request.request_id,
+        }, format='json')
+        if status_response.status_code != 200:
+            raise AssertionError(status_response.json())
+        return reset_request, status_response.json()['reset_authorization']
+
+    def _confirm_reset(self, reset_request, authorization, new_password, confirm_password=None):
+        return self.client.post('/api/auth/password-reset/confirm/', {
+            'request_id': reset_request.request_id,
+            'reset_authorization': authorization,
+            'new_password': new_password,
+            'confirm_password': confirm_password if confirm_password is not None else new_password,
+        }, format='json')
+
+    def test_password_reset_uses_configured_password_validators_and_keeps_authorization_after_failures(self):
+        reset_request, authorization = self._create_reset_authorization()
+        invalid_passwords = (
+            ('short', 'Ab1!', 'at least 8 characters'),
+            ('similar to username', 'student-a', 'too similar'),
+            ('commonly used', 'password', 'too common'),
+            ('numeric only', '12345678', 'entirely numeric'),
+            ('reuse current hash', 'old-password-1', 'different from your current password'),
+        )
+
+        for label, password, expected_message in invalid_passwords:
+            with self.subTest(password_rule=label):
+                response = self._confirm_reset(reset_request, authorization, password)
+                self.assertEqual(response.status_code, 400, response.json())
+                self.assertIn('new_password', response.json())
+                self.assertIn(expected_message, ' '.join(response.json()['new_password']).lower())
+                reset_request.refresh_from_db()
+                self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.VERIFIED)
+                self.assertIsNone(reset_request.reset_authorization_used_at)
+                self.assertTrue(self.student_a.check_password('old-password-1'))
+
+        success = self._confirm_reset(reset_request, authorization, 'Updated-Password-456!')
+        self.assertEqual(success.status_code, 200, success.json())
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.USED)
+        self.assertIsNotNone(reset_request.used_at)
+        self.student_a.refresh_from_db()
+        self.assertTrue(self.student_a.check_password('Updated-Password-456!'))
+
+    def test_password_reset_mismatch_is_inline_validation_and_does_not_consume_authorization(self):
+        reset_request, authorization = self._create_reset_authorization()
+
+        response = self._confirm_reset(
+            reset_request,
+            authorization,
+            'Updated-Password-456!',
+            'Different-Password-789!',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('confirm_password', response.json())
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.VERIFIED)
+        self.assertIsNone(reset_request.reset_authorization_used_at)
+
+    def test_password_reset_admin_history_is_read_only_scoped_and_hides_credentials(self):
+        reset_request, authorization = self._create_reset_authorization()
+        reset_request.reset_authorization_hash = make_password(authorization)
+        reset_request.reset_authorization_nonce = 'private-reset-nonce'
+        reset_request.save(update_fields=['reset_authorization_hash', 'reset_authorization_nonce'])
+        PasswordRecoveryAuditEvent.objects.create(
+            recovery_request=reset_request,
+            user=self.student_a,
+            event_type=PasswordRecoveryAuditEvent.EventType.NFC_REJECTED,
+            outcome=PasswordRecoveryAuditEvent.Outcome.FAILURE,
+            reason_code='card_account_mismatch',
+            actor_type=PasswordRecoveryAuditEvent.ActorType.PI,
+        )
+
+        ordinary_user = self.student_b
+        self.client.force_login(ordinary_user)
+        request_url = reverse('admin:api_passwordresetrequest_change', args=[reset_request.pk])
+        self.assertNotEqual(self.client.get(request_url).status_code, 200)
+
+        admin_user = User.objects.create_user(
+            username='recovery-history-admin',
+            email='recovery-history-admin@example.com',
+            password='admin-password',
+            role=User.RoleChoices.ADMIN,
+            is_staff=True,
+            is_superuser=True,
+        )
+        self.client.force_login(admin_user)
+        response = self.client.get(request_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reset_request.request_id)
+        self.assertContains(response, self.student_a.get_full_name())
+        self.assertContains(response, self.student_a.student_id)
+        self.assertContains(response, 'NFC rejected')
+        self.assertContains(response, 'card_account_mismatch')
+        self.assertNotContains(response, authorization)
+        self.assertNotContains(response, 'private-reset-nonce')
+        self.assertNotContains(response, reset_request.reset_authorization_hash)
+        self.assertFalse(django_admin.site._registry[PasswordResetRequest].has_add_permission(
+            RequestFactory().get('/admin/')
+        ))
+        self.assertFalse(django_admin.site._registry[PasswordResetRequest].has_delete_permission(
+            RequestFactory().get('/admin/'), reset_request
+        ))
+
     def test_invalid_token_is_rejected_without_authorization(self):
         reset_request, _ = self._create_verified_reset_request()
 

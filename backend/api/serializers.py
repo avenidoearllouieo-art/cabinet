@@ -30,6 +30,7 @@ from .models import (
     PrivilegedUserAuditEvent,
 )
 from .file_uploads import uploaded_file_name, validate_student_submission_files, validate_uploaded_files
+from .password_validation import validate_taptrack_password
 
 
 logger = logging.getLogger(__name__)
@@ -580,23 +581,8 @@ class PasswordChangeSerializer(serializers.Serializer):
             raise serializers.ValidationError({'current_password': 'Current password is incorrect.'})
         if new_password != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'New password and confirmation do not match.'})
-        if user.check_password(new_password):
-            raise serializers.ValidationError({
-                'new_password': 'Your new password must be different from your current password.'
-            })
-        if len(new_password) < 8:
-            raise serializers.ValidationError({'new_password': 'Use at least 8 characters.'})
-        if not (any(char.isupper() for char in new_password)
-                and any(char.islower() for char in new_password)
-                and any(char.isdigit() for char in new_password)
-                and any(not char.isalnum() for char in new_password)):
-            raise serializers.ValidationError({
-                'new_password': 'Use upper- and lowercase letters, a number, and a symbol.'
-            })
-
-        from django.contrib.auth.password_validation import validate_password
         try:
-            validate_password(new_password, user=user)
+            validate_taptrack_password(new_password, user)
         except DjangoValidationError as error:
             raise serializers.ValidationError({'new_password': error.messages}) from error
 
@@ -615,9 +601,6 @@ class PasswordResetConfirmationSerializer(serializers.Serializer):
 
         if new_password != confirm_password:
             raise serializers.ValidationError({'confirm_password': 'New password and confirmation do not match.'})
-
-        if not new_password or len(new_password) < 8:
-            raise serializers.ValidationError({'new_password': 'New password must be at least 8 characters.'})
 
         return attrs
 

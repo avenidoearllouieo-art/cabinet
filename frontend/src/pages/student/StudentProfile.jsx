@@ -6,11 +6,12 @@ import PageHeader from '../../components/PageHeader'
 import Modal from '../../components/Modal.jsx'
 import ProfileSummaryCard from '../../components/profile/ProfileSummaryCard.jsx'
 import UserAvatar from '../../components/UserAvatar.jsx'
-import { FormActions, FormDialog, FormField, FormSection, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
+import { FormActions, FormDialog, FormField, FormSection, FormStepper, InlineFeedback } from '../../components/forms/FormPrimitives.jsx'
 import { controlClass } from '../../components/forms/formStyles.js'
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png']
 const formatAcademicYear = (value) => String(value || '').replace(/-(?=\d{4}$)/, '–')
+const profileEditSteps = ['Profile details', 'Review changes']
 
 const publishProfileUpdate = (nextProfile) => {
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -28,6 +29,8 @@ export default function StudentProfile() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [imageSaving, setImageSaving] = useState(false)
+  const [editStep, setEditStep] = useState(0)
+  const [validationErrors, setValidationErrors] = useState({})
   const [error, setError] = useState('')
   const [toastMessage, setToastMessage] = useState('')
   const [selectedImage, setSelectedImage] = useState(null)
@@ -35,6 +38,8 @@ export default function StudentProfile() {
   const [imageError, setImageError] = useState('')
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const instructorCardRef = useRef(null)
+  const imageMutationInFlightRef = useRef(false)
+  const saveInFlightRef = useRef(false)
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -83,6 +88,8 @@ export default function StudentProfile() {
 
   const handleInputChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }))
+    setValidationErrors((current) => ({ ...current, [field]: '' }))
+    setError('')
   }
 
   const handleImageSelect = (event) => {
@@ -112,38 +119,79 @@ export default function StudentProfile() {
     setIsPreviewOpen(true)
   }
 
+  const validateProfileDetails = () => {
+    const nextErrors = {}
+    if (!form.email.trim()) nextErrors.email = 'Enter your email address.'
+    else if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) nextErrors.email = 'Enter a valid email address.'
+    setValidationErrors(nextErrors)
+    if (Object.keys(nextErrors).length) setError('Correct the highlighted information to continue.')
+    return Object.keys(nextErrors).length === 0
+  }
+
+  const handleContinue = () => {
+    if (editStep === 0 && !validateProfileDetails()) return
+    setError('')
+    setEditStep((current) => Math.min(current + 1, profileEditSteps.length - 1))
+  }
+
   const handleSaveProfile = async (event) => {
     event.preventDefault()
+    if (editStep !== profileEditSteps.length - 1) {
+      handleContinue()
+      return
+    }
+    if (saveInFlightRef.current) return
+    if (!validateProfileDetails()) {
+      setEditStep(0)
+      return
+    }
+    if (selectedImage) {
+      setEditStep(0)
+      setImageError('Upload or remove the selected profile picture before saving.')
+      return
+    }
+    saveInFlightRef.current = true
     setSaving(true)
     setError('')
 
     try {
       const response = await api.patch('/users/update_profile/', {
-        email: form.email,
-        contact_number: form.contact_number,
+        email: form.email.trim(),
+        contact_number: form.contact_number.trim(),
       })
-      setProfile(response.data)
+      const updatedProfile = { ...profile, ...response.data }
+      setProfile(updatedProfile)
       publishProfileUpdate(response.data)
       const nextForm = {
-        email: response.data.email || '',
-        contact_number: response.data.contact_number || '',
+        email: updatedProfile.email || '',
+        contact_number: updatedProfile.contact_number || '',
       }
       setForm(nextForm)
       setInitialForm(nextForm)
+      setValidationErrors({})
+      setSelectedImage(null)
+      if (previewSrc) {
+        URL.revokeObjectURL(previewSrc)
+        setPreviewSrc(null)
+      }
+      setEditStep(0)
       setIsEditing(false)
       setToastMessage('Profile details updated successfully.')
-      localStorage.setItem('user', JSON.stringify({ ...JSON.parse(localStorage.getItem('user') || '{}'), email: response.data.email }))
+      localStorage.setItem('user', JSON.stringify({ ...JSON.parse(localStorage.getItem('user') || '{}'), email: updatedProfile.email }))
       window.setTimeout(() => setToastMessage(''), 4000)
     } catch (err) {
       console.error('Error updating profile', err)
       setError('Unable to update profile. Please check your input.')
     } finally {
+      saveInFlightRef.current = false
       setSaving(false)
     }
   }
 
   const handleCancelEdit = () => {
     setForm(initialForm)
+    setEditStep(0)
+    setValidationErrors({})
     setSelectedImage(null)
     setImageError('')
     setIsPreviewOpen(false)
@@ -160,7 +208,9 @@ export default function StudentProfile() {
       setImageError('Please select a profile image first.')
       return
     }
+    if (imageMutationInFlightRef.current) return
 
+    imageMutationInFlightRef.current = true
     setImageSaving(true)
     setImageError('')
 
@@ -168,7 +218,7 @@ export default function StudentProfile() {
       const formData = new FormData()
       formData.append('profile_image', selectedImage)
       const response = await api.post('/users/upload_profile_image/', formData)
-      setProfile(response.data)
+      setProfile((current) => ({ ...current, ...response.data }))
       publishProfileUpdate(response.data)
       setToastMessage('Profile image uploaded successfully.')
       setSelectedImage(null)
@@ -181,17 +231,20 @@ export default function StudentProfile() {
       console.error('Error uploading profile image', err)
       setImageError('Unable to upload profile image.')
     } finally {
+      imageMutationInFlightRef.current = false
       setImageSaving(false)
     }
   }
 
   const handleRemoveImage = async () => {
+    if (imageMutationInFlightRef.current) return
+    imageMutationInFlightRef.current = true
     setImageSaving(true)
     setImageError('')
 
     try {
       const response = await api.post('/users/remove_profile_image/')
-      setProfile(response.data)
+      setProfile((current) => ({ ...current, ...response.data }))
       publishProfileUpdate(response.data)
       setSelectedImage(null)
       if (previewSrc) {
@@ -204,8 +257,17 @@ export default function StudentProfile() {
       console.error('Error removing profile image', err)
       setImageError('Unable to remove profile image.')
     } finally {
+      imageMutationInFlightRef.current = false
       setImageSaving(false)
     }
+  }
+
+  const openEditProfile = () => {
+    setError('')
+    setImageError('')
+    setValidationErrors({})
+    setEditStep(0)
+    setIsEditing(true)
   }
 
   if (loading) {
@@ -242,7 +304,7 @@ export default function StudentProfile() {
           { icon: Phone, label: 'Contact Number', value: profile?.contact_number },
           { icon: BadgeCheck, label: 'Account Status', value: profile?.is_active === false ? 'Inactive' : 'Active' },
         ]}
-        action={<button type="button" onClick={() => { setError(''); setImageError(''); setIsEditing(true) }} className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-[#0B2A4A]">Edit Profile</button>}
+        action={<button type="button" onClick={openEditProfile} className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-[#F5B700] px-5 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-[#0B2A4A]">Edit Profile</button>}
       />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -294,33 +356,49 @@ export default function StudentProfile() {
         onClose={handleCancelEdit}
         onSubmit={handleSaveProfile}
         dirty={profileDirty || Boolean(selectedImage)}
-        busy={saving}
-        actions={<FormActions onCancel={handleCancelEdit} submitLabel="Save Changes" busy={saving} dirty={profileDirty || Boolean(selectedImage)} />}
+        busy={saving || imageSaving}
+        stepper={<FormStepper steps={profileEditSteps} currentStep={editStep} />}
+        actions={<FormActions onCancel={handleCancelEdit} onBack={editStep > 0 ? () => setEditStep(0) : undefined} onNext={handleContinue} isLastStep={editStep === profileEditSteps.length - 1} submitLabel="Save Changes" busy={saving || imageSaving} dirty={profileDirty || Boolean(selectedImage)} />}
       >
         <div className="space-y-4">
           <InlineFeedback>{error}</InlineFeedback>
-          <FormSection icon={BadgeCheck} title="Contact information" description="Keep the contact details on your account current.">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Email Address" required>{({ id, invalid }) => <input id={id} type="email" value={form.email} onChange={handleInputChange('email')} className={controlClass(invalid)} autoComplete="email" />}</FormField>
-              <FormField label="Contact Number" optional>{({ id, invalid }) => <input id={id} type="tel" value={form.contact_number} onChange={handleInputChange('contact_number')} className={controlClass(invalid)} autoComplete="tel" />}</FormField>
-            </div>
-          </FormSection>
-          <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-              <UserAvatar imageUrl={profileImageUrl} initials={initials || 'S'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
-              <div className="flex flex-wrap gap-2">
-                <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">
-                  <Camera size={16} />Choose Photo
-                  <input type="file" accept="image/jpeg,image/jpg,image/png" className="sr-only" onChange={handleImageSelect} />
-                </label>
-                <button type="button" onClick={handleUploadImage} disabled={imageSaving || !selectedImage} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"><UploadCloud size={16} />{imageSaving ? 'Uploading…' : 'Upload'}</button>
-                {(profile?.profile_image_url || profile?.profile_image) && <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} />Remove</button>}
-                <button type="button" onClick={() => setIsPreviewOpen(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50"><Camera size={16} />Preview</button>
+          {editStep === 0 ? (
+            <>
+              <FormSection icon={BadgeCheck} title="Contact information" description="Keep the contact details on your account current.">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <FormField label="Email Address" required error={validationErrors.email}>{({ id, describedBy, invalid }) => <input id={id} type="email" value={form.email} onChange={handleInputChange('email')} className={controlClass(invalid)} autoComplete="email" aria-describedby={describedBy} aria-invalid={invalid} />}</FormField>
+                  <FormField label="Contact Number" optional>{({ id, invalid }) => <input id={id} type="tel" value={form.contact_number} onChange={handleInputChange('contact_number')} className={controlClass(invalid)} autoComplete="tel" aria-invalid={invalid} />}</FormField>
+                </div>
+              </FormSection>
+              <FormSection icon={Camera} title="Profile picture" description="JPG, JPEG, or PNG. Maximum file size 5 MB.">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <UserAvatar imageUrl={profileImageUrl} initials={initials || 'S'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
+                  <div className="flex flex-wrap gap-2">
+                    <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#F5B700] px-4 py-2 text-sm font-bold text-[#0B1F3A] transition hover:bg-amber-400">
+                      <Camera size={16} />Choose Photo
+                      <input type="file" accept="image/jpeg,image/jpg,image/png" className="sr-only" onChange={handleImageSelect} />
+                    </label>
+                    <button type="button" onClick={handleUploadImage} disabled={imageSaving || !selectedImage} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"><UploadCloud size={16} />{imageSaving ? 'Uploading…' : 'Upload'}</button>
+                    {(profile?.profile_image_url || profile?.profile_image) && <button type="button" onClick={handleRemoveImage} disabled={imageSaving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} />Remove</button>}
+                    <button type="button" onClick={() => setIsPreviewOpen(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#0B2A4A] hover:bg-slate-50"><Camera size={16} />Preview</button>
+                  </div>
+                </div>
+                {selectedImage && <p className="mt-3 break-all text-xs text-slate-500">Selected: {selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
+                {imageError && <InlineFeedback className="mt-3">{imageError}</InlineFeedback>}
+              </FormSection>
+            </>
+          ) : (
+            <FormSection icon={BadgeCheck} title="Review profile changes" description="Confirm your contact details and uploaded profile picture before saving.">
+              <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+                <UserAvatar imageUrl={profileImageUrl} initials={initials || 'S'} alt={`${fullName} profile picture`} size="xl" className="shrink-0 border border-slate-200 bg-[#eaf0f6] text-[#0B2A4A]" />
+                {selectedImage && <p className="text-sm text-amber-800">The selected picture has not been uploaded yet.</p>}
               </div>
-            </div>
-            {selectedImage && <p className="mt-3 break-all text-xs text-slate-500">Selected: {selectedImage.name} · {(selectedImage.size / (1024 * 1024)).toFixed(1)} MB</p>}
-            {imageError && <InlineFeedback className="mt-3">{imageError}</InlineFeedback>}
-          </FormSection>
+              <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                <ProfileFact label="Email Address" value={form.email} />
+                <ProfileFact label="Contact Number" value={form.contact_number} />
+              </dl>
+            </FormSection>
+          )}
         </div>
       </FormDialog>
 

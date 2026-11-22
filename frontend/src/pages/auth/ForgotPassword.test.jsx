@@ -58,7 +58,7 @@ describe('ForgotPassword', () => {
   })
 
   it.each([
-    [{ response: { status: 500 } }, /service returned HTTP 500/i],
+    [{ response: { status: 500 } }, /temporarily unavailable/i],
     [new Error('Network unavailable'), /could not reach the password-reset service/i],
   ])('reports initiation service failures without advancing', async (failure, expectedMessage) => {
     const user = userEvent.setup()
@@ -121,17 +121,18 @@ describe('ForgotPassword', () => {
     await user.click(screen.getByRole('button', { name: 'Check verification status' }))
 
     expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
-    await user.type(screen.getByLabelText(/New password/), 'new-password-123')
-    await user.type(screen.getByLabelText(/Confirm password/), 'new-password-123')
+    await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
+    await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
     await user.click(screen.getByRole('button', { name: 'Change password' }))
 
     await waitFor(() => expect(api.post).toHaveBeenLastCalledWith('/auth/password-reset/confirm/', {
       request_id: 'opaque-ref-verified',
       reset_authorization: 'one-time-auth-value',
-      new_password: 'new-password-123',
-      confirm_password: 'new-password-123',
+      new_password: 'New-Password-123!',
+      confirm_password: 'New-Password-123!',
     }))
-    expect(await screen.findByText(/password has been changed successfully/i)).toBeTruthy()
+    expect(await screen.findByText('Password changed successfully! You can now log in with your new password.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Go to Login' })).toBeTruthy()
   })
 
   it.each([
@@ -174,12 +175,124 @@ describe('ForgotPassword', () => {
 
     await submitRequest(user)
     expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
-    await user.type(screen.getByLabelText(/New password/), 'new-password-123')
+    await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
     await user.type(screen.getByLabelText(/Confirm password/), 'different-password')
     await user.click(screen.getByRole('button', { name: 'Change password' }))
 
-    expect(screen.getByRole('alert').textContent).toMatch(/passwords do not match/i)
+    expect(screen.getByText('The passwords do not match.')).toBeTruthy()
     expect(api.post).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the server password-validation reason and retains authorization for a corrected retry', async () => {
+    const user = userEvent.setup()
+    api.post
+      .mockResolvedValueOnce({ data: { request_id: 'opaque-validator-retry' } })
+      .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'retryable-auth' } })
+      .mockRejectedValueOnce({
+        response: {
+          status: 400,
+          data: { new_password: ['The password is too similar to the username.'] },
+        },
+      })
+      .mockResolvedValueOnce({ data: { message: 'Password reset completed successfully.' } })
+    renderForgotPassword()
+
+    await submitRequest(user)
+    expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+    await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
+    await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    expect(await screen.findByText('The password is too similar to the username.')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+
+    await user.clear(screen.getByLabelText(/New password/))
+    await user.type(screen.getByLabelText(/New password/), 'Corrected-Password-456!')
+    await user.clear(screen.getByLabelText(/Confirm password/))
+    await user.type(screen.getByLabelText(/Confirm password/), 'Corrected-Password-456!')
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    expect(await screen.findByText('Password changed successfully! You can now log in with your new password.')).toBeTruthy()
+    expect(api.post).toHaveBeenLastCalledWith('/auth/password-reset/confirm/', {
+      request_id: 'opaque-validator-retry',
+      reset_authorization: 'retryable-auth',
+      new_password: 'Corrected-Password-456!',
+      confirm_password: 'Corrected-Password-456!',
+    })
+    expect(document.body.textContent).not.toContain('retryable-auth')
+  })
+
+  it.each([
+    ['minimum length', 'This password is too short. It must contain at least 8 characters.'],
+    ['commonly used', 'This password is too common.'],
+    ['numeric only', 'This password is entirely numeric.'],
+    ['previous password reuse', 'Your new password must be different from your current password.'],
+  ])('shows the Django %s validation message inline', async (_rule, message) => {
+    const user = userEvent.setup()
+    api.post
+      .mockResolvedValueOnce({ data: { request_id: 'opaque-validator-message' } })
+      .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'safe-auth' } })
+      .mockRejectedValueOnce({ response: { status: 400, data: { new_password: [message] } } })
+    renderForgotPassword()
+
+    await submitRequest(user)
+    expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+    expect(screen.queryByLabelText(/Current password/i)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show new password' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show confirm password' })).toBeTruthy()
+    await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
+    await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    expect(await screen.findByText(message)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+    expect(document.body.textContent).not.toContain('safe-auth')
+  })
+
+  it('handles invalid and expired reset authorization without exposing server details', async () => {
+    for (const [status, message] of [
+      [400, /authorization could not be verified/i],
+      [410, /reset request or token has expired/i],
+    ]) {
+      const user = userEvent.setup()
+      api.post
+        .mockResolvedValueOnce({ data: { request_id: `opaque-auth-${status}` } })
+        .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'temporary-auth' } })
+        .mockRejectedValueOnce({
+          response: { status, data: { error: 'private database diagnostic should not be shown' } },
+        })
+      const { unmount } = renderForgotPassword()
+
+      await submitRequest(user)
+      expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+      await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
+      await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
+      await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+      expect((await screen.findByRole('alert')).textContent).toMatch(message)
+      expect(document.body.textContent).not.toContain('private database diagnostic')
+      expect(document.body.textContent).not.toContain('temporary-auth')
+      unmount()
+      api.post.mockReset()
+    }
+  })
+
+  it('shows a retry message when the password-reset confirmation cannot reach the server', async () => {
+    const user = userEvent.setup()
+    api.post
+      .mockResolvedValueOnce({ data: { request_id: 'opaque-network-reset' } })
+      .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'network-auth' } })
+      .mockRejectedValueOnce(new Error('Network unavailable'))
+    renderForgotPassword()
+
+    await submitRequest(user)
+    expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
+    await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
+    await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/could not reach the password-reset service/i)
+    expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
   })
 
   it('keeps polling available after a network error', async () => {

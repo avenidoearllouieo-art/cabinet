@@ -39,6 +39,7 @@ const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
 const RECOVERY_STATUS_POLL_INTERVAL_MS = 2000
 const ENROLLMENT_STATUS_POLL_INTERVAL_MS = 2000
 const RECOVERY_STATUS_MAX_BACKOFF_MS = 30000
+const RECOVERY_VERIFIED_MESSAGE_MS = 4000
 function Screen({ children, className = '' }) {
   return <main className={`screen ${className}`.trim()}>{children}</main>
 }
@@ -350,12 +351,14 @@ export default function App() {
 
   const selectQueuedRecovery = (requestId) => {
     setRecoveryRequestId(requestId)
+    setRecoveryPhase('idle')
+    setRecoveryMessage('')
     setRecoveryError('')
   }
 
   const cancelRecovery = async () => {
     recoveryAbortControllerRef.current?.abort()
-    if (recoveryRequestId) {
+    if (recoveryRequestId && recoveryPhase !== 'confirmed') {
       try {
         await cancelPasswordRecovery(recoveryRequestId)
       } catch (error) {
@@ -387,7 +390,10 @@ export default function App() {
         const status = backendStatus.status
         if (status === 'verified') {
           setRecoveryPhase('confirmed')
-          setRecoveryMessage(`Django confirmed password-recovery status: ${status}.`)
+          setRecoveryQueue((currentQueue) => currentQueue.filter(
+            (item) => item.request_id !== recoveryRequestId,
+          ))
+          setRecoveryMessage('Identity verified. You can now create a new password on the TapTrack website.')
           setRecoveryError('')
           return
         }
@@ -429,6 +435,19 @@ export default function App() {
       if (recoveryAbortControllerRef.current === pollController) recoveryAbortControllerRef.current = null
     }
   }, [view, recoveryPhase, recoveryRequestId])
+
+  useEffect(() => {
+    if (view !== 'password-recovery' || recoveryPhase !== 'confirmed') return undefined
+
+    const timeoutId = window.setTimeout(() => {
+      setRecoveryRequestId('')
+      setRecoveryPhase('idle')
+      setRecoveryMessage('')
+      setRecoveryError('')
+    }, RECOVERY_VERIFIED_MESSAGE_MS)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [view, recoveryPhase])
 
   const requestScanPhotoCapture = useCallback((event) => {
     const eventId = getDjangoAccessLogEventId(event)
@@ -1029,6 +1048,7 @@ export default function App() {
                     type="button"
                     key={item.request_id}
                     onClick={() => selectQueuedRecovery(item.request_id)}
+                    disabled={['starting', 'waiting', 'confirmed'].includes(recoveryPhase)}
                   >
                     <span>
                       <strong>{item.display_name}</strong>
@@ -1047,7 +1067,7 @@ export default function App() {
               </div>
             )}
             {!recoveryQueueLoading && !recoveryQueueError && recoveryQueue.length === 0 && (
-              <EmptyState title="No pending recovery requests" description="New requests appear here automatically." icon="recovery" />
+              <EmptyState title="No pending recovery requests." description="New requests appear here automatically." icon="recovery" />
             )}
             {recoveryPhase !== 'idle' && (
               <NFCScanIndicator

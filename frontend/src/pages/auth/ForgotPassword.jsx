@@ -13,15 +13,18 @@ function getApiError(error, fallback) {
   if (status === 410) return 'This reset request or token has expired. Start again to create a new request.'
   if (status === 409) return 'This reset request or authorization has already been used. Start again to create a new request.'
   if (status === 429) return 'Too many reset attempts. Please wait before trying again.'
-  if (status === 400) {
-    return error.response?.data?.error || 'The reset request was invalid. Check the details and try again.'
+  if (status === 400 || status === 401 || status === 403) {
+    return 'Reset authorization could not be verified. Start again to protect your account.'
   }
-  if (status === 404) return 'The password-reset endpoint was not found. Check the Web API configuration.'
-  if (typeof status === 'number' && status >= 500) {
-    return `The password-reset service returned HTTP ${status}. Please try again later.`
-  }
+  if (typeof status === 'number' && status >= 500) return 'The password-reset service is temporarily unavailable. Please try again later.'
   if (!error.response) return 'Could not reach the password-reset service. Check your connection and try again.'
+  if (status === 404) return 'Password recovery is temporarily unavailable. Please try again later.'
   return fallback
+}
+
+function getFieldMessage(value) {
+  if (Array.isArray(value)) return value.filter((message) => typeof message === 'string').join(' ')
+  return typeof value === 'string' ? value : ''
 }
 
 function StepIndicator({ currentStep }) {
@@ -75,12 +78,20 @@ export default function ForgotPassword() {
   const [resetAuthorization, setResetAuthorization] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isCheckingStatus, setIsCheckingStatus] = useState(false)
   const [verificationEnded, setVerificationEnded] = useState(false)
   const pollingRef = useRef(false)
+  const passwordScore = !newPassword ? 0 : [
+    newPassword.length >= 8,
+    /[A-Z]/.test(newPassword),
+    /[a-z]/.test(newPassword),
+    /\d/.test(newPassword),
+    /[^A-Za-z0-9]/.test(newPassword),
+  ].filter(Boolean).length
 
   const checkVerificationStatus = useCallback(async (isActive = () => true) => {
     if (!requestId || pollingRef.current || verificationEnded) return
@@ -168,6 +179,7 @@ export default function ForgotPassword() {
 
     setError('')
     setSuccess('')
+    setFieldErrors({})
     setIsSubmitting(true)
     try {
       const response = await api.post('/auth/password-reset/request/', {
@@ -195,15 +207,21 @@ export default function ForgotPassword() {
   const handlePasswordReset = async (event) => {
     event.preventDefault()
     if (isSubmitting) return
+    setError('')
 
     if (newPassword.length < 8) {
-      setError('Your new password must be at least 8 characters.')
+      setFieldErrors({ new_password: 'Use at least 8 characters.' })
+      return
+    }
+    if (![ /[A-Z]/.test(newPassword), /[a-z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword) ].every(Boolean)) {
+      setFieldErrors({ new_password: 'Use upper- and lowercase letters, a number, and a symbol.' })
       return
     }
     if (newPassword !== confirmPassword) {
-      setError('The passwords do not match.')
+      setFieldErrors({ confirm_password: 'The passwords do not match.' })
       return
     }
+    setFieldErrors({})
     if (!requestId || !resetAuthorization) {
       setError('Your reset authorization is no longer available. Start the process again.')
       setStep(0)
@@ -222,11 +240,32 @@ export default function ForgotPassword() {
       })
       setResetAuthorization('')
       setRequestId('')
+      setRequestExpiresAt('')
       setNewPassword('')
       setConfirmPassword('')
-      setSuccess('Your password has been changed successfully. You can now log in with your new password.')
+      setFieldErrors({})
+      setSuccess('Password changed successfully! You can now log in with your new password.')
     } catch (resetError) {
-      setError(getApiError(resetError, 'We could not change your password. Please start the reset process again.'))
+      const data = resetError.response?.data || {}
+      const nextFieldErrors = {
+        new_password: getFieldMessage(data.new_password),
+        confirm_password: getFieldMessage(data.confirm_password),
+      }
+      const hasFieldErrors = Object.values(nextFieldErrors).some(Boolean)
+      setFieldErrors(nextFieldErrors)
+      setError(hasFieldErrors
+        ? ''
+        : getApiError(resetError, 'We could not change your password. Please try again.'))
+      if (!hasFieldErrors && [400, 401, 403, 409, 410].includes(resetError.response?.status)) {
+        setResetAuthorization('')
+        setRequestId('')
+        setRequestExpiresAt('')
+        setNewPassword('')
+        setConfirmPassword('')
+        setFieldErrors({})
+        setVerificationEnded(true)
+        setStep(0)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -237,6 +276,9 @@ export default function ForgotPassword() {
     setRequestId('')
     setRequestExpiresAt('')
     setResetAuthorization('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setFieldErrors({})
     setVerificationEnded(false)
     setError('')
     setSuccess('')
@@ -248,7 +290,7 @@ export default function ForgotPassword() {
         <div className="space-y-5 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-700"><ShieldCheck size={32} aria-hidden="true" /></div>
           <InlineFeedback type="success">{success}</InlineFeedback>
-          <button type="button" onClick={() => navigate('/')} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20">Return to Login <ArrowRight size={16} /></button>
+          <button type="button" onClick={() => navigate('/')} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20">Go to Login <ArrowRight size={16} /></button>
         </div>
       </ResetShell>
     )
@@ -305,8 +347,36 @@ export default function ForgotPassword() {
     <ResetShell currentStep={2} title="Create a new password" description="Choose a new password for your TapTrack account.">
       <form className="space-y-5" onSubmit={handlePasswordReset} noValidate>
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm leading-5 text-emerald-800"><div className="mb-1 flex items-center gap-2 font-bold"><ShieldCheck size={18} aria-hidden="true" /> Reset authorization verified</div>Your cabinet verification was confirmed by TapTrack. Complete the form below before the authorization expires.</div>
-        <PasswordField label="New password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required helper="Use at least 8 characters. TapTrack will also check common password rules." />
-        <PasswordField label="Confirm password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required autoComplete="new-password" />
+        <PasswordField
+          label="New password"
+          value={newPassword}
+          onChange={(event) => {
+            setNewPassword(event.target.value)
+            setFieldErrors((current) => ({ ...current, new_password: '' }))
+            setError('')
+          }}
+          error={fieldErrors.new_password}
+          required
+          helper="Use at least 8 characters with upper- and lowercase letters, a number, and a symbol. TapTrack also rejects common passwords and passwords too similar to your account information."
+        />
+        {newPassword && (
+          <div aria-label={`Password strength ${passwordScore} out of 5`}>
+            <div className="flex gap-1">{[1, 2, 3, 4, 5].map((value) => <span key={value} className={`h-1.5 flex-1 rounded-full ${value <= passwordScore ? passwordScore < 3 ? 'bg-rose-500' : passwordScore < 5 ? 'bg-amber-500' : 'bg-emerald-500' : 'bg-slate-200'}`} />)}</div>
+            <p className="mt-1 text-xs text-slate-500">Strength: {passwordScore < 3 ? 'Weak' : passwordScore < 5 ? 'Good' : 'Strong'}</p>
+          </div>
+        )}
+        <PasswordField
+          label="Confirm password"
+          value={confirmPassword}
+          onChange={(event) => {
+            setConfirmPassword(event.target.value)
+            setFieldErrors((current) => ({ ...current, confirm_password: '' }))
+            setError('')
+          }}
+          error={fieldErrors.confirm_password}
+          required
+          autoComplete="new-password"
+        />
         <InlineFeedback>{error}</InlineFeedback>
         <button type="submit" disabled={isSubmitting} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FFC107] px-5 py-3 text-sm font-bold text-[#002B5B] shadow-[0_8px_20px_rgba(255,193,7,0.28)] transition hover:bg-[#E0A800] focus:outline-none focus:ring-2 focus:ring-[#002B5B]/20 disabled:cursor-not-allowed disabled:opacity-70">{isSubmitting ? 'Changing password...' : 'Change password'} <LockKeyhole size={16} /></button>
         <button type="button" onClick={startOver} disabled={isSubmitting} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dbe3ed] bg-white px-5 py-2.5 text-sm font-semibold text-[#002B5B] transition hover:bg-[#EEF4FA]"><ArrowLeft size={16} /> Start over</button>

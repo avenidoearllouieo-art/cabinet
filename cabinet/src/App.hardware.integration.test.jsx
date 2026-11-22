@@ -427,7 +427,7 @@ describe('Cabinet real NFC bridge mode', () => {
     ))).toBe(true)
   })
 
-  it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
+  it('shows transient NFC verification success, then returns to the refreshed request list', async () => {
     const recoveryRequestId = 'opaque-request-id'
     let recoveryCompleted = false
     const fetcher = vi.fn(async (url, options = {}) => {
@@ -491,17 +491,28 @@ describe('Cabinet real NFC bridge mode', () => {
     expect(screen.queryByLabelText(/Password-reset request ID/i)).toBeNull()
     await user.click(screen.getByRole('button', { name: 'START NFC RECOVERY' }))
 
-    expect(await screen.findByText('Django confirmed password-recovery status: verified.')).toBeTruthy()
+    expect(await screen.findByText('Identity verified. You can now create a new password on the TapTrack website.')).toBeTruthy()
     expect(document.body.textContent).not.toContain('never-render-this-authorization')
     recoveryCompleted = true
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Student A.*•••-001.*pending/i })).toBeNull()
     }, { timeout: 5000 })
+    await waitFor(() => {
+      expect(screen.queryByText('Identity verified. You can now create a new password on the TapTrack website.')).toBeNull()
+      expect(screen.getByText('No pending recovery requests.')).toBeTruthy()
+      expect(screen.getByText('New requests appear here automatically.')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'START NFC RECOVERY' }).disabled).toBe(true)
+    }, { timeout: 5500 })
+    expect(fetcher.mock.calls.some(([url]) => String(url) === 'http://localhost:3000/nfc-bridge/password-reset/cancel')).toBe(false)
+    expect(fetcher.mock.calls.filter(([url]) => (
+      String(url) === 'http://localhost:3000/nfc-bridge/password-reset/queue'
+    )).length).toBeGreaterThan(1)
+    expect(screen.getByRole('heading', { name: 'Password Recovery' })).toBeTruthy()
     expect(fetcher.mock.calls.some(([url, options]) => (
       String(url) === 'http://localhost:3000/nfc-bridge/cabinet/workflow' && options.method === 'POST'
     ))).toBe(false)
     expect(fetcher.mock.calls.some(([url]) => String(url) === 'http://localhost:3000/nfc-bridge/password-reset/handoff')).toBe(true)
-  })
+  }, 10000)
 
   it('shows a wrong-card response from the recovery reader without processing it as an access scan', async () => {
     const recoveryRequestId = 'opaque-wrong-card'

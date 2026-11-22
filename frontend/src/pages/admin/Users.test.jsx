@@ -77,6 +77,45 @@ describe('Users directory', () => {
     expect(screen.queryByRole('menuitem', { name: /Add Student|Add Instructor|Add Administrator/ })).toBeNull()
   })
 
+  it('creates exactly one user and refreshes the directory after Django confirms creation', async () => {
+    const savedUser = directoryUser(9, 'student')
+    let userListReads = 0
+    api.get.mockImplementation((url) => {
+      if (url === '/users/provisioning-permissions/') {
+        return Promise.resolve({ data: { can_provision_administrators: false } })
+      }
+      if (url === '/sections/') return Promise.resolve({ data: [{ id: 1, section_name: 'Section A' }] })
+      if (url === '/users/') {
+        userListReads += 1
+        return Promise.resolve({ data: { count: userListReads > 1 ? 1 : 0, next: null, results: userListReads > 1 ? [savedUser] : [] } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    api.post.mockResolvedValue({ data: savedUser })
+    localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', username: 'admin.1' }))
+    render(<MemoryRouter><Users /></MemoryRouter>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add user' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /First name/ }), { target: { value: 'Student' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /Last name/ }), { target: { value: 'Record 9' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /Email address/ }), { target: { value: savedUser.email } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: /Student ID/ }), { target: { value: 'STU-009' } })
+    await screen.findByRole('option', { name: 'Section A' })
+    fireEvent.change(screen.getByRole('combobox', { name: /Section/ }), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+
+    expect(api.post).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add User' }))
+
+    expect(await screen.findByText('User created successfully.')).toBeTruthy()
+    expect(await screen.findByText('Student Record 9')).toBeTruthy()
+    expect(api.post).toHaveBeenCalledTimes(1)
+    expect(api.post).toHaveBeenCalledWith('/users/', expect.objectContaining({ student_id: 'STU-009' }))
+    expect(userListReads).toBeGreaterThan(1)
+  })
+
   it('downloads a real Excel workbook for the selected user IDs', async () => {
     const user = directoryUser(42, 'student')
     api.get.mockResolvedValue({ data: { count: 1, next: null, results: [user] } })

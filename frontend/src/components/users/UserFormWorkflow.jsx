@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Contact, CreditCard, GraduationCap, Presentation, ShieldCheck, UserRound } from 'lucide-react'
 import api from '../../services/api.js'
 import {
@@ -22,70 +22,76 @@ const sectionName = (section) => section?.section_name || section?.name || secti
 const sectionId = (section) => section?.id ?? section?.section_id
 const snapshot = (form) => JSON.stringify(form)
 
-export default function UserFormWorkflow({ isOpen, userId, user, initialRole = 'student', canProvisionAdministrators = false, onClose, onUnauthorized, onSaved, mode = 'create' }) {
+export default function UserFormWorkflow(props) {
+  const mode = props.mode || (props.userId ? 'edit' : 'create')
+  const resolvedId = props.user?.id ?? props.userId
+  const sessionKey = props.isOpen
+    ? `${mode}:${resolvedId ?? ''}:${props.initialRole || 'student'}`
+    : 'closed'
+  return <UserFormWorkflowSession key={sessionKey} {...props} mode={mode} />
+}
+
+function UserFormWorkflowSession({ isOpen, userId, user, initialRole = 'student', canProvisionAdministrators = false, onClose, onUnauthorized, onSaved, mode = 'create' }) {
   const resolvedId = user?.id ?? userId
   const editing = mode === 'edit'
   const [step, setStep] = useState(0)
-  const [form, setForm] = useState(blankForm())
-  const [initialForm, setInitialForm] = useState(blankForm())
+  const initialValues = { ...blankForm(), role: initialRole === 'admin' && !canProvisionAdministrators ? 'student' : initialRole || 'student' }
+  const [form, setForm] = useState(initialValues)
+  const [initialForm, setInitialForm] = useState(initialValues)
   const [sections, setSections] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [loadingSections, setLoadingSections] = useState(false)
+  const [loading, setLoading] = useState(editing && Boolean(resolvedId))
+  const [loadingSections, setLoadingSections] = useState(true)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const submitInFlightRef = useRef(false)
+  const onUnauthorizedRef = useRef(onUnauthorized)
 
-  const loadSections = useCallback(async () => {
-    setLoadingSections(true)
-    try {
-      const response = await api.get('/sections/')
-      setSections(Array.isArray(response.data) ? response.data : response.data.results || [])
-    } catch (error) {
-      if (error.response?.status === 401) onUnauthorized?.()
-      else setFormError('Sections could not be loaded. Reopen the form to retry.')
-    } finally {
-      setLoadingSections(false)
-    }
-  }, [onUnauthorized])
-
-  const loadUser = useCallback(async (id) => {
-    setLoading(true)
-    try {
-      const response = await api.get(`/users/${id}/`)
-      const data = response.data || {}
-      const loaded = {
-        student_id: data.student_id || '', instructor_id: data.instructor_id || '', administrator_id: data.administrator_id || '',
-        email: data.email || '', first_name: data.first_name || '', last_name: data.last_name || '',
-        role: data.role || 'student', section: sectionId(data.section) ?? data.section ?? '',
-        assigned_sections: Array.isArray(data.assigned_sections) ? data.assigned_sections.map((section) => sectionId(section) ?? section).filter(Boolean) : [],
-        nfc_uid: data.nfc_uid || '', is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
-      }
-      setForm(loaded)
-      setInitialForm(loaded)
-    } catch (error) {
-      if (error.response?.status === 401) onUnauthorized?.()
-      else setFormError('The user could not be loaded. Close the form and try again.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    onUnauthorizedRef.current = onUnauthorized
   }, [onUnauthorized])
 
   useEffect(() => {
-    if (!isOpen) return
-    const timeoutId = window.setTimeout(() => {
-      const clean = { ...blankForm(), role: initialRole === 'admin' && !canProvisionAdministrators ? 'student' : initialRole || 'student' }
-      setStep(0)
-      setForm(clean)
-      setInitialForm(clean)
-      setErrors({})
-      setFormError('')
-      setSuccessMessage('')
-      loadSections()
-      if (editing && resolvedId) loadUser(resolvedId)
-    }, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [isOpen, editing, resolvedId, initialRole, canProvisionAdministrators, loadSections, loadUser])
+    if (!isOpen) {
+      return
+    }
+    let active = true
+    api.get('/sections/').then((response) => {
+      if (!active) return
+      setSections(Array.isArray(response.data) ? response.data : response.data.results || [])
+    }).catch((error) => {
+      if (!active) return
+      if (error.response?.status === 401) onUnauthorizedRef.current?.()
+      else setFormError('Sections could not be loaded. Reopen the form to retry.')
+    }).finally(() => {
+      if (active) setLoadingSections(false)
+    })
+
+    if (editing && resolvedId) {
+      api.get(`/users/${resolvedId}/`).then((response) => {
+        if (!active) return
+        const data = response.data || {}
+        const loaded = {
+          student_id: data.student_id || '', instructor_id: data.instructor_id || '', administrator_id: data.administrator_id || '',
+          email: data.email || '', first_name: data.first_name || '', last_name: data.last_name || '',
+          role: data.role || 'student', section: sectionId(data.section) ?? data.section ?? '',
+          assigned_sections: Array.isArray(data.assigned_sections) ? data.assigned_sections.map((section) => sectionId(section) ?? section).filter(Boolean) : [],
+          nfc_uid: data.nfc_uid || '', is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
+        }
+        setForm(loaded)
+        setInitialForm(loaded)
+      }).catch((error) => {
+        if (!active) return
+        if (error.response?.status === 401) onUnauthorizedRef.current?.()
+        else setFormError('The user could not be loaded. Close the form and try again.')
+      }).finally(() => {
+        if (active) setLoading(false)
+      })
+    }
+
+    return () => { active = false }
+  }, [isOpen, editing, resolvedId])
 
   const update = (field) => (event) => {
     const value = event?.target ? (event.target.type === 'checkbox' ? event.target.checked : event.target.value) : event
@@ -150,17 +156,21 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
     return changed
   }
 
-  const handleSubmit = async (event) => {
-    event.preventDefault()
-    if (step !== steps.length - 1) return goNext()
-    if (saving) return
-    const validationResults = [0, 1].map((stepIndex) => validateStep(stepIndex))
+  const submitFinalStep = async () => {
+    if (saving || submitInFlightRef.current) return
+    submitInFlightRef.current = true
+    const validationResults = [0, 1, 2].map((stepIndex) => validateStep(stepIndex))
     const firstInvalidStep = validationResults.indexOf(false)
     if (firstInvalidStep !== -1) {
       setStep(firstInvalidStep)
+      submitInFlightRef.current = false
       return
     }
-    if (editing && !resolvedId) return setFormError('Missing user id.')
+    if (editing && !resolvedId) {
+      setFormError('Missing user id.')
+      submitInFlightRef.current = false
+      return
+    }
     setSaving(true)
     setErrors({})
     setFormError('')
@@ -181,8 +191,18 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
         if (firstField) setStep(fieldToStep[firstField])
       } else setFormError(`Failed to ${editing ? 'update' : 'create'} user. Please try again.`)
     } finally {
+      submitInFlightRef.current = false
       setSaving(false)
     }
+  }
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+    if (step !== steps.length - 1) {
+      goNext()
+      return
+    }
+    if (editing) void submitFinalStep()
   }
 
   const selectedSections = useMemo(() => sections.filter((section) => form.assigned_sections.includes(sectionId(section))), [sections, form.assigned_sections])
@@ -198,7 +218,7 @@ export default function UserFormWorkflow({ isOpen, userId, user, initialRole = '
       description={editing ? 'Update profile details, role, and NFC access.' : 'Create a pending profile. The user sets up their login during registration.'}
       onClose={onClose} onSubmit={handleSubmit} dirty={dirty} busy={saving}
       stepper={<FormStepper steps={steps} currentStep={step} />}
-      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Update user' : 'Create user'} busy={saving} disabled={loading || loadingSections} dirty={dirty} />}
+      actions={<FormActions onCancel={onClose} onBack={step > 0 ? () => setStep((current) => current - 1) : undefined} onNext={goNext} onFinalAction={!editing ? submitFinalStep : undefined} finalButtonType={editing ? 'submit' : 'button'} isLastStep={step === steps.length - 1} submitLabel={editing ? 'Update user' : 'Add User'} busy={saving} busyLabel={editing ? 'Updating…' : 'Creating…'} disabled={loading || (loadingSections && step === 1 && form.role === 'student')} dirty={dirty} />}
     >
       <div className="space-y-4">
         <InlineFeedback>{formError}</InlineFeedback><InlineFeedback type="success">{successMessage}</InlineFeedback>

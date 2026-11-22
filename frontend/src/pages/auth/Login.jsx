@@ -92,7 +92,7 @@ export default function Login({ administratorOnly = false }) {
         <div className="mb-6 text-center">
           <TapTrackLogo compact className="login-logo mx-auto mb-4 h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]" />
           <h1 className="text-2xl font-bold tracking-tight text-[#002B5B]">
-            {administratorOnly ? 'Administrator Portal' : 'Welcome back'}
+            {administratorOnly ? 'Administrator Portal' : 'Welcome'}
           </h1>
           <p className="mx-auto mt-2 max-w-[300px] text-sm leading-5 text-[#5C6F84]">
             {administratorOnly

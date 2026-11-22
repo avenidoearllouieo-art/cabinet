@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import api from '../../services/api.js'
 import InstructorProfile from './InstructorProfile.jsx'
 
-vi.mock('../../services/api.js', () => ({ default: { get: vi.fn(), patch: vi.fn() } }))
+vi.mock('../../services/api.js', () => ({ default: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }))
 
 const profile = {
   id: 8,
@@ -56,5 +56,58 @@ describe('InstructorProfile', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Change Password' }))
     expect(await screen.findByText('Change Password Page')).toBeTruthy()
+  })
+
+  it('uploads immediately and preserves Instructor edits through Continue, Back, and final save', async () => {
+    api.get.mockResolvedValue({ data: profile })
+    api.post.mockResolvedValue({ data: { ...profile, profile_image_url: '/media/instructor.png' } })
+    api.patch.mockResolvedValue({ data: { ...profile, contact_number: '555-2000', profile_image_url: '/media/instructor.png' } })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:instructor-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    render(<MemoryRouter><InstructorProfile /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Profile' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Contact Number/ }), { target: { value: '555-2000' } })
+    fireEvent.change(screen.getByLabelText(/Choose Photo/), {
+      target: { files: [new File(['image'], 'instructor.png', { type: 'image/png' })] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Close Preview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    expect(screen.getAllByRole('img', { name: 'Rae Santos profile picture' }).length).toBeGreaterThan(0)
+    const editDialog = screen.getByRole('dialog', { name: 'Edit Profile' })
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByRole('heading', { name: 'Review profile changes' })).toBeTruthy()
+    expect(screen.getByText('555-2000')).toBeTruthy()
+
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Back' }))
+    expect(within(editDialog).getByRole('textbox', { name: /Contact Number/ }).value).toBe('555-2000')
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Continue' }))
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(api.patch).toHaveBeenCalledWith('/users/update_profile/', {
+      first_name: 'Rae',
+      last_name: 'Santos',
+      instructor_id: 'EMP-8',
+      username: 'rae.teacher',
+      email: 'rae@example.edu',
+      contact_number: '555-2000',
+    })
+    expect(api.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows required Employee ID validation and stays on profile details', async () => {
+    api.get.mockResolvedValue({ data: profile })
+    render(<MemoryRouter><InstructorProfile /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Profile' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Employee ID/ }), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    expect(await screen.findByText('Enter your Employee ID.')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Review profile changes' })).toBeNull()
   })
 })

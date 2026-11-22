@@ -849,19 +849,29 @@ class CabinetEventAdmin(admin.ModelAdmin):
 @admin.register(PasswordResetRequest)
 class PasswordResetRequestAdmin(admin.ModelAdmin):
     list_display = (
-        'safe_request_reference', 'account_reference', 'status', 'requested_at',
-        'expires_at', 'cabinet_handoff_claimed_at', 'verified_at', 'used_at',
+        'request_id', 'account_display', 'student_identifier', 'status',
+        'requested_at', 'nfc_uid_verified', 'verified_at', 'used_at', 'expires_at',
     )
     list_filter = ('status', 'nfc_uid_verified', 'requested_at', 'expires_at')
     search_fields = ('request_id', 'user__username', 'user__student_id', 'user__first_name', 'user__last_name')
     date_hierarchy = 'requested_at'
     ordering = ('-requested_at',)
-    readonly_fields = (
-        'request_id', 'user', 'student_id_snapshot', 'status', 'requested_at', 'expires_at',
-        'cabinet_handoff_claimed_at', 'cabinet_handoff_expires_at', 'cabinet_handoff_used_at',
-        'verified_at', 'nfc_uid_verified', 'used_at', 'reset_authorization_expires_at',
-        'reset_authorization_used_at', 'reason',
+    fields = (
+        'request_id', 'account_display', 'student_identifier', 'status',
+        'requested_at', 'expires_at', 'nfc_uid_verified', 'verified_at', 'used_at',
+        'reset_authorization_expires_at', 'reset_authorization_used_at', 'reason',
     )
+    readonly_fields = (
+        'request_id', 'account_display', 'student_identifier', 'status',
+        'requested_at', 'expires_at', 'nfc_uid_verified', 'verified_at', 'used_at',
+        'reset_authorization_expires_at', 'reset_authorization_used_at', 'reason',
+    )
+    inlines = ()
+
+    def get_inline_instances(self, request, obj=None):
+        if obj is None:
+            return []
+        return [PasswordRecoveryAuditEventInline(self.model, self.admin_site)]
 
     @admin.display(description='Request')
     def safe_request_reference(self, obj):
@@ -874,6 +884,16 @@ class PasswordResetRequestAdmin(admin.ModelAdmin):
         identifier = obj.user.student_id or obj.user.username
         return f'{obj.user.get_full_name().strip() or "User"} / •••{identifier[-4:]}'
 
+    @admin.display(description='Student')
+    def account_display(self, obj):
+        if not obj.user:
+            return 'Masked request'
+        return obj.user.get_full_name().strip() or 'Name unavailable'
+
+    @admin.display(description='Student account identifier')
+    def student_identifier(self, obj):
+        return obj.student_id_snapshot or 'Unavailable'
+
     def has_add_permission(self, request):
         return False
 
@@ -881,10 +901,37 @@ class PasswordResetRequestAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        user = request.user
+        return bool(
+            user.is_authenticated
+            and user.is_active
+            and user.is_staff
+            and user.is_superuser
+            and user.role == User.RoleChoices.ADMIN
+        )
 
     def get_model_perms(self, request):
         return {'view': self.has_view_permission(request)}
+
+
+class PasswordRecoveryAuditEventInline(admin.TabularInline):
+    model = PasswordRecoveryAuditEvent
+    extra = 0
+    can_delete = False
+    fields = ('timestamp', 'event_type', 'outcome', 'reason_code', 'actor_type')
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(PasswordRecoveryAuditEvent)
@@ -914,6 +961,16 @@ class PasswordRecoveryAuditEventAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def has_view_permission(self, request, obj=None):
+        user = request.user
+        return bool(
+            user.is_authenticated
+            and user.is_active
+            and user.is_staff
+            and user.is_superuser
+            and user.role == User.RoleChoices.ADMIN
+        )
 
     def get_model_perms(self, request):
         return {'view': self.has_view_permission(request)}
