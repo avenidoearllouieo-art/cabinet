@@ -4095,7 +4095,9 @@ class PasswordResetVerifyNFCView(APIView):
                 return Response({'error': 'Cabinet handoff has expired.'}, status=status.HTTP_410_GONE)
 
             user = reset_request.user
-            if not user.is_active or user.nfc_uid != nfc_uid:
+            expected_nfc_uid = AccessLog.normalize_nfc_uid(user.nfc_uid)
+            scanned_nfc_uid = AccessLog.normalize_nfc_uid(nfc_uid)
+            if not user.is_active or expected_nfc_uid != scanned_nfc_uid:
                 record_password_recovery_event(
                     reset_request,
                     PasswordRecoveryAuditEvent.EventType.NFC_REJECTED,

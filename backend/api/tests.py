@@ -3542,6 +3542,7 @@ class PasswordChangeApiTests(TestCase):
 ])
 class PasswordResetFlowTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.device_api_key = 'test-device-key'
         os.environ['DEVICE_API_KEY'] = self.device_api_key
@@ -3904,6 +3905,83 @@ class PasswordResetFlowTests(TestCase):
             'nfc_uid': 'NFC-USER-002',
         }, HTTP_X_API_KEY=self.device_api_key, format='json')
         self.assertEqual(correct_response.status_code, 200, correct_response.json())
+        reset_request.refresh_from_db()
+        self.assertEqual(reset_request.status, PasswordResetRequest.StatusChoices.VERIFIED)
+        verified_event = reset_request.audit_events.get(
+            event_type=PasswordRecoveryAuditEvent.EventType.NFC_VERIFIED,
+        )
+        self.assertEqual(verified_event.outcome, PasswordRecoveryAuditEvent.Outcome.SUCCESS)
+        self.assertEqual(verified_event.actor_type, PasswordRecoveryAuditEvent.ActorType.PI)
+
+    def test_nfc_verification_normalizes_legacy_stored_uid(self):
+        self.student_b.nfc_uid = ' nfc-user-002 '
+        self.student_b.save(update_fields=['nfc_uid'])
+        request_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_b.student_id,
+            'email': self.student_b.email,
+        }, format='json')
+        reset_request = PasswordResetRequest.objects.get(request_id=request_response.json()['request_id'])
+        handoff = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': reset_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(handoff.status_code, 200, handoff.json())
+
+        response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': reset_request.request_id,
+            'nfc_uid': 'NFC-USER-002',
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 200, response.json())
+
+    def test_nfc_verification_rejects_expired_cancelled_and_used_requests(self):
+        for target_index, terminal_status in enumerate((
+            PasswordResetRequest.StatusChoices.CANCELLED,
+            PasswordResetRequest.StatusChoices.USED,
+        )):
+            with self.subTest(status=terminal_status):
+                target = self.student_a if target_index == 0 else self.student_b
+                request_response = self.client.post('/api/auth/password-reset/request/', {
+                    'student_id': target.student_id,
+                    'email': target.email,
+                }, format='json')
+                reset_request = PasswordResetRequest.objects.get(
+                    request_id=request_response.json()['request_id'],
+                )
+                handoff = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+                    'request_id': reset_request.request_id,
+                }, HTTP_X_API_KEY=self.device_api_key, format='json')
+                self.assertEqual(handoff.status_code, 200, handoff.json())
+                reset_request.status = terminal_status
+                reset_request.save(update_fields=['status'])
+
+                response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+                    'request_id': reset_request.request_id,
+                    'nfc_uid': target.nfc_uid,
+                }, HTTP_X_API_KEY=self.device_api_key, format='json')
+                self.assertEqual(response.status_code, 409, response.json())
+
+        expired_response = self.client.post('/api/auth/password-reset/request/', {
+            'student_id': self.student_a.student_id,
+            'email': self.student_a.email,
+        }, format='json')
+        expired_request = PasswordResetRequest.objects.get(
+            request_id=expired_response.json()['request_id'],
+        )
+        handoff = self.client.post('/api/auth/password-reset/cabinet-handoff/', {
+            'request_id': expired_request.request_id,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+        self.assertEqual(handoff.status_code, 200, handoff.json())
+        expired_request.expires_at = timezone.now() - timedelta(minutes=1)
+        expired_request.save(update_fields=['expires_at'])
+
+        response = self.client.post('/api/auth/password-reset/verify-nfc/', {
+            'request_id': expired_request.request_id,
+            'nfc_uid': self.student_a.nfc_uid,
+        }, HTTP_X_API_KEY=self.device_api_key, format='json')
+
+        self.assertEqual(response.status_code, 410, response.json())
+        expired_request.refresh_from_db()
+        self.assertEqual(expired_request.status, PasswordResetRequest.StatusChoices.EXPIRED)
 
     def _create_verified_reset_request(self, user=None):
         target = user or self.student_a
