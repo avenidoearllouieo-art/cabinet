@@ -429,6 +429,7 @@ describe('Cabinet real NFC bridge mode', () => {
 
   it('routes recovery through the active Pi bridge and displays only backend-confirmed status', async () => {
     const recoveryRequestId = 'opaque-request-id'
+    let recoveryCompleted = false
     const fetcher = vi.fn(async (url, options = {}) => {
       const requestUrl = String(url)
       if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
@@ -447,8 +448,10 @@ describe('Cabinet real NFC bridge mode', () => {
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
         return new Response(JSON.stringify({
-          count: 1,
-          results: [{ request_id: recoveryRequestId, display_name: 'Student A', account_reference: '•••-001', status: 'pending' }],
+          count: recoveryCompleted ? 0 : 1,
+          results: recoveryCompleted ? [] : [
+            { request_id: recoveryRequestId, display_name: 'Student A', account_reference: '•••-001', status: 'pending' },
+          ],
         }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/handoff') {
@@ -490,6 +493,10 @@ describe('Cabinet real NFC bridge mode', () => {
 
     expect(await screen.findByText('Django confirmed password-recovery status: verified.')).toBeTruthy()
     expect(document.body.textContent).not.toContain('never-render-this-authorization')
+    recoveryCompleted = true
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Student A.*•••-001.*pending/i })).toBeNull()
+    }, { timeout: 5000 })
     expect(fetcher.mock.calls.some(([url, options]) => (
       String(url) === 'http://localhost:3000/nfc-bridge/cabinet/workflow' && options.method === 'POST'
     ))).toBe(false)

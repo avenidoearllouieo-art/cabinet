@@ -293,6 +293,20 @@ def record_password_recovery_event(reset_request, event_type, outcome, reason_co
     )
 
 
+def expire_password_recovery_request(reset_request, actor_type=PasswordRecoveryAuditEvent.ActorType.DJANGO):
+    if reset_request.status == PasswordResetRequest.StatusChoices.EXPIRED:
+        return
+    reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
+    reset_request.save(update_fields=['status'])
+    record_password_recovery_event(
+        reset_request,
+        PasswordRecoveryAuditEvent.EventType.REQUEST_EXPIRED,
+        PasswordRecoveryAuditEvent.Outcome.INFO,
+        reason_code='request_expired',
+        actor_type=actor_type,
+    )
+
+
 def get_authorized_access_log_photo_event(request, view, event_id):
     queryset = AccessLog.objects.select_related('photo', 'user__section')
     device_context = getattr(request, 'nfc_device_context', None)
@@ -3839,6 +3853,45 @@ class CabinetRegistrationView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class PasswordRecoveryHistoryView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def get(self, request, *args, **kwargs):
+        paginator = PageNumberPagination()
+        paginator.page_size = 25
+        paginator.page_size_query_param = 'page_size'
+        paginator.max_page_size = 100
+        events = PasswordRecoveryAuditEvent.objects.select_related(
+            'user', 'recovery_request__user',
+        ).order_by('-timestamp', '-pk')
+        page = paginator.paginate_queryset(events, request, view=self)
+
+        results = []
+        for event in page:
+            user = event.user or event.recovery_request.user
+            if user:
+                name = user.get_full_name().strip() or user.username
+                identifier = user.student_id or user.username or ''
+                account_reference = f'•••{identifier[-4:]}' if identifier else '••••'
+            else:
+                name = 'Unknown account'
+                account_reference = '••••'
+            results.append({
+                'id': event.pk,
+                'timestamp': event.timestamp,
+                'student_name': name,
+                'account_reference': account_reference,
+                'event_type': event.event_type,
+                'outcome': event.outcome,
+                'reason_code': event.reason_code,
+                'actor_type': event.actor_type,
+                'request_status': event.recovery_request.status,
+            })
+
+        return paginator.get_paginated_response(results)
+
+
 class PasswordResetRequestView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -3927,7 +3980,14 @@ class PasswordResetCancellationView(APIView):
                 PasswordResetRequest.StatusChoices.VERIFIED,
                 PasswordResetRequest.StatusChoices.USED,
                 PasswordResetRequest.StatusChoices.CANCELLED,
+                PasswordResetRequest.StatusChoices.EXPIRED,
             ):
+                return Response({'cancelled': False, 'status': reset_request.status})
+            if reset_request.is_expired:
+                expire_password_recovery_request(
+                    reset_request,
+                    PasswordRecoveryAuditEvent.ActorType.CABINET,
+                )
                 return Response({'cancelled': False, 'status': reset_request.status})
             reset_request.status = PasswordResetRequest.StatusChoices.CANCELLED
             reset_request.reason = 'Cancelled by the cabinet.'
@@ -3992,16 +4052,9 @@ class PasswordResetStatusView(APIView):
                 if reset_request.status not in (
                     PasswordResetRequest.StatusChoices.USED,
                     PasswordResetRequest.StatusChoices.CANCELLED,
+                    PasswordResetRequest.StatusChoices.EXPIRED,
                 ):
-                    reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
-                    reset_request.save(update_fields=['status'])
-                    record_password_recovery_event(
-                        reset_request,
-                        PasswordRecoveryAuditEvent.EventType.REQUEST_EXPIRED,
-                        PasswordRecoveryAuditEvent.Outcome.INFO,
-                        reason_code='request_expired',
-                        actor_type=PasswordRecoveryAuditEvent.ActorType.DJANGO,
-                    )
+                    expire_password_recovery_request(reset_request)
                 return Response({'status': reset_request.status})
 
             if reset_request.status != PasswordResetRequest.StatusChoices.VERIFIED:
@@ -4068,22 +4121,24 @@ class PasswordResetVerifyNFCView(APIView):
         nfc_uid = serializer.validated_data['nfc_uid']
 
         with transaction.atomic():
-            reset_request = PasswordResetRequest.objects.select_for_update().select_related('user').filter(
+            reset_request = PasswordResetRequest.objects.select_for_update(of=('self',)).select_related('user').filter(
                 request_id=request_id,
             ).first()
             if not reset_request or not reset_request.user_id:
                 return Response({'error': 'Reset request is unavailable.'}, status=status.HTTP_404_NOT_FOUND)
 
-            if reset_request.is_expired:
-                reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
-                reset_request.save(update_fields=['status'])
-                return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
-
             if reset_request.status == PasswordResetRequest.StatusChoices.USED:
                 return Response({'error': 'Reset request has already been used.'}, status=status.HTTP_409_CONFLICT)
 
+            if reset_request.status == PasswordResetRequest.StatusChoices.EXPIRED:
+                return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
+
             if reset_request.status != PasswordResetRequest.StatusChoices.PENDING:
                 return Response({'error': 'Reset request is no longer available.'}, status=status.HTTP_409_CONFLICT)
+
+            if reset_request.is_expired:
+                expire_password_recovery_request(reset_request, PasswordRecoveryAuditEvent.ActorType.PI)
+                return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
 
             if not reset_request.cabinet_handoff_claimed_at or reset_request.cabinet_handoff_used_at:
                 return Response({'error': 'Reset request is not ready for cabinet verification.'}, status=status.HTTP_409_CONFLICT)
@@ -4154,13 +4209,13 @@ class PasswordResetCabinetHandoffView(APIView):
             if not reset_request:
                 return Response({'error': 'Reset request is unavailable.'}, status=status.HTTP_404_NOT_FOUND)
 
-            if reset_request.is_expired:
-                reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
-                reset_request.save(update_fields=['status'])
+            if reset_request.status == PasswordResetRequest.StatusChoices.EXPIRED:
                 return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
-
             if reset_request.status != PasswordResetRequest.StatusChoices.PENDING:
                 return Response({'error': 'Reset request is no longer available.'}, status=status.HTTP_409_CONFLICT)
+            if reset_request.is_expired:
+                expire_password_recovery_request(reset_request, PasswordRecoveryAuditEvent.ActorType.CABINET)
+                return Response({'error': 'Reset request has expired.'}, status=status.HTTP_410_GONE)
 
             if reset_request.cabinet_handoff_claimed_at:
                 if reset_request.cabinet_handoff_used_at:
@@ -4221,13 +4276,18 @@ class PasswordResetValidateTokenView(APIView):
         if not reset_request:
             return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if reset_request.is_expired:
-            reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
-            reset_request.save(update_fields=['status'])
-            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_410_GONE)
-
         if reset_request.status == PasswordResetRequest.StatusChoices.USED:
             return Response({'error': 'This reset request has already been used.'}, status=status.HTTP_409_CONFLICT)
+
+        if reset_request.status in (
+            PasswordResetRequest.StatusChoices.CANCELLED,
+            PasswordResetRequest.StatusChoices.EXPIRED,
+        ):
+            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_410_GONE)
+
+        if reset_request.is_expired:
+            expire_password_recovery_request(reset_request)
+            return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_410_GONE)
 
         if reset_request.status != PasswordResetRequest.StatusChoices.VERIFIED or not reset_request.verify_reset_token(reset_token):
             return Response({'error': 'Reset token is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -4270,7 +4330,7 @@ class PasswordResetConfirmView(APIView):
         new_password = serializer.validated_data['new_password']
 
         with transaction.atomic():
-            reset_request = PasswordResetRequest.objects.select_for_update().filter(
+            reset_request = PasswordResetRequest.objects.select_for_update(of=('self',)).filter(
                 request_id=request_id,
             ).select_related('user').first()
 
@@ -4287,8 +4347,7 @@ class PasswordResetConfirmView(APIView):
                 return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
             if reset_request.is_expired:
-                reset_request.status = PasswordResetRequest.StatusChoices.EXPIRED
-                reset_request.save(update_fields=['status'])
+                expire_password_recovery_request(reset_request)
                 return Response({'error': 'Reset authorization is invalid or expired.'}, status=status.HTTP_410_GONE)
 
             if not reset_request.reset_authorization_expires_at:

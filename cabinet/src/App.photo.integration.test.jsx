@@ -206,7 +206,7 @@ describe('Cabinet photo scan integration', () => {
 
     await waitFor(() => expect(screen.getAllByText(`${station} Student`).length).toBeGreaterThanOrEqual(2))
     expect(await screen.findByText('Participants scanned: 1')).toBeTruthy()
-    expect(screen.getByText('Photo Captured')).toBeTruthy()
+    expect(screen.queryByText('Photo Captured')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       'http://localhost:3000/nfc-bridge/photo/capture',
@@ -227,7 +227,7 @@ describe('Cabinet photo scan integration', () => {
     await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
     await user.click(screen.getByText('STATION 1').closest('button'))
 
-    expect(await screen.findByText('Photo Captured')).toBeTruthy()
+    expect(screen.queryByText('Photo Captured')).toBeNull()
     expect(fetcher).toHaveBeenCalledWith(
       'http://localhost:3000/nfc-bridge/photo/capture',
       expect.objectContaining({ body: JSON.stringify({ event_id: djangoEventId }) }),
@@ -339,7 +339,7 @@ describe('Cabinet photo scan integration', () => {
     await waitFor(() => expect(screen.getAllByText('Closed by').length).toBe(2))
     const closedCountRow = screen.getAllByText('Closed by')[0].closest('.confirm-row')
     expect(within(closedCountRow).getByText('1')).toBeTruthy()
-    expect(screen.getByText('Photo Captured')).toBeTruthy()
+    expect(screen.queryByText('Photo Captured')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 

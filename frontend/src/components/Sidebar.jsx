@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, BookOpen, LogIn } from 'lucide-react'
+import { LayoutGrid, Users, ClipboardList, Send, ShieldCheck, CalendarDays, Library, BookOpen, LogIn, KeyRound } from 'lucide-react'
 
 const menuItems = [
   { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutGrid },
@@ -8,6 +8,7 @@ const menuItems = [
   { label: 'Submissions', path: '/admin/submissions', icon: Send },
   { label: 'Access Logs', path: '/admin/access-logs', icon: ShieldCheck },
   { label: 'Cabinet Events', path: '/admin/cabinet-events', icon: CalendarDays },
+  { label: 'Recovery History', path: '/admin/password-recovery-history', icon: KeyRound },
   { label: 'Sections', path: '/admin/sections', icon: Library },
 ]
 

@@ -4,6 +4,20 @@ import { getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 import {
+  CabinetAnimation,
+  EmptyState,
+  ErrorMessage,
+  KioskIcon,
+  LoadingIndicator,
+  NFCScanIndicator,
+  ParticipantCard,
+  SessionSummary,
+  StationCard,
+  StatusBadge,
+  TapTrackHeader,
+  WorkflowProgress,
+} from './components/KioskComponents.jsx'
+import {
   cancelEnrollmentRegistration,
   cancelPasswordRecovery,
   captureAccessLogPhoto,
@@ -18,30 +32,15 @@ import {
   startPasswordRecovery,
 } from './services/nfc/scanResultBridge'
 import './App.css'
+import './kiosk.css'
 
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
 const RECOVERY_STATUS_POLL_INTERVAL_MS = 2000
 const ENROLLMENT_STATUS_POLL_INTERVAL_MS = 2000
 const RECOVERY_STATUS_MAX_BACKOFF_MS = 30000
-const PHOTO_STATUS_ATTEMPTS = 12
-const PHOTO_STATUS_RETRY_DELAY_MS = 750
-
-function IconNFC({ className = 'icon-lg', pulse = false }) {
-  return (
-    <svg viewBox="0 0 64 64" className={`${className} ${pulse ? 'pulse' : ''}`} aria-hidden>
-      <g fill="none" stroke="#002B5B" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="32" cy="32" r="14" opacity="0.08" fill="#002B5B" />
-        <path d="M40 32c0-4.4-3.6-8-8-8" />
-        <path d="M44 32c0-7-5.4-12.6-12-12.6" />
-        <path d="M48 32c0-9.7-7.5-17.6-16.8-17.6" />
-      </g>
-    </svg>
-  )
-}
-
 function Screen({ children, className = '' }) {
-  return <div className={`screen ${className}`.trim()}>{children}</div>
+  return <main className={`screen ${className}`.trim()}>{children}</main>
 }
 
 function formatDateTime(date) {
@@ -132,6 +131,27 @@ function SessionDuration({ startedAt }) {
   return <>{formatDuration(startedAt, now)}</>
 }
 
+const SCREEN_TITLES = {
+  home: 'Cabinet Management',
+  'password-recovery': 'Password Recovery',
+  'station-select': 'Select Station',
+  'participant-scan': 'Opening Attendance',
+  'close-select': 'Close Cabinet',
+  'close-scan': 'Closing Attendance',
+  'confirm-session': 'Confirm Workflow',
+  'cabinet-opening': 'Opening Cabinet',
+  'cabinet-closing': 'Closing Cabinet',
+  'cabinet-opened': 'Open Workflow Recorded',
+  'cabinet-closed': 'Close Workflow Recorded',
+  'status-screen': 'Cabinet Status',
+  'unregistered-card': 'Register Your ID Card',
+  'registration-success': 'Registration Complete',
+  'registration-expired': 'Registration Expired',
+  'close-not-authorized': 'Session Access Denied',
+  'already-open': 'Station Occupied',
+  'already-closed': 'No Active Session',
+}
+
 export default function App() {
   const [view, setView] = useState('home')
   const [pendingAction, setPendingAction] = useState('open')
@@ -173,11 +193,36 @@ export default function App() {
   const workflowRequestRef = useRef(false)
   const recoveryStartRef = useRef(false)
 
-  useEffect(() => {
-    if (!pendingRegistration?.registrationUrl) {
-      setRegistrationCountdown(600)
-      return undefined
+  const refreshCabinetWorkflow = useCallback(async () => {
+    const state = await fetchCabinetWorkflow()
+    setCabinetState({
+      sessions: (state.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean),
+    })
+  }, [])
+
+  const resetToHome = useCallback(() => {
+    if (selectedSession && selectedSession.workflow_state !== 'idle') {
+      void sendCabinetWorkflow('cancel', { station: selectedStation })
+        .then(refreshCabinetWorkflow)
+        .catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
     }
+    setView('home')
+    setPendingAction('open')
+    setSelectedStation(null)
+    setParticipants([])
+    setPendingRegistration(null)
+    setClosedSession(null)
+    closingParticipantsRef.current = []
+    setClosingParticipants([])
+    setCloseRejectedStudent('')
+    participantsByUidRef.current.clear()
+    setScanFeedback(null)
+    setErrorMessage('')
+    setStatusMessage('Ready for the next cabinet session.')
+  }, [selectedSession, selectedStation, refreshCabinetWorkflow])
+
+  useEffect(() => {
+    if (!pendingRegistration?.registrationUrl) return undefined
     const expiresAt = new Date(pendingRegistration.expiresAt).getTime()
     const serverTime = new Date(pendingRegistration.serverTime).getTime()
     const clockOffset = Number.isFinite(serverTime) ? serverTime - Date.now() : 0
@@ -189,7 +234,7 @@ export default function App() {
     tick()
     const intervalId = window.setInterval(tick, 1000)
     return () => window.clearInterval(intervalId)
-  }, [pendingRegistration?.registrationUrl])
+  }, [pendingRegistration?.registrationUrl, pendingRegistration?.expiresAt, pendingRegistration?.serverTime])
 
   useEffect(() => {
     if (!pendingRegistration?.registrationUrl) return undefined
@@ -229,7 +274,7 @@ export default function App() {
     if (view !== 'registration-success') return undefined
     const timeoutId = window.setTimeout(() => resetToHome(), 5000)
     return () => window.clearTimeout(timeoutId)
-  }, [view])
+  }, [view, resetToHome])
 
   async function runWorkflowCommand(command) {
     if (workflowRequestRef.current) return null
@@ -244,7 +289,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (view !== 'password-recovery' || recoveryPhase !== 'idle') return undefined
+    if (view !== 'password-recovery') return undefined
     let cancelled = false
     let timeoutId
 
@@ -255,7 +300,9 @@ export default function App() {
         if (cancelled) return
         setRecoveryQueue(queue)
         setRecoveryRequestId((currentId) => (
-          queue.some((item) => item.request_id === currentId) ? currentId : ''
+          recoveryPhase !== 'idle' || queue.some((item) => item.request_id === currentId)
+            ? currentId
+            : ''
         ))
         setRecoveryQueueError('')
       } catch (error) {
@@ -643,34 +690,6 @@ export default function App() {
     }))
   }
 
-  async function refreshCabinetWorkflow() {
-    const state = await fetchCabinetWorkflow()
-    setCabinetState({
-      sessions: (state.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean),
-    })
-  }
-
-  function resetToHome() {
-    if (selectedSession && selectedSession.workflow_state !== 'idle') {
-      void sendCabinetWorkflow('cancel', { station: selectedStation })
-        .then(refreshCabinetWorkflow)
-        .catch((error) => setErrorMessage(error.message || 'The active cabinet workflow could not be cancelled.'))
-    }
-    setView('home')
-    setPendingAction('open')
-    setSelectedStation(null)
-    setParticipants([])
-    setPendingRegistration(null)
-    setClosedSession(null)
-    closingParticipantsRef.current = []
-    setClosingParticipants([])
-    setCloseRejectedStudent('')
-    participantsByUidRef.current.clear()
-    setScanFeedback(null)
-    setErrorMessage('')
-    setStatusMessage('Ready for the next cabinet session.')
-  }
-
   function startOpenSession() {
     setPendingAction('open')
     setSelectedStation(null)
@@ -873,9 +892,13 @@ export default function App() {
         setView('station-select')
         return
       }
+      setView('cabinet-opening')
       try {
         const data = await runWorkflowCommand(() => sendCabinetWorkflow('finish_open', { station: selectedStation }))
-        if (!data) return
+        if (!data) {
+          setView('confirm-session')
+          return
+        }
         const session = normalizeServerSession(data.session)
         updateStationSession(session)
         setStatusMessage(`Open workflow completed for ${stationLabel(data.station)}.`)
@@ -883,6 +906,7 @@ export default function App() {
         setView('cabinet-opened')
       } catch (error) {
         setErrorMessage(error.message || 'The cabinet session could not be opened.')
+        setView('confirm-session')
       }
       return
     }
@@ -901,9 +925,13 @@ export default function App() {
       return
     }
 
+    setView('cabinet-closing')
     try {
       const data = await runWorkflowCommand(() => sendCabinetWorkflow('finish_close', { station: selectedStation }))
-      if (!data) return
+      if (!data) {
+        setView('confirm-session')
+        return
+      }
       const session = normalizeServerSession(data.session)
       updateStationSession(session)
       setClosedSession(session)
@@ -917,34 +945,38 @@ export default function App() {
 
   return (
     <div className="app-root">
+      <TapTrackHeader
+        title={SCREEN_TITLES[view] || 'TapTrack Cabinet'}
+        bridgeStatus={bridgeConnectionStatus}
+        bridgeLabel={bridgeStatusLabel}
+        clock={<CabinetClock />}
+      />
       {view === 'home' && (
         <Screen className="home-screen">
           <div className="home-shell">
             <div className="hero-card cabinet-home-card">
-              <img className="brand-wordmark" src="/logo1.png" alt="TapTrack" />
               <div className="title-block">
                 <h1 className="title">Cabinet Management</h1>
-                <div className={`nfc-indicator is-${bridgeConnectionStatus}`} role="status" aria-live="polite">
-                  <span className={`status-dot ${bridgeConnectionStatus === 'connected' ? 'good' : bridgeConnectionStatus === 'unavailable' ? 'disconnected-dot' : ''}`} />
-                  <strong>NFC {bridgeStatusLabel}</strong>
-                  {bridgeConnectionStatus === 'unavailable' && bridgeErrorDetail && (
-                    <details className="nfc-diagnostics">
-                      <summary>Technical details</summary>
-                      <p>{bridgeErrorDetail}</p>
-                    </details>
-                  )}
-                </div>
+                <p className="subtitle">Secure, student-verified equipment access.</p>
+                {bridgeConnectionStatus === 'unavailable' && bridgeErrorDetail && (
+                  <details className="nfc-diagnostics home-diagnostics">
+                    <summary>Technical details</summary>
+                    <p>{bridgeErrorDetail}</p>
+                  </details>
+                )}
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
                 {readerStations.map((station) => {
                   const session = sessions.find((item) => item.status === 'open' && item.station === station)
                   return (
-                    <div className={`station-status-card ${session ? 'is-open' : 'is-available'}`} key={station}>
-                      <strong>{stationLabel(station).toUpperCase()}</strong>
-                      <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? 'OCCUPIED' : 'AVAILABLE'}</span>
-                      {session ? <span>Opened by {getParticipantCount(session)}</span> : <span>Ready</span>}
-                      {session && <small>Opened {formatSessionTime(session.openedAt)}</small>}
-                    </div>
+                    <StationCard
+                      key={station}
+                      label={stationLabel(station)}
+                      state={session ? 'occupied' : 'available'}
+                      detail={session ? `${getParticipantCount(session)} participants in session` : 'Ready for access'}
+                    >
+                      {session && <small>Session began {formatSessionTime(session.openedAt)}</small>}
+                    </StationCard>
                   )
                 })}
               </div>
@@ -955,15 +987,27 @@ export default function App() {
             </div>
 
             <div className="home-actions">
-              <button className="btn primary home-action" onClick={startOpenSession}>OPEN CABINET</button>
-              <button className="btn secondary home-action" onClick={startCloseSession}>CLOSE CABINET</button>
+              <button className="btn primary home-action" onClick={startOpenSession}>
+                <span className="home-action-icon"><KioskIcon name="open" size={25} /></span>
+                <span className="home-action-copy"><strong>OPEN CABINET</strong><small>Start a student group session</small></span>
+              </button>
+              <button className="btn secondary home-action" onClick={startCloseSession}>
+                <span className="home-action-icon"><KioskIcon name="close" size={25} /></span>
+                <span className="home-action-copy"><strong>CLOSE CABINET</strong><small>Record closing attendance</small></span>
+              </button>
               <button className="btn ghost home-action" onClick={() => {
                 setRecoveryError('')
                 setRecoveryMessage('')
                 setRecoveryPhase('idle')
                 setView('password-recovery')
-              }}>PASSWORD RECOVERY</button>
-              <button className="btn ghost home-action" onClick={() => setView('status-screen')}>Cabinet Status</button>
+              }}>
+                <span className="home-action-icon"><KioskIcon name="recovery" size={25} /></span>
+                <span className="home-action-copy"><strong>PASSWORD RECOVERY</strong><small>Verify with a registered NFC card</small></span>
+              </button>
+              <button className="btn ghost home-action" onClick={() => setView('status-screen')}>
+                <span className="home-action-icon"><KioskIcon name="status" size={25} /></span>
+                <span className="home-action-copy"><strong>CABINET STATUS</strong><small>Check reader and session state</small></span>
+              </button>
             </div>
             {errorMessage && bridgeConnectionStatus !== 'unavailable' && <div className="error-banner home-error" role="alert">{errorMessage}</div>}
           </div>
@@ -975,7 +1019,7 @@ export default function App() {
           <div className="panel recovery-panel">
             <h2>Password Recovery</h2>
             <p className="muted">
-              Select your account below. The next card tapped will be checked only against that recovery request.
+              Choose the student request. The next card tapped is checked only against that account.
             </p>
             {recoveryQueue.length > 0 && (
               <div className="recovery-queue" aria-label="Pending password recovery requests">
@@ -990,20 +1034,32 @@ export default function App() {
                       <strong>{item.display_name}</strong>
                       <small>{item.account_reference} · {item.status}</small>
                     </span>
-                    <span aria-hidden="true">›</span>
+                    <span aria-hidden="true"><KioskIcon name="back" size={18} /></span>
                   </button>
                 ))}
               </div>
             )}
-            {recoveryQueueLoading && recoveryQueue.length === 0 && <p className="muted">Loading recovery requests…</p>}
+            {recoveryQueueLoading && recoveryQueue.length === 0 && <LoadingIndicator label="Loading pending requests" />}
             {!recoveryQueueLoading && recoveryQueueError && (
-              <div className="recovery-empty" role="alert">
-                <p>{recoveryQueueError}</p>
+              <div className="recovery-empty">
+                <ErrorMessage>{recoveryQueueError}</ErrorMessage>
                 <button className="btn secondary" type="button" onClick={() => setRecoveryQueueAttempt((attempt) => attempt + 1)}>RETRY</button>
               </div>
             )}
             {!recoveryQueueLoading && !recoveryQueueError && recoveryQueue.length === 0 && (
-              <p className="recovery-empty">No pending recovery requests.</p>
+              <EmptyState title="No pending recovery requests" description="New requests appear here automatically." icon="recovery" />
+            )}
+            {recoveryPhase !== 'idle' && (
+              <NFCScanIndicator
+                title={recoveryPhase === 'starting' ? 'Checking selected request'
+                  : recoveryPhase === 'waiting' ? 'Waiting for registered card'
+                    : recoveryPhase === 'confirmed' ? 'Identity verified'
+                      : recoveryPhase === 'expired' ? 'Request expired' : 'Verification not completed'}
+                description={recoveryPhase === 'failed' || recoveryPhase === 'expired'
+                  ? 'Verification stopped. Review the error below before starting again.'
+                  : recoveryMessage || 'The selected student must tap their own registered NFC card.'}
+                state={recoveryPhase === 'confirmed' ? 'success' : recoveryPhase === 'failed' || recoveryPhase === 'expired' ? 'error' : 'waiting'}
+              />
             )}
             {recoveryPhase === 'idle' || recoveryPhase === 'failed' ? (
               <>
@@ -1014,19 +1070,8 @@ export default function App() {
                   </button>
                 </form>
               </>
-            ) : (
-              <div className="recovery-status" role="status">
-                <strong>
-                  {recoveryPhase === 'starting' ? 'Checking request'
-                    : recoveryPhase === 'waiting' ? 'Waiting for registered card'
-                      : recoveryPhase === 'confirmed' ? 'Recovery confirmed by Django'
-                        : recoveryPhase === 'expired' ? 'Recovery request expired'
-                          : 'Recovery not completed'}
-                </strong>
-                {recoveryMessage && <p>{recoveryMessage}</p>}
-              </div>
-            )}
-            {recoveryError && <div className="error-banner" role="alert">{recoveryError}</div>}
+            ) : null}
+            {recoveryError && <ErrorMessage>{recoveryError}</ErrorMessage>}
             <div className="button-row">
               {recoveryPhase === 'waiting' || recoveryPhase === 'starting'
                 ? <button className="btn secondary" type="button" onClick={cancelRecovery} disabled={recoveryPhase === 'starting'}>CANCEL RECOVERY</button>
@@ -1066,13 +1111,19 @@ export default function App() {
       {view === 'close-scan' && (
         <Screen>
           <div className="panel status-panel">
-            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>ACTIVE SESSION</strong></div>
-            <h2>Close Station {selectedStation}</h2>
+            <WorkflowProgress steps={['Select station', 'Closing attendance', 'Confirm']} activeIndex={1} />
+            <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />ACTIVE SESSION</StatusBadge></div>
+            <h2>Close {stationLabel(selectedStation)}</h2>
+            <NFCScanIndicator
+              compact
+              title="Record closing attendance"
+              description="Only members of this active session can be added."
+              state={scanFeedback?.type === 'success' ? 'success' : scanFeedback?.type === 'warning' ? 'error' : 'waiting'}
+            />
             <div className="status-chip">
               <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
               <span>{statusMessage || 'Tap NFC cards to record closing attendance.'}</span>
             </div>
-            <div className="photo-captured-indicator" role="status">Photo Captured</div>
             <div className="confirm-list">
               <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
               <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
@@ -1081,26 +1132,20 @@ export default function App() {
             </div>
             <div className="participant-list session-participants">
               <h3>Opened by</h3>
-              {(selectedSession?.opened_by || []).map((participant) => (
-                <div key={participant.uid} className="participant-card">
-                  <div className="participant-badge">✓</div>
-                  <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
-                </div>
+              {(selectedSession?.opened_by || []).map((participant, index) => (
+                <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
               ))}
             </div>
             <div className="participant-list session-participants">
               <h3>Closed by</h3>
               {closingParticipants.length === 0
-                ? <div className="empty-state">No closing attendance recorded yet.</div>
-                : closingParticipants.map((participant) => (
-                  <div key={participant.uid || participant.studentId} className="participant-card">
-                    <div className="participant-badge">✓</div>
-                    <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
-                  </div>
+                ? <EmptyState title="No closing attendance yet" description="Tap a member's registered card to record attendance." />
+                : closingParticipants.map((participant, index) => (
+                  <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
                 ))}
             </div>
-            {errorMessage && <div className="error-banner">{errorMessage}</div>}
-            <div className="scan-prompt" role="status">Tap member NFC cards on the NFC reader to record closing attendance.</div>
+            <ErrorMessage>{errorMessage}</ErrorMessage>
+            <div className="scan-prompt" role="status">Keep hands and objects away from the moving cabinet. Physical movement is not reported as verified.</div>
             <div className="button-row stacked">
               <button className="btn primary" onClick={continueToCloseConfirmation} disabled={closingParticipants.length === 0}>CLOSE CABINET</button>
               <button className="btn ghost" onClick={() => setView('close-select')}>CANCEL</button>
@@ -1112,7 +1157,7 @@ export default function App() {
       {view === 'close-not-authorized' && (
         <Screen>
           <div className="panel status-panel">
-            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>NOT AUTHORIZED</strong></div>
+            <div className="large-state is-closed"><StatusBadge state="warning"><span className="status-indicator" />NOT AUTHORIZED</StatusBadge></div>
             <h2>You are not a member of the {stationLabel(selectedStation)} active session.</h2>
             <p className="muted">Only a member of this station’s session can close it.</p>
             {closeRejectedStudent && <p className="muted">Card scanned: {closeRejectedStudent}</p>}
@@ -1126,7 +1171,7 @@ export default function App() {
       {view === 'already-closed' && (
         <Screen>
           <div className="panel status-panel">
-            <div className="large-state is-closed"><span className="status-dot good" /><strong>CABINET CLOSED</strong></div>
+            <div className="large-state is-closed"><StatusBadge state="success"><span className="status-indicator" />NO ACTIVE SESSION</StatusBadge></div>
             <h2>{selectedStation ? `${stationLabel(selectedStation)} is already closed.` : 'Cabinet is already closed.'}</h2>
             <div className="button-row">
               <button className="btn primary" onClick={resetToHome}>BACK TO HOME</button>
@@ -1137,24 +1182,18 @@ export default function App() {
 
       {view === 'unregistered-card' && (
         <Screen>
-          <div className="panel status-panel">
-            <div className="large-state is-closed"><span className="status-dot warning-dot" /><strong>ID CARD NOT REGISTERED</strong></div>
+          <div className="panel status-panel registration-panel">
+            <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />ID CARD NOT REGISTERED</StatusBadge></div>
             <h2>Register Your ID Card</h2>
             <p className="muted">Scan the QR code with your phone to begin registration.</p>
-            <div className="confirm-list">
-              <div className="confirm-row">
-                <span>Participants already scanned</span>
-                <strong>{participants.length}</strong>
-              </div>
-              <div className="participant-list">
-                {participants.map((participant) => (
-                  <div key={participant.uid} className="participant-card">
-                    <div className="participant-badge">✓</div>
-                    <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
-                  </div>
+            <SessionSummary rows={[{ label: 'Participants already scanned', value: participants.length }]} />
+            {participants.length > 0 && (
+              <div className="participant-list session-participants">
+                {participants.map((participant, index) => (
+                  <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
                 ))}
               </div>
-            </div>
+            )}
             {pendingRegistration?.registrationUrl && (
               <>
                 <div className="registration-qr">
@@ -1174,6 +1213,7 @@ export default function App() {
       {view === 'registration-expired' && (
         <Screen>
           <div className="panel status-panel">
+            <StatusBadge state="warning"><span className="status-indicator" />REGISTRATION EXPIRED</StatusBadge>
             <h2>Registration Expired</h2>
             <p className="muted">Your registration session has expired. Tap your ID card again to start a new session.</p>
             <div className="button-row">
@@ -1186,7 +1226,8 @@ export default function App() {
       {view === 'registration-success' && (
         <Screen>
           <div className="panel status-panel">
-            <div className="large-state is-open"><span className="status-dot good" /><strong>REGISTRATION COMPLETE</strong></div>
+            <div className="success-badge"><KioskIcon name="check" size={28} /></div>
+            <StatusBadge state="success"><span className="status-indicator" />REGISTRATION COMPLETE</StatusBadge>
             <h2>ID Card Registered</h2>
             <p className="muted">Registration complete. Tap your ID card again to continue.</p>
             <div className="button-row">
@@ -1200,24 +1241,25 @@ export default function App() {
         <Screen>
           <div className="panel">
             <h2>Select Station</h2>
-            {!workflowLoaded && <div className="empty-state" role="status">Loading configured stations...</div>}
+            {!workflowLoaded && <LoadingIndicator label="Loading configured stations" />}
             {workflowLoaded && readerStations.length === 0 && (
-              <div className="empty-state" role="status">No stations are configured.</div>
+              <EmptyState title="No stations are configured" description="Check the Cabinet station configuration." />
             )}
             <div className="station-grid">
               {readerStations.map((station) => {
                 const session = sessions.find((item) => item.status === 'open' && item.station === station)
                 const resuming = session?.workflow_state === 'opening'
                 return (
-                  <button
+                  <StationCard
                     key={station}
-                    className="btn station-button"
+                    label={stationLabel(station)}
+                    state={session ? resuming ? 'busy' : 'occupied' : 'available'}
+                    detail={resuming ? 'An opening session can be resumed.' : session ? 'An active session is using this station.' : 'Ready to begin a group session.'}
                     onClick={() => handleStationSelect(station)}
                     disabled={workflowBusy || Boolean(session && !resuming)}
                   >
-                    <span>{stationLabel(station).toUpperCase()}</span>
-                    <small>{workflowBusy ? 'PLEASE WAIT…' : resuming ? 'RESUME OPENING' : session ? 'OCCUPIED' : 'AVAILABLE'}</small>
-                  </button>
+                    <span className="station-card-action">{workflowBusy ? 'PLEASE WAIT…' : resuming ? 'RESUME OPENING' : session ? 'IN USE' : 'SELECT STATION'}</span>
+                  </StationCard>
                 )
               })}
             </div>
@@ -1234,35 +1276,33 @@ export default function App() {
           <div className="panel">
             <h2>Close Cabinet</h2>
             <p className="muted">Active sessions by station</p>
-            {!occupiedStations.length && <div className="large-state is-closed"><span className="status-dot good" /><strong>ALL CABINETS CLOSED</strong></div>}
+            {!occupiedStations.length && <EmptyState title="All stations are available" description="There are no active cabinet sessions to close." />}
             <div className="station-grid">
               {readerStations.map((station) => {
                 const session = sessions.find((item) => item.status === 'open' && item.station === station)
+                const inProgress = session?.workflow_state === 'opening' || session?.workflow_state === 'closing'
                 return (
-                  <div className={`station-status-card close-station-card ${session ? 'is-open' : 'is-available'}`} key={station}>
-                    <strong>{stationLabel(station).toUpperCase()}</strong>
-                    <span className="station-status-label"><span className={`status-dot ${session ? 'warning-dot' : 'good'}`} />{session ? session.workflow_state === 'closing' ? 'CLOSING' : session.workflow_state === 'opening' ? 'OPENING' : 'OCCUPIED' : 'AVAILABLE'}</span>
-                    {session ? <>
-                      <span>Opened by {getParticipantCount(session)}</span>
-                      <small>Opened {formatSessionTime(session.openedAt)}</small>
-                      <button
-                        className="btn primary"
-                        disabled={workflowBusy}
-                        onClick={() => session.workflow_state === 'opening'
-                          ? resumeOpeningSession(session)
-                          : selectSessionToClose(station)}
-                      >
-                        {session.workflow_state === 'opening'
-                          ? workflowBusy ? 'PLEASE WAIT…' : 'RESUME OPENING'
-                          : session.workflow_state === 'closing'
-                            ? workflowBusy ? 'PLEASE WAIT…' : 'CONTINUE CLOSING'
+                  <StationCard
+                    key={station}
+                    label={stationLabel(station)}
+                    state={!session ? 'available' : inProgress ? 'busy' : 'occupied'}
+                    detail={session
+                      ? `${getParticipantCount(session)} participants · opened ${formatSessionTime(session.openedAt)}`
+                      : 'No active session'}
+                  >
+                    <button
+                      className={`btn ${session ? 'primary' : 'ghost'} close-station-action`}
+                      onClick={() => session?.workflow_state === 'opening'
+                        ? resumeOpeningSession(session)
+                        : session ? selectSessionToClose(station) : undefined}
+                      disabled={workflowBusy || !session}
+                    >
+                      {!session ? 'NO ACTIVE SESSION'
+                        : session.workflow_state === 'opening' ? workflowBusy ? 'PLEASE WAIT…' : 'RESUME OPENING'
+                          : session.workflow_state === 'closing' ? workflowBusy ? 'PLEASE WAIT…' : 'CONTINUE CLOSING'
                             : workflowBusy ? 'PLEASE WAIT…' : `CLOSE ${stationLabel(station).toUpperCase()}`}
-                      </button>
-                    </> : <>
-                      <span>No active session</span>
-                      <button className="btn ghost" onClick={() => selectSessionToClose(station)} disabled={workflowBusy}>{workflowBusy ? 'PLEASE WAIT…' : `CLOSE ${stationLabel(station).toUpperCase()}`}</button>
-                    </>}
-                  </div>
+                    </button>
+                  </StationCard>
                 )
               })}
             </div>
@@ -1275,12 +1315,13 @@ export default function App() {
       {view === 'participant-scan' && (
         <Screen>
           <div className="participant-shell">
+            <WorkflowProgress steps={['Select station', 'Opening attendance', 'Confirm']} activeIndex={1} />
             <div className="scan-hero">
-              <div className="nfc-ring small-ring">
-                <IconNFC pulse />
-              </div>
-              <h2>Tap Your ID Card</h2>
-              <p className="muted">Hold your ID card near the NFC reader to continue.</p>
+              <NFCScanIndicator
+                title={scanFeedback?.type === 'success' ? 'Card recorded' : scanFeedback?.type === 'warning' ? 'Card needs attention' : 'Tap Your ID Card'}
+                description={`Hold a registered student card near the reader for ${stationLabel(selectedStation)}.`}
+                state={scanFeedback?.type === 'success' ? 'success' : scanFeedback?.type === 'warning' || scanFeedback?.type === 'bridge-error' ? 'error' : 'waiting'}
+              />
             </div>
 
             <div className="status-chip">
@@ -1338,8 +1379,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="photo-captured-indicator" role="status">Photo Captured</div>
-            {errorMessage && <div className="error-banner">{errorMessage}</div>}
+            <ErrorMessage>{errorMessage}</ErrorMessage>
 
             <div className="panel-card">
               <div className="panel-card-header">
@@ -1348,16 +1388,10 @@ export default function App() {
               </div>
               <div className="participant-list">
                 {participants.length === 0 ? (
-                  <div className="empty-state">No participants added yet.</div>
+                  <EmptyState title="No participants added yet" description="Tap each group member's registered NFC card to record attendance." />
                 ) : (
                   participants.map((participant, index) => (
-                    <div key={`${participant.uid}-${index}`} className="participant-card pop-pill">
-                      <div className="participant-badge">✓</div>
-                      <div>
-                        <strong>{participant.fullName}</strong>
-                        <p>{participant.studentId}</p>
-                      </div>
-                    </div>
+                    <ParticipantCard key={`${participant.uid}-${index}`} participant={participant} index={index} />
                   ))
                 )}
               </div>
@@ -1377,6 +1411,10 @@ export default function App() {
       {view === 'confirm-session' && (
         <Screen>
           <div className="panel confirm-panel">
+            <WorkflowProgress
+              steps={pendingAction === 'open' ? ['Select station', 'Opening attendance', 'Confirm'] : ['Select station', 'Closing attendance', 'Confirm']}
+              activeIndex={2}
+            />
             <h2>{pendingAction === 'open' ? 'Confirm Open Cabinet' : 'Confirm Close Cabinet'}</h2>
             <p className="muted">{pendingAction === 'open' ? 'Review the station and group members before opening.' : 'Are you sure you want to close this cabinet session?'}</p>
             <div className="confirm-list">
@@ -1399,16 +1437,10 @@ export default function App() {
             </div>
             <div className="participant-list">
               {(pendingAction === 'open' ? participants : closingParticipants).map((participant, index) => (
-                <div key={`${participant.uid}-${index}`} className="participant-card">
-                  <div className="participant-badge">✓</div>
-                  <div>
-                    <strong>{participant.fullName}</strong>
-                    <p>{participant.studentId}</p>
-                  </div>
-                </div>
+                <ParticipantCard key={`${participant.uid}-${index}`} participant={participant} index={index} />
               ))}
             </div>
-            {errorMessage && <div className="error-banner">{errorMessage}</div>}
+            <ErrorMessage>{errorMessage}</ErrorMessage>
             <div className="button-row">
               {pendingAction === 'open'
                 ? <button className="btn ghost" onClick={() => setView('participant-scan')}>BACK</button>
@@ -1419,14 +1451,44 @@ export default function App() {
         </Screen>
       )}
 
+      {view === 'cabinet-opening' && (
+        <Screen>
+          <div className="panel status-panel">
+            <WorkflowProgress steps={['Select station', 'Opening attendance', 'Confirm']} activeIndex={2} />
+            <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />Opening</StatusBadge></div>
+            <h2>Opening Cabinet — Please Wait</h2>
+            <CabinetAnimation direction="opening" active />
+            <p className="muted">Selected station: <strong>{String(selectedStation || '').toUpperCase()}</strong></p>
+            <LoadingIndicator label="Communicating with the cabinet controller" />
+            <ErrorMessage>{motorStatusMessage}</ErrorMessage>
+            <p className="safety-note">This animation is visual only. Physical shutter movement is not verified by animation alone.</p>
+          </div>
+        </Screen>
+      )}
+
+      {view === 'cabinet-closing' && (
+        <Screen>
+          <div className="panel status-panel">
+            <WorkflowProgress steps={['Select station', 'Closing attendance', 'Confirm']} activeIndex={2} />
+            <div className="large-state is-open"><StatusBadge state="warning"><span className="status-indicator" />Closing</StatusBadge></div>
+            <h2>Closing Cabinet — Please Wait</h2>
+            <CabinetAnimation direction="closing" active />
+            <p className="muted">Selected station: <strong>{String(selectedStation || '').toUpperCase()}</strong></p>
+            <LoadingIndicator label="Recording the closing workflow" />
+            <div className="safety-note"><strong>Keep hands and objects away from the moving cabinet.</strong></div>
+          </div>
+        </Screen>
+      )}
+
       {view === 'cabinet-opened' && (
         <Screen>
           <div className="panel status-panel success-panel">
-            <img className="brand-wordmark compact-wordmark" src="/logo1.png" alt="TapTrack" />
-            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW COMPLETE</strong></div>
+            <div className="success-badge"><KioskIcon name="check" size={28} /></div>
+            <div className="large-state is-open"><span className="status-dot warning-dot" /><strong>OPEN WORKFLOW RECORDED</strong></div>
             <h2>Open Workflow Complete</h2>
             <p className="muted" role="status">{statusMessage}</p>
             <p className="muted" role="status">{motorStatusMessage}</p>
+            <div className="truthful-status"><strong>Physical cabinet status: Not verified</strong><p>Motor feedback does not confirm that the shutter reached a verified position.</p></div>
             <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Station</span><strong>{selectedSession?.station}</strong></div>
@@ -1436,11 +1498,8 @@ export default function App() {
             <p className="session-id">Session {selectedSession?.id || 'active'}</p>
             <div className="participant-list session-participants">
               <h3>Opened by</h3>
-              {(selectedSession?.opened_by || []).map((participant) => (
-                <div key={participant.uid} className="participant-card">
-                  <div className="participant-badge">✓</div>
-                  <div><strong>{participant.fullName}</strong><p>{participant.studentId}</p></div>
-                </div>
+              {(selectedSession?.opened_by || []).map((participant, index) => (
+                <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
               ))}
             </div>
             <div className="button-row stacked">
@@ -1458,6 +1517,7 @@ export default function App() {
             <h2>Close Workflow Complete</h2>
             <p className="muted" role="status">{statusMessage}</p>
             <p className="muted" role="status">{motorStatusMessage}</p>
+            <div className="truthful-status"><strong>Software workflow: Closed</strong><p>Physical shutter movement is not verified unless controller telemetry confirms it.</p></div>
             <p className="muted">Physical shutter movement was not verified.</p>
             <div className="session-metrics">
               <div><span>Opened by</span><strong>{getParticipantCount(closedSession)}</strong></div>
@@ -1466,20 +1526,14 @@ export default function App() {
             </div>
             <div className="participant-list session-participants">
               <h3>Opened by</h3>
-              {(closedSession?.opened_by || []).map((student) => (
-                <div key={student.uid || student.studentId} className="participant-card">
-                  <div className="participant-badge">✓</div>
-                  <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
-                </div>
+              {(closedSession?.opened_by || []).map((student, index) => (
+                <ParticipantCard key={student.uid || student.studentId} participant={student} index={index} />
               ))}
             </div>
             <div className="participant-list session-participants">
               <h3>Closed by</h3>
-              {(closedSession?.closed_by || []).map((student) => (
-                <div key={student.uid || student.studentId} className="participant-card">
-                  <div className="participant-badge">✓</div>
-                  <div><strong>{student.fullName}</strong><p>{student.studentId}</p></div>
-                </div>
+              {(closedSession?.closed_by || []).map((student, index) => (
+                <ParticipantCard key={student.uid || student.studentId} participant={student} index={index} />
               ))}
             </div>
             <div className="button-row">
@@ -1491,7 +1545,7 @@ export default function App() {
 
       {view === 'status-screen' && (
         <Screen>
-          <div className="panel">
+          <div className="panel status-panel">
             <h2>Cabinet Status</h2>
             <p className="muted">Current cabinet state and session history.</p>
             {serviceStatus && (
@@ -1508,7 +1562,7 @@ export default function App() {
             )}
             <div className="status-list">
               {sessions.length === 0 ? (
-                <div className="empty-state">No sessions recorded yet.</div>
+                <EmptyState title="No sessions recorded yet" description="Active cabinet sessions will appear here." />
               ) : (
                 sessions.slice(0, 4).map((session) => (
                   <div key={session.id} className="status-card">

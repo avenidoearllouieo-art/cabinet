@@ -15,6 +15,7 @@ const Activities = lazy(() => import('./pages/admin/Activities.jsx'))
 const Submissions = lazy(() => import('./pages/admin/Submissions.jsx'))
 const AccessLogs = lazy(() => import('./pages/admin/AccessLogs.jsx'))
 const CabinetEvents = lazy(() => import('./pages/admin/CabinetEvents.jsx'))
+const PasswordRecoveryHistory = lazy(() => import('./pages/admin/PasswordRecoveryHistory.jsx'))
 const Sections = lazy(() => import('./pages/admin/Sections.jsx'))
 const InstructorDashboard = lazy(() => import('./pages/instructor/InstructorDashboard.jsx'))
 const InstructorActivities = lazy(() => import('./pages/instructor/InstructorActivities.jsx'))
@@ -59,6 +60,7 @@ function App() {
           <Route path='submissions' element={<Submissions />} />
           <Route path='access-logs' element={<AccessLogs />} />
           <Route path='cabinet-events' element={<CabinetEvents />} />
+          <Route path='password-recovery-history' element={<PasswordRecoveryHistory />} />
           <Route path='sections' element={<Sections />} />
           <Route path='settings' element={<Navigate to='dashboard' replace />} />
         </Route>
