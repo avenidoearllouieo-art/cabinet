@@ -33,6 +33,7 @@ import {
 } from './services/nfc/scanResultBridge'
 import './App.css'
 import './kiosk.css'
+import './touchscreen.css'
 
 const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
@@ -985,7 +986,7 @@ export default function App() {
                 )}
               </div>
               <div className="station-status-grid" aria-label="Cabinet station status">
-                {readerStations.map((station) => {
+                {readerStations.length > 0 ? readerStations.map((station) => {
                   const session = sessions.find((item) => item.status === 'open' && item.station === station)
                   return (
                     <StationCard
@@ -997,7 +998,11 @@ export default function App() {
                       {session && <small>Session began {formatSessionTime(session.openedAt)}</small>}
                     </StationCard>
                   )
-                })}
+                }) : (
+                  <div className="home-station-unavailable" role="status">
+                    {workflowLoaded ? 'Station status unavailable. Check the NFC bridge connection.' : 'Loading station status…'}
+                  </div>
+                )}
               </div>
               <div className="clock-card">
                 <span className="clock-label">Current date and time</span>
@@ -1574,12 +1579,40 @@ export default function App() {
                 {serviceStatus.reader_connected !== undefined && (
                   <p>Physical NFC reader: {serviceStatus.reader_connected ? 'Connected' : 'Waiting for reader'}</p>
                 )}
+                {serviceStatus.motor && (
+                  <div className="status-hardware-details">
+                    <p>Motor controller: {serviceStatus.motor.mode === 'serial' ? 'Serial controller' : serviceStatus.motor.mode === 'mock' ? 'Mock controller' : 'Unavailable'}</p>
+                    <p>Motor actuation: {serviceStatus.motor.actuation_enabled ? 'Enabled' : 'Disabled'}</p>
+                    <p>Controller connection: {serviceStatus.motor.serial_connection || 'Not reported'}</p>
+                    <p>Controller armed: {serviceStatus.motor.armed ? 'Yes' : 'No'}</p>
+                    <p>Physical cabinet position: {serviceStatus.motor.physical_movement_verified === true ? 'Verified' : serviceStatus.motor.physical_movement_verified === false ? 'Not verified' : 'Not reported by controller'}</p>
+                  </div>
+                )}
                 {serviceStatus.error && <details className="nfc-diagnostics">
                   <summary>Technical details</summary>
                   <p>{serviceStatus.error}</p>
                 </details>}
               </div>
             )}
+            <h3 className="status-section-title">Station status</h3>
+            <div className="status-list station-status-list" aria-label="Current station status">
+              {readerStations.map((station) => {
+                const session = sessions.find((item) => item.station === station && item.status === 'open')
+                return (
+                  <div key={station} className={`status-card station-status-card ${session ? 'is-open' : 'is-available'}`}>
+                    <strong>{stationLabel(station)}</strong>
+                    <p>{session ? 'Occupied' : 'Available'}</p>
+                    <small>{session
+                      ? `${getParticipantCount(session)} participants · opened ${formatSessionTime(session.openedAt)}`
+                      : 'No active session'}</small>
+                  </div>
+                )
+              })}
+              {readerStations.length === 0 && (
+                <EmptyState title="Station status unavailable" description="Configured stations have not been reported by the Cabinet service." />
+              )}
+            </div>
+            <h3 className="status-section-title">Recent sessions</h3>
             <div className="status-list">
               {sessions.length === 0 ? (
                 <EmptyState title="No sessions recorded yet" description="Active cabinet sessions will appear here." />

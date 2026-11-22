@@ -1,0 +1,1042 @@
+:root {
+  --cabinet-title-size: clamp(1.875rem, 4vw, 2.25rem);
+  --cabinet-heading-size: clamp(1.5rem, 3vw, 1.75rem);
+  --cabinet-body-size: clamp(1.0625rem, 2vw, 1.25rem);
+  --cabinet-button-size: clamp(1.125rem, 2.2vw, 1.5rem);
+  --cabinet-touch-target: clamp(3.5rem, 10dvh, 5.25rem);
+  --cabinet-card-padding: clamp(0.75rem, 2vw, 1.375rem);
+  --cabinet-layout-gap: clamp(0.5rem, 1.5vw, 1rem);
+}
+
+.app-root {
+  background-color: var(--kiosk-bg);
+  background-size: 30px 30px;
+}
+
+.kiosk-header {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: clamp(0.375rem, 1.4vw, 1rem);
+  min-height: clamp(3.5rem, 9dvh, 4.25rem);
+  padding: 0.375rem clamp(0.625rem, 2vw, 1.5rem);
+}
+
+.kiosk-brand {
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  letter-spacing: 0;
+}
+
+.kiosk-brand img {
+  width: clamp(6.5rem, 14vw, 9rem);
+  height: clamp(2.25rem, 6dvh, 2.75rem);
+}
+
+.kiosk-header-title {
+  font-size: 1rem;
+}
+
+.kiosk-header-meta {
+  gap: clamp(0.375rem, 1.2vw, 0.875rem);
+}
+
+.nfc-indicator,
+.status-badge {
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.kiosk-header-clock {
+  gap: 0.375rem;
+  font-size: 0.9375rem;
+}
+
+.screen {
+  padding: clamp(0.5rem, 1.4dvh, 0.875rem) clamp(0.5rem, 2vw, 1.5rem);
+  scroll-padding-block: 0.75rem;
+}
+
+.screen > * {
+  width: min(96vw, 1440px);
+}
+
+.screen .panel,
+.screen .participant-shell {
+  text-align: center;
+}
+
+.panel h2,
+.scan-hero h2 {
+  margin-bottom: 0.625rem;
+  font-size: var(--cabinet-heading-size);
+  line-height: 1.15;
+}
+
+.panel > .muted {
+  margin: 0 auto 0.875rem;
+  max-width: 62rem;
+  font-size: var(--cabinet-body-size);
+  line-height: 1.35;
+}
+
+.home-screen {
+  align-items: center;
+  padding-block: 0.5rem;
+  overflow-y: auto;
+}
+
+.home-screen > * {
+  width: min(96vw, 1440px);
+}
+
+.home-shell {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--cabinet-layout-gap);
+  width: 100%;
+  height: auto;
+  margin: auto;
+  text-align: center;
+}
+
+.cabinet-home-card {
+  display: contents;
+}
+
+.home-screen .cabinet-home-card.hero-card {
+  display: contents;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.title-block {
+  grid-row: 1;
+  margin: 0;
+  text-align: center;
+}
+
+.title {
+  margin: 0 0 0.25rem;
+  font-size: var(--cabinet-title-size);
+  line-height: 1.08;
+}
+
+.home-screen .cabinet-home-card .title {
+  margin-bottom: 0.25rem;
+  font-size: var(--cabinet-title-size);
+}
+
+.subtitle,
+.muted {
+  font-size: var(--cabinet-body-size);
+  line-height: 1.35;
+}
+
+.home-diagnostics {
+  margin: 0.375rem auto 0;
+  font-size: 0.9375rem;
+}
+
+.station-status-grid {
+  grid-row: 2;
+  gap: var(--cabinet-layout-gap);
+  margin: 0;
+}
+
+.home-screen .station-status-grid .station-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-content: center;
+  gap: 0.125rem 0.625rem;
+  min-height: clamp(5.25rem, 15dvh, 6.25rem);
+  padding: 0.5rem 0.75rem;
+}
+
+.home-screen .station-status-grid .station-card-head {
+  display: contents;
+}
+
+.home-screen .station-status-grid .station-glyph {
+  display: none;
+}
+
+.home-screen .station-status-grid .station-card-title {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: clamp(1.25rem, 2.4vw, 1.5rem);
+  line-height: 1.05;
+}
+
+.home-screen .station-status-grid .status-badge {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  min-height: 2.5rem;
+  padding: 0.375rem 0.625rem;
+  font-size: clamp(1rem, 1.8vw, 1.0625rem);
+}
+
+.home-screen .station-status-grid .station-card-detail {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 1rem;
+}
+
+.home-screen .station-status-grid .station-card > small {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  font-size: 0.9375rem;
+  line-height: 1.15;
+}
+
+.home-station-unavailable {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: clamp(4.5rem, 12dvh, 5.5rem);
+  place-items: center;
+  padding: 0.75rem 1rem;
+  border: 1px dashed var(--kiosk-border);
+  border-radius: 0.875rem;
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--kiosk-muted);
+  font-size: clamp(1rem, 1.8vw, 1.125rem);
+  font-weight: 700;
+  text-align: center;
+}
+
+.home-screen .cabinet-home-card .station-status-grid {
+  gap: var(--cabinet-layout-gap);
+  margin: 0;
+}
+
+.station-status-card {
+  display: grid;
+  align-content: center;
+  gap: 0.375rem;
+  min-height: clamp(5rem, 14dvh, 6.5rem);
+  padding: var(--cabinet-card-padding);
+  text-align: center;
+}
+
+.station-status-card > strong {
+  font-size: clamp(1.375rem, 2.6vw, 1.625rem);
+}
+
+.station-status-label {
+  justify-content: center;
+  font-size: clamp(1.0625rem, 2vw, 1.25rem);
+}
+
+.station-status-card > span:not(.station-status-label),
+.station-status-card > small {
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.home-screen .cabinet-home-card .station-status-card {
+  min-height: clamp(5rem, 14dvh, 6.5rem);
+  gap: 0.375rem;
+  padding: var(--cabinet-card-padding);
+}
+
+.home-screen .cabinet-home-card .station-status-card > span:not(.station-status-label),
+.home-screen .cabinet-home-card .station-status-card > small {
+  font-size: 1rem;
+}
+
+.home-screen .clock-card {
+  display: none;
+}
+
+.home-actions {
+  grid-row: 3;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cabinet-layout-gap);
+  width: min(100%, 74rem);
+  margin: 0 auto;
+}
+
+.home-action,
+.btn.home-action {
+  display: grid;
+  grid-template-columns: clamp(2.75rem, 6vw, 3.75rem) minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
+  gap: clamp(0.5rem, 1.5vw, 1rem);
+  min-height: clamp(4.5rem, 12dvh, 5rem);
+  padding: clamp(0.625rem, 1.7vw, 1rem);
+  border-radius: 0.875rem;
+  font-size: var(--cabinet-button-size);
+  text-align: left;
+  touch-action: manipulation;
+}
+
+.home-action-icon {
+  display: grid;
+  width: clamp(2.75rem, 5vw, 3.5rem);
+  height: clamp(2.75rem, 5vw, 3.5rem);
+  place-items: center;
+  border-radius: 0.75rem;
+}
+
+.home-action-icon svg {
+  width: clamp(1.75rem, 3.5vw, 2.25rem);
+  height: clamp(1.75rem, 3.5vw, 2.25rem);
+}
+
+.home-action-copy {
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.home-action-copy strong {
+  font-size: clamp(1.25rem, 2.4vw, 1.375rem);
+  line-height: 1.15;
+}
+
+.home-action-copy small {
+  font-size: clamp(0.875rem, 1.6vw, 1rem);
+  line-height: 1.2;
+}
+
+.home-action.primary {
+  border-color: var(--kiosk-navy);
+  box-shadow: 0 5px 14px rgba(8, 45, 91, 0.16);
+}
+
+.home-action.secondary {
+  border-color: #d7a200;
+  background: #ffca28;
+  color: var(--kiosk-navy-deep);
+}
+
+.home-action:active:not(:disabled),
+.btn:active:not(:disabled),
+.station-card:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.btn,
+.button-row .btn,
+.button-row .btn.primary {
+  min-height: var(--cabinet-touch-target);
+  padding: 0.75rem clamp(1rem, 2.5vw, 1.75rem);
+  font-size: clamp(1.0625rem, 2vw, 1.375rem);
+  line-height: 1.15;
+}
+
+.btn:focus-visible,
+.station-card:focus-visible,
+.recovery-request:focus-visible {
+  outline: 4px solid var(--kiosk-yellow);
+  outline-offset: 3px;
+}
+
+.station-grid,
+.station-status-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.station-grid {
+  gap: var(--cabinet-layout-gap);
+  margin: 0.875rem auto;
+}
+
+.station-card {
+  justify-content: center;
+  gap: 0.625rem;
+  min-height: clamp(8rem, 22dvh, 11rem);
+  padding: var(--cabinet-card-padding);
+  border-radius: 0.875rem;
+}
+
+.station-glyph {
+  width: 3rem;
+  height: 3rem;
+}
+
+.station-glyph svg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.station-card-title {
+  font-size: clamp(1.375rem, 2.6vw, 1.625rem);
+}
+
+.station-card-detail {
+  font-size: clamp(1rem, 1.8vw, 1.125rem);
+  line-height: 1.3;
+}
+
+.station-card-action {
+  font-size: 1rem;
+}
+
+.close-station-action,
+.close-station-card .btn {
+  min-height: var(--cabinet-touch-target);
+  margin-top: 0.375rem;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+}
+
+.workflow-progress {
+  gap: clamp(0.375rem, 1vw, 0.75rem);
+  width: min(100%, 62rem);
+  margin: 0 auto 0.875rem;
+}
+
+.workflow-progress li {
+  gap: 0.5rem;
+  font-size: clamp(0.9375rem, 1.7vw, 1.125rem);
+}
+
+.workflow-progress li + li {
+  margin-left: clamp(0.25rem, 1vw, 0.75rem);
+}
+
+.workflow-progress li + li::before {
+  width: clamp(0.5rem, 2vw, 1.5rem);
+  margin-right: 0;
+}
+
+.workflow-step-mark {
+  width: 2.125rem;
+  height: 2.125rem;
+  flex-basis: 2.125rem;
+  font-size: 1rem;
+}
+
+.panel-card,
+.confirm-panel,
+.status-panel {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: var(--cabinet-card-padding);
+  border-radius: 1rem;
+}
+
+.panel-card-header h3,
+.session-participants h3 {
+  font-size: clamp(1.25rem, 2.4vw, 1.5rem);
+}
+
+.panel-card-header span {
+  font-size: 1rem;
+}
+
+.participant-list {
+  gap: 0.5rem;
+  max-height: min(36dvh, 20rem);
+  overscroll-behavior: contain;
+}
+
+.participant-card {
+  gap: 0.75rem;
+  min-height: 4rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.participant-number {
+  font-size: 0.9375rem;
+}
+
+.participant-avatar {
+  width: 2.875rem;
+  height: 2.875rem;
+  flex-basis: 2.875rem;
+  font-size: 1.125rem;
+}
+
+.participant-copy strong,
+.participant-card strong {
+  font-size: clamp(1.125rem, 2vw, 1.375rem);
+  line-height: 1.2;
+}
+
+.participant-copy small,
+.participant-card p {
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.participant-check {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-basis: 2.25rem;
+}
+
+.nfc-scan-indicator {
+  width: min(100%, 54rem);
+  min-height: 6rem;
+  margin: 0.5rem auto 0.75rem;
+  padding: clamp(0.75rem, 2vw, 1.125rem);
+}
+
+.nfc-scan-indicator.is-compact {
+  min-height: 5rem;
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+}
+
+.nfc-scan-art {
+  width: 4rem;
+  height: 4rem;
+  flex-basis: 4rem;
+}
+
+.nfc-scan-art svg {
+  width: 3.25rem;
+  height: 3.25rem;
+}
+
+.nfc-scan-copy strong {
+  font-size: clamp(1.25rem, 2.4vw, 1.5rem);
+}
+
+.nfc-scan-copy small {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.status-chip,
+.scan-prompt,
+.large-state {
+  min-height: 3.5rem;
+  margin-block: 0.5rem;
+  padding: 0.625rem 1rem;
+  font-size: clamp(1rem, 1.9vw, 1.25rem);
+  line-height: 1.3;
+}
+
+.confirm-list,
+.session-summary,
+.session-metrics {
+  gap: 0.625rem;
+  margin: 0.75rem 0;
+}
+
+.confirm-list {
+  padding: 0.625rem;
+}
+
+.confirm-row {
+  gap: 0.25rem;
+  padding: 0.5rem;
+}
+
+.confirm-row span,
+.session-summary-item dt,
+.session-metrics span {
+  font-size: 0.9375rem;
+}
+
+.confirm-row strong,
+.session-summary-item dd,
+.session-metrics strong {
+  font-size: clamp(1.125rem, 2vw, 1.375rem);
+  line-height: 1.2;
+}
+
+.session-summary-item,
+.session-metrics > div {
+  min-height: 4.25rem;
+  padding: 0.625rem;
+}
+
+.session-participants {
+  max-height: min(40dvh, 22rem);
+  margin: 0.625rem 0;
+}
+
+.session-id,
+.truthful-status,
+.safety-note,
+.error-banner,
+.kiosk-error {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.truthful-status {
+  margin: 0.625rem 0;
+  padding: 0.75rem 0.875rem;
+}
+
+.truthful-status strong {
+  font-size: 1.125rem;
+}
+
+.truthful-status p {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.success-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+  column-gap: clamp(0.75rem, 2vw, 1.5rem);
+  text-align: center;
+}
+
+.success-panel > .success-badge,
+.success-panel > .large-state,
+.success-panel > h2,
+.success-panel > .muted,
+.success-panel > .truthful-status,
+.success-panel > .session-metrics,
+.success-panel > .session-id {
+  grid-column: 1;
+}
+
+.success-panel > .success-badge {
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto 0.375rem;
+}
+
+.success-panel > .session-participants {
+  grid-column: 2;
+  grid-row: 1 / span 8;
+  width: 100%;
+  max-height: min(55dvh, 25rem);
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--kiosk-border);
+  border-radius: 0.875rem;
+  background: #f8fafc;
+  text-align: left;
+}
+
+.success-panel > .session-participants + .session-participants {
+  grid-row: 9 / span 5;
+  margin-top: 0.5rem;
+}
+
+.success-panel > .button-row {
+  grid-column: 1 / -1;
+}
+
+.button-row {
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.button-row .btn {
+  min-width: min(12rem, 100%);
+}
+
+.button-row .btn.primary {
+  min-width: min(15rem, 100%);
+}
+
+.button-row.stacked {
+  flex-direction: row;
+  align-items: center;
+}
+
+.participant-shell > .button-row:last-child,
+.panel > .button-row:last-child {
+  position: sticky;
+  bottom: -0.5rem;
+  z-index: 3;
+  padding: 0.5rem 0 0.25rem;
+  background: linear-gradient(180deg, rgba(245, 247, 250, 0.82), var(--kiosk-bg) 25%);
+}
+
+.recovery-panel {
+  width: 100%;
+  max-width: 100%;
+  padding: var(--cabinet-card-padding);
+}
+
+.recovery-queue {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+  max-height: min(42dvh, 22rem);
+  margin: 0.75rem 0;
+}
+
+.recovery-request {
+  min-height: 5rem;
+  padding: 0.75rem;
+}
+
+.recovery-request strong {
+  font-size: clamp(1.125rem, 2vw, 1.375rem);
+  line-height: 1.2;
+}
+
+.recovery-request small {
+  font-size: 1rem;
+}
+
+.recovery-request > span:last-child {
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-basis: 2.75rem;
+  font-size: 1.5rem;
+}
+
+.recovery-status,
+.recovery-empty {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.recovery-status strong {
+  font-size: 1.25rem;
+}
+
+.status-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.status-section-title {
+  margin: 0.875rem 0 0.375rem;
+  color: var(--kiosk-navy);
+  font-size: clamp(1.25rem, 2.4vw, 1.5rem);
+  text-align: left;
+}
+
+.status-hardware-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.status-hardware-details p {
+  font-size: 1rem;
+}
+
+.station-status-list .station-status-card {
+  min-height: 6rem;
+  gap: 0.375rem;
+  padding: 0.875rem;
+}
+
+.station-status-list .station-status-card > strong {
+  font-size: clamp(1.25rem, 2.2vw, 1.5rem);
+}
+
+.station-status-list .station-status-card > p {
+  font-size: 1.125rem;
+  font-weight: 800;
+}
+
+.station-status-list .station-status-card > small {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.status-card {
+  gap: 0.375rem;
+  min-height: 5.25rem;
+  padding: 0.875rem;
+}
+
+.status-card strong {
+  font-size: 1.1875rem;
+}
+
+.status-card p,
+.status-card small {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.kiosk-empty-state {
+  gap: 0.5rem;
+  padding: 1rem;
+  font-size: 1rem;
+}
+
+.kiosk-empty-state strong {
+  font-size: 1.25rem;
+}
+
+.kiosk-empty-state p {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+  .kiosk-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .kiosk-header-title {
+    display: none;
+  }
+
+  .kiosk-brand span {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .screen > *,
+  .home-screen > * {
+    width: 96vw;
+  }
+
+  .kiosk-header-meta {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .kiosk-header-clock {
+    display: inline-flex;
+    font-size: 0.8125rem;
+  }
+
+  .nfc-indicator,
+  .status-badge {
+    min-height: 2.5rem;
+    font-size: 0.875rem;
+  }
+
+  .home-actions {
+    gap: 0.5rem;
+  }
+
+  .home-action,
+  .btn.home-action {
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    min-height: clamp(4.25rem, 13dvh, 5rem);
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .home-action-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .home-action-icon svg {
+    width: 1.625rem;
+    height: 1.625rem;
+  }
+
+  .home-action-copy strong {
+    font-size: clamp(1rem, 3.2vw, 1.25rem);
+  }
+
+  .home-action-copy small {
+    font-size: clamp(0.75rem, 2.7vw, 0.875rem);
+  }
+
+  .station-status-grid,
+  .station-grid,
+  .recovery-queue,
+  .status-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .status-hardware-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .station-status-grid,
+  .station-grid {
+    gap: 0.5rem;
+  }
+
+  .station-card {
+    min-height: 7rem;
+    padding: 0.625rem;
+  }
+
+  .station-card-head {
+    gap: 0.25rem;
+  }
+
+  .station-glyph {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .station-card-title {
+    font-size: 1.25rem;
+  }
+
+  .station-card-detail {
+    font-size: 0.9375rem;
+  }
+
+  .station-card .status-badge {
+    min-height: 2.125rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .close-station-action,
+  .close-station-card .btn {
+    min-height: 3.5rem;
+    padding: 0.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .confirm-list,
+  .session-summary,
+  .session-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .success-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .success-panel > .success-badge,
+  .success-panel > .large-state,
+  .success-panel > h2,
+  .success-panel > .muted,
+  .success-panel > .truthful-status,
+  .success-panel > .session-metrics,
+  .success-panel > .session-id,
+  .success-panel > .session-participants,
+  .success-panel > .button-row {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .success-panel > .session-participants {
+    max-height: min(38dvh, 18rem);
+  }
+
+  .workflow-progress {
+    justify-content: space-between;
+  }
+
+  .workflow-progress li {
+    gap: 0.25rem;
+    font-size: 0.8125rem;
+  }
+
+  .workflow-progress li + li {
+    margin-left: 0.125rem;
+  }
+
+  .workflow-progress li + li::before {
+    width: 0.25rem;
+  }
+
+  .button-row.stacked {
+    flex-direction: row;
+  }
+
+  .button-row .btn,
+  .button-row .btn.primary {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .nfc-scan-indicator {
+    gap: 0.625rem;
+  }
+
+  .nfc-scan-art {
+    width: 3.25rem;
+    height: 3.25rem;
+    flex-basis: 3.25rem;
+  }
+
+  .nfc-scan-art svg {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
+@media (max-height: 540px) and (min-width: 621px) {
+  :root {
+    --cabinet-title-size: clamp(1.875rem, 5dvh, 2rem);
+    --cabinet-heading-size: clamp(1.375rem, 4.5dvh, 1.625rem);
+    --cabinet-touch-target: 3.5rem;
+    --cabinet-card-padding: 0.625rem;
+    --cabinet-layout-gap: 0.5rem;
+  }
+
+  .kiosk-header {
+    min-height: 3.25rem;
+  }
+
+  .kiosk-brand img {
+    height: 2rem;
+  }
+
+  .screen {
+    padding-block: 0.375rem;
+  }
+
+  .station-status-card {
+    min-height: 4.5rem;
+  }
+
+  .home-action,
+  .btn.home-action {
+    min-height: 3.75rem;
+  }
+
+  .station-card {
+    min-height: 6.5rem;
+  }
+
+  .nfc-scan-indicator {
+    min-height: 4.5rem;
+  }
+
+  .participant-list {
+    max-height: 32dvh;
+  }
+}
+
+@media (max-width: 900px) and (max-height: 540px) {
+  .kiosk-header {
+    min-height: 3rem;
+    padding-block: 0.125rem;
+  }
+
+  .kiosk-brand img {
+    height: 1.875rem;
+  }
+
+  .screen,
+  .home-screen {
+    padding-block: 0.25rem;
+  }
+
+  .home-actions {
+    gap: 0.375rem;
+  }
+
+  .home-action,
+  .btn.home-action {
+    min-height: 4.5rem;
+    padding: 0.375rem 0.5rem;
+  }
+
+  .station-status-card {
+    min-height: 4rem;
+    padding: 0.5rem;
+  }
+
+  .session-participants {
+    max-height: 30dvh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-action:hover,
+  .btn:hover:not(:disabled) {
+    transform: none;
+  }
+}

@@ -138,6 +138,89 @@ describe('Cabinet real NFC bridge mode', () => {
       String(url).startsWith('http://localhost:3000/nfc-bridge/api/scans') && options.method === 'GET'
     ))).toBe(true))
   })
+
+  it('does not imply station availability when workflow state is unavailable', async () => {
+    const fetcher = vi.fn(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
+        throw new TypeError('Failed to fetch')
+      }
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+
+    render(<App />)
+
+    expect(await screen.findByText('Station status unavailable. Check the NFC bridge connection.')).toBeTruthy()
+    expect(screen.queryByText('Ready for access')).toBeNull()
+  })
+
+  it('shows actual station and controller state without claiming unreported physical position', async () => {
+    const activeSession = {
+      id: 32,
+      station: 'Station 1',
+      status: 'open',
+      workflow_state: 'idle',
+      opened_by: [
+        { uid: 'UID-1', studentId: 'STU-001', fullName: 'First Student' },
+        { uid: 'UID-2', studentId: 'STU-002', fullName: 'Second Student' },
+      ],
+      closed_by: [],
+      opened_at: '2026-11-23T01:00:00Z',
+    }
+    const fetcher = vi.fn(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/cabinet/workflow') {
+        return new Response(JSON.stringify({
+          mode: 'hardware',
+          cabinet_name: 'Cabinet 1',
+          stations: [
+            { name: 'Station 1', status: 'occupied', session: activeSession },
+            { name: 'Station 2', status: 'available', session: null },
+          ],
+        }), { status: 200 })
+      }
+      if (requestUrl === 'http://localhost:3000/nfc-bridge/nfc/status') {
+        return new Response(JSON.stringify({
+          service: 'ready',
+          reader_connected: true,
+          motor: {
+            mode: 'serial',
+            actuation_enabled: false,
+            serial_connection: 'disconnected',
+            armed: false,
+          },
+        }), { status: 200 })
+      }
+      if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
+        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /CABINET STATUS/i }))
+
+    expect(await screen.findByText('Motor actuation: Disabled')).toBeTruthy()
+    expect(screen.getByText('Physical cabinet position: Not reported by controller')).toBeTruthy()
+    expect(screen.getByText('Motor controller: Serial controller')).toBeTruthy()
+    expect(screen.getByText('Controller connection: disconnected')).toBeTruthy()
+    expect(screen.getByText('Occupied')).toBeTruthy()
+    expect(screen.getByText('Available')).toBeTruthy()
+    expect(screen.getByText(/2 participants · opened/)).toBeTruthy()
+    expect(screen.getByText('No active session')).toBeTruthy()
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://localhost:3000/nfc-bridge/nfc/status',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
   it('does not show open workflow success when Django rejects the final transition', async () => {
     let scanPolls = 0
     const fetcher = vi.fn(async (url, options = {}) => {
