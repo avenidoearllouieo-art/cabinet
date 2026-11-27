@@ -2,8 +2,10 @@
 
 ## Verified workspace and root cause
 
-The reviewed patch targets base commit `84c63a162f0f5642a6faa670aa1800f448646b16`
-(`full screen cab ui`). Use a separate clean checkout of that commit for validation.
+The motor release was developed from
+`84c63a162f0f5642a6faa670aa1800f448646b16` (`full screen cab ui`). The
+separate CI maintenance patch targets the published motor commit
+`ed01dd42a6362ba18434205f2840701ccaa83359`.
 
 The 18 pre-integration UUID changes were backed up and hash-verified before
 work began. The integrated changes use the original Git baseline and the two
@@ -248,66 +250,109 @@ browser disconnect, cancel bytes already accepted by the OS or USB device, or
 prove shutter position. Inspect and reconcile an uncertain result before any
 further OPEN.
 
-## Separate maintenance items
+## Separate CI maintenance changes
 
-The three-way regression comparison reproduced the administrator creation
-form's missing administrator ID field, three NFC enrollment status-contract
-assertions, and the separate frontend's two copy assertions and unused
-`issuedPin` lint error on the unmodified base. Two Django configuration tests
-need a synthetic HTTPS registration URL and the intended child settings
-module. The photo viewer and password recovery UI tests also reproduced
-5-second timeouts under controlled test-worker delays. Keep these maintenance
-items separate from the motor timing release and account for their CI effects.
+The administrator add form requires a unique administrator ID and validates
+the email-derived username before saving. The form creates a superuser, so
+only an existing superuser can submit it through Django admin. Arbitrary
+student and instructor fields submitted with the form are ignored.
 
-## Automated validation
+The registration fixture guide describes how a pending roster account is
+bound to the card presented at the Cabinet. The current submit route,
+POST /api/cabinet/enrollment/register/, takes the token, ID number, email,
+username, and password confirmation. The backend derives the account role
+from the matched roster record. The separate frontend sends this payload
+and handles the backend's generic lookup message and card ownership code.
+
+| Condition | Existing response |
+| --- | --- |
+| No eligible pending account for the ID and email | 404 ACCOUNT_NOT_FOUND |
+| Card belongs to another account, or a different card is already assigned to the matched account | 409 NFC_OWNERSHIP_CONFLICT |
+| An enrollment already bound to an account with a password is submitted | 409 SESSION_ALREADY_USED |
+| The pending account completes registration with its assigned card | 201 Created |
+
+The regression tests cover unchanged accounts, unconsumed enrollment sessions,
+no success audit event for rejected requests, and generic error bodies without
+account details. The assigned-card scenario also checks the successful follow-up.
+A database conflict caught after a race has its own generic error branch. Any
+proposal to normalize error statuses across those cases needs an explicit API
+contract decision.
+
+Login and About assertions match the current displayed wording. Password-reset
+and access-log photo fixtures control their timers and wait for React state
+updates before asserting authorization, privacy, and photo behavior.
+
+## Release validation and CI maintenance
+
+The recorded published motor release is
+`ed01dd42a6362ba18434205f2840701ccaa83359` on
+`fix/motor-session-identity-release`. The release operator reported **283
+successful targeted and integration test executions**. That aggregate is a
+release record and may include repeat executions. Production was reported
+to remain on `84c63a1`, with no production migration or Pi rollout.
+
+The preceding release-candidate validation recorded the following:
 
 | Check | Result |
 | --- | --- |
 | Django identity, cabinet/device workflow, event, and maintenance regressions | 47 passed |
-| UUID migration/history assertions rerun after final timestamp assertion | 6 passed (part of the 47 above) |
-| Explicit mocked Pi suite | 143 run: 138 passed, 5 skipped |
-| Cabinet Node tests | 23 passed |
-| Cabinet Vitest suite | 47 passed across 5 files |
-| Django migration/model consistency | No changes detected |
-| Changed Cabinet helper/test lint | Passed |
-| Cabinet production build | Passed |
-| Git whitespace validation | Passed |
+| Mocked Pi suite on Windows | 153 passed, with 5 Linux socket tests skipped |
+| Cabinet Node and Vitest suites | 23 and 49 passed |
+| Real TLS Nginx loopback integration | 3 passed on Windows |
+| PostgreSQL 18 synthetic migration rehearsal | 1,005 historical sessions validated. No migration drift. |
 
-Run the five skipped Unix-domain recovery-socket tests on Linux before rollout.
-Verify the effective systemd service configuration, service account access to the
-serial symlink and SQLite journal, and the Nginx-served asset root on the Pi.
-Rehearse migrations 0051–0053 with a populated nonproduction PostgreSQL copy.
-Verify legacy eligibility, distinct UUIDs, preserved relationships, old-writer
-quiescing, and the reviewed forward recovery procedure.
+Re-run the mocked Pi suite, all Unix-domain recovery socket tests, and the
+real Nginx integration suite on the exact version to be installed. Verify
+the effective systemd service, serial symlink, SQLite journal, and the
+Nginx-served root with actuation disabled. Rehearse migrations 0051–0053 on
+a populated nonproduction PostgreSQL copy before the coordinated cutover.
 
-The Node tests used the process-only test setting
-`VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000`; no environment file or real endpoint
-was changed.
-Django tests use `config.test_settings`, overriding the database to temporary
-in-memory SQLite and using temporary filesystem media/local email. The Pi runner
-replaces the real serial factory with a function that raises, uses temporary
-databases, and explicitly excludes the live handshake diagnostic. No physical
-serial device is opened. No production migrations or maintenance resets ran.
+Use Node 22 (at least 22.12) and Python 3.14 to reproduce the workflow.
+The backend job sets a synthetic HTTPS registration URL, a dummy local
+secret, in-memory SQLite, local-memory email, and filesystem storage under
+the runner's temporary directory. Reuse the environment in
+`.github/workflows/quality.yml` in an isolated shell. System and migration
+checks load the regular settings with `DJANGO_DEBUG=false`. The CI test
+runner accepts only a single in-memory SQLite database and allocates its
+own temporary media and upload directories and local-memory email backend.
+It disables HTTPS redirection for the in-process HTTP fixture requests.
+Authentication, permissions, CSRF middleware, secure cookie settings, and
+the production-mode subprocess checks continue to run with their existing
+test configuration.
 
-Human local validation commands (Python 3.12+ for the pinned Django backend):
-
-```powershell
-Set-Location '<review-checkout>'
+```bash
 python -m pip install -r requirements.txt
-python backend/manage.py test api.test_cabinet_session_identity api.tests.CabinetDeviceIntegrationTests api.tests.CabinetEventAPITests api.test_reset_cabinet_test_sessions --settings=config.test_settings --noinput
-python backend/manage.py makemigrations api --check --dry-run --settings=config.test_settings
-python pi_service/run_identity_tests.py
-Set-Location cabinet
-npm ci
-$env:VITE_DJANGO_SERVER_URL = 'http://127.0.0.1:8000'
-npm test
-Remove-Item Env:VITE_DJANGO_SERVER_URL
-npm run build
+python -m pip check
+python backend/manage.py check
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test api --testrunner=config.ci_test_runner.CIHttpTestRunner
+python -B pi_service/run_identity_tests.py
+
+for app in cabinet frontend; do
+  (
+    cd "$app"
+    npm ci
+    npm audit --audit-level=high
+    npm run lint
+    npm run build
+    VITE_DJANGO_SERVER_URL=http://127.0.0.1:8000 npm test
+  )
+done
 ```
 
-Use a dedicated local test environment. The agent installed pinned dependencies
-in the writable workspace only; no system-wide installation or dependency-file
-change is part of the patch.
+The Pi runner replaces the real serial factory, uses temporary SQLite
+databases and excludes the live handshake diagnostic. The five Unix-domain
+socket cases require Linux for this validation. A clean SQLite CI checkout
+conditionally skips the local dotenv and PostgreSQL row-lock tests. Run
+those separately with a synthetic dotenv file and local PostgreSQL.
+
+Record each command's exit status and review both full npm audits and
+both production-only audits (npm audit --omit=dev). Both lockfiles retain
+the moderate minimatch advisory and its two propagated ESLint entries.
+The affected dependency path is used by lint tooling. CI tooling that
+accepts untrusted glob patterns can expose CPU and memory amplification.
+Approve a compatible transitive minimatch major upgrade separately.
+
 
 ## Complete file list and purpose
 
@@ -340,43 +385,12 @@ change is part of the patch.
 | `cabinet/deploy/nginx.conf` | Strip the internal workflow credential from generic proxy traffic. |
 | `docs/MOTOR_SESSION_IDENTITY_FIX.md` | This implementation, validation, rollout, and rollback report. |
 
-## Human-only commit and push
+## Human-only release review
 
-Nothing below was executed by the agent. A human must review all files, choose the
-team-approved branch, coordinate the rollout window/Render auto-deploy behavior,
-and authorize publication. No branch is created or switched automatically.
-
-```powershell
-Set-Location '<review-checkout>'
-git status --short --branch
-git diff HEAD --check
-git diff HEAD
-$reviewedPaths = @(
-  'backend/api/models.py', 'backend/api/serializers.py', 'backend/api/admin.py',
-  'backend/api/migrations/0051_cabinetsession_identity_fields.py',
-  'backend/api/migrations/0052_backfill_cabinetsession_identity.py',
-  'backend/api/migrations/0053_enforce_cabinetsession_identity.py',
-  'backend/api/test_cabinet_session_identity.py', 'backend/config/test_settings.py',
-  'pi_service/motor_identity.py', 'pi_service/motor_controller.py', 'pi_service/nfc_service.py',
-  'pi_service/reconcile_motor_identity.py', 'pi_service/test_nfc_service.py',
-  'pi_service/test_motor_identity.py', 'pi_service/run_identity_tests.py',
-  'pi_service/test_motor_controller.py', 'pi_service/test_motor_connection.py',
-  'pi_service/deploy/README.md', 'cabinet/deploy/nginx.conf',
-  'pi_service/workflow_timing.py', 'cabinet/deploy/nginx-workflow-ingress.conf',
-  'cabinet/deploy/test_workflow_ingress_proxy.py',
-  'cabinet/src/utils/motorDispatchStatus.js', 'cabinet/src/utils/motorIdentityStatus.test.jsx',
-  'cabinet/src/services/nfc/scanResultBridge.js', 'cabinet/src/services/nfc/scanResultBridge.test.jsx',
-  'docs/MOTOR_SESSION_IDENTITY_FIX.md'
-)
-git add -- $reviewedPaths
-git diff --cached
-git commit -m "fix: use immutable session UUIDs for motor dispatch"
-git push origin HEAD
-```
-
-Recommended commit message: `fix: use immutable session UUIDs for motor dispatch`.
-Do not stage unrelated team changes. Coordinate Render before pushing if its
-existing auto-deploy setting would otherwise trigger an uncontrolled rollout.
+Review the published motor commit and the separate CI maintenance candidate
+independently. Use an isolated checkout of the exact base named by the
+maintenance patch and review its workflow, package manifests, and lockfiles
+before publication. A human controls Git publication, cutover, and deployment.
 
 ## Human-only Render rollout and Pi update
 
@@ -389,18 +403,29 @@ existing auto-deploy setting would otherwise trigger an uncontrolled rollout.
    using the team's approved Render export/restore process. Test on a nonproduction
    PostgreSQL copy first. Preserve the backend environment and the existing
    session history throughout the cutover.
-3. A human publishes the reviewed commit and deploys that exact backend version.
-   `render.yaml` runs migration at startup. `render.paid.yaml` runs it in a
-   pre-deploy command. Verify which configuration is active and confirm old
-   writers are paused before either path runs. Use the reviewed migrations.
-4. In the human-controlled Render shell, check `python backend/manage.py showmigrations api`.
-   Confirm 0051–0053 applied, historical rows have distinct UUIDs/eligibility false,
-   and a newly authorized software session receives a new UUID/eligibility true.
-   This confirms software identity only; motors remain disabled/isolated.
-5. A human updates the Pi's clean checkout to the reviewed commit, retaining the
-   existing virtual environment, NFC database path, URLs, secrets, and UI config.
-   Do not delete either project directory or clear/replace the SQLite journal.
-   Keep the service stopped until both backend and Pi use the new identity contract.
+3. Keep Render Auto-Deploy, Blueprint Auto Sync, and Pull Request Previews
+   disabled for the coordinated release. A human verifies the active plan
+   and start command, then selects the reviewed commit in the manual deploy
+   flow. On Render Free, `render.yaml` runs `migrate --noinput` before
+   starting Gunicorn. Free web services have neither a dashboard shell
+   nor SSH. On a compatible paid service, `render.paid.yaml` instead
+   runs migration in its pre-deploy command. Pause all old writers before
+   either path. If the team cannot verify write quiescence on its active
+   plan, hold the deploy until a maintenance mechanism is in place.
+4. Verify the successful migration and the exact commit in startup/deploy
+   logs before reopening traffic. From an approved read-only external
+   PostgreSQL session, confirm the three migration entries and aggregate
+   UUID and historical eligibility results. Keep credentials out of
+   commands, logs, and shared artifacts. An available paid shell can
+   additionally show `python backend/manage.py showmigrations api`.
+   Verify a fresh authorized software workflow while actuation is disabled
+   and driver power remains isolated.
+5. A human updates the Pi's clean checkout to the reviewed commit, retaining
+   the existing virtual environment, NFC database path, URLs, secrets, and UI
+   config. Preserve the SQLite journal. Keep workflow traffic paused until the
+   new backend and bridge are paired and authenticated HTTPS is verified.
+
+[Render Free limitations](https://render.com/docs/free) · [Render deploy phases](https://render.com/docs/deploys)
 
 Pi inspection commands (human only):
 
@@ -491,14 +516,18 @@ With actuation disabled, configure and verify authenticated workflow ingress
 using the procedure above. Start the NFC bridge with actuation disabled and
 verify the new backend and bridge are paired before resuming workflow traffic. Check the served
 Cabinet index against the built file at the verified document root. Use the
-actual kiosk URL if it differs from the template. Keep the firmware check
+actual kiosk HTTPS origin and trusted certificate, including after reboot.
+The authenticated curl command prompts for the password. Keep the firmware check
 read-only. A compatible bench controller can report communication ready while
 disarmed.
 
 ```bash
 sudo systemctl start taptrack-nfc.service
 curl -fsS http://127.0.0.1:5001/nfc/status
-curl -fsS http://127.0.0.1:5177/nfc-bridge/nfc/status
+read -r -p 'Verified HTTPS kiosk origin including port: ' CABINET_ORIGIN
+[[ "$CABINET_ORIGIN" == https://* ]] || exit 1
+read -r -p 'Authorized kiosk username: ' CABINET_USER
+curl --fail --silent --show-error --user "$CABINET_USER" "$CABINET_ORIGIN/nfc-bridge/nfc/status"
 sudo journalctl -u taptrack-nfc.service -n 60 --no-pager
 ```
 
@@ -552,7 +581,6 @@ maintenance and reconcile any discrepancy with actuation disabled. No claim abou
 position, firmware compatibility, or production rollout is inferred from these
 software tests.
 
-**Final change boundary:** only the requested local clone and uncommitted source
-changes were created. No Git commit/history rewrite, remote repository update,
-production database migration, Render deployment/configuration/environment change,
-Raspberry Pi deployment, firmware upload, or physical motor actuation was performed.
+This runbook records software validation and a human-authorized cutover.
+The motor release was published while production remained on the previous
+version. Physical commissioning requires independent acceptance.

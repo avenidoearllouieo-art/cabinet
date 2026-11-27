@@ -69,7 +69,7 @@ class FakeVerifier:
             'results': [{
                 'request_id': 'opaque-request-id',
                 'display_name': 'Student A',
-                'account_reference': 'Ã¢â‚¬Â¢Ã¢â‚¬Â¢Ã¢â‚¬Â¢-001',
+                'account_reference': '•••-001',
                 'status': 'pending',
                 'requested_at': '2026-10-25T12:00:00Z',
             }],
@@ -1246,7 +1246,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         status, _, payload = self.get_json('/password-reset/queue')
         self.assertEqual(status, 200)
         self.assertEqual(payload['count'], 1)
-        self.assertEqual(payload['results'][0]['account_reference'], 'Ã¢â‚¬Â¢Ã¢â‚¬Â¢Ã¢â‚¬Â¢-001')
+        self.assertEqual(payload['results'][0]['account_reference'], '•••-001')
         self.assertNotIn('nfc_uid', json.dumps(payload))
         self.assertNotIn('reset_authorization', json.dumps(payload))
         self.assertEqual(self.service.verifier.password_reset_queue_calls, 1)

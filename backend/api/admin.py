@@ -237,11 +237,21 @@ class AdminCreationForm(forms.ModelForm):
 
     class Meta:
         model = AdminProfile
-        fields = ('username', 'first_name', 'last_name', 'email', 'nfc_uid', 'profile_image', 'is_active')
+        fields = (
+            'username', 'first_name', 'last_name', 'email', 'administrator_id',
+            'nfc_uid', 'profile_image', 'is_active',
+        )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.instance.role = User.RoleChoices.ADMIN
+        self.fields['administrator_id'].required = True
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if not cleaned_data.get('username') and cleaned_data.get('email'):
+            cleaned_data['username'] = cleaned_data['email']
+        return cleaned_data
 
     def clean_password2(self):
         p1 = self.cleaned_data.get('password1')
@@ -252,8 +262,6 @@ class AdminCreationForm(forms.ModelForm):
 
     def save(self, commit=True):
         user = super().save(commit=False)
-        # prefer explicit username, fallback to email
-        user.username = self.cleaned_data.get('username') or user.email
         user.set_password(self.cleaned_data['password1'])
         user.role = User.RoleChoices.ADMIN
         user.is_staff = True
@@ -544,6 +552,10 @@ class AdminProfileAdmin(admin.ModelAdmin):
     add_form = AdminCreationForm
     list_display = ('username', 'first_name', 'last_name', 'email', 'is_staff', 'is_superuser')
     search_fields = ('username', 'first_name', 'last_name', 'email')
+
+    def has_add_permission(self, request):
+        # This form grants superuser privileges on creation.
+        return request.user.is_superuser and super().has_add_permission(request)
 
     def get_fieldsets(self, request, obj=None):
         if obj:

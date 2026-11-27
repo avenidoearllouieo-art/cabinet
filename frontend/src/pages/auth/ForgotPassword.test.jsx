@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
@@ -32,6 +32,7 @@ describe('ForgotPassword', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -254,32 +255,46 @@ describe('ForgotPassword', () => {
     expect(document.body.textContent).not.toContain('safe-auth')
   })
 
-  it('handles invalid and expired reset authorization without exposing server details', async () => {
-    for (const [status, message] of [
-      [400, /authorization could not be verified/i],
-      [410, /reset request or token has expired/i],
-    ]) {
-      const user = userEvent.setup()
-      api.post
-        .mockResolvedValueOnce({ data: { request_id: `opaque-auth-${status}` } })
-        .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'temporary-auth' } })
-        .mockRejectedValueOnce({
-          response: { status, data: { error: 'private database diagnostic should not be shown' } },
-        })
-      const { unmount } = renderForgotPassword()
+  it.each([
+    [400, /authorization could not be verified/i],
+    [410, /reset request or token has expired/i],
+  ])('handles HTTP %i reset authorization rejection without exposing server details', async (status, message) => {
+    vi.useFakeTimers()
+    const requestId = `opaque-auth-${status}`
+    api.post
+      .mockResolvedValueOnce({ data: { request_id: requestId } })
+      .mockResolvedValueOnce({ data: { status: 'verified', reset_authorization: 'temporary-auth' } })
+      .mockRejectedValueOnce({
+        response: { status, data: { error: 'private database diagnostic should not be shown' } },
+      })
+    renderForgotPassword()
 
-      await submitRequest(user)
-      expect(await screen.findByRole('heading', { name: 'Create a new password' })).toBeTruthy()
-      await user.type(screen.getByLabelText(/New password/), 'New-Password-123!')
-      await user.type(screen.getByLabelText(/Confirm password/), 'New-Password-123!')
-      await user.click(screen.getByRole('button', { name: 'Change password' }))
+    fireEvent.change(screen.getByLabelText(/Student ID/), { target: { value: 'STU-1042' } })
+    fireEvent.change(screen.getByLabelText(/Email/), { target: { value: 'student@example.test' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(api.post).toHaveBeenNthCalledWith(2, '/auth/password-reset/status/', { request_id: requestId })
+    expect(screen.getByRole('heading', { name: 'Create a new password' })).toBeTruthy()
 
-      expect((await screen.findByRole('alert')).textContent).toMatch(message)
-      expect(document.body.textContent).not.toContain('private database diagnostic')
-      expect(document.body.textContent).not.toContain('temporary-auth')
-      unmount()
-      api.post.mockReset()
-    }
+    const password = 'New-Password-123!'
+    fireEvent.change(screen.getByLabelText(/New password/), { target: { value: password } })
+    fireEvent.change(screen.getByLabelText(/Confirm password/), { target: { value: password } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    })
+    expect(api.post).toHaveBeenLastCalledWith('/auth/password-reset/confirm/', {
+      request_id: requestId,
+      reset_authorization: 'temporary-auth',
+      new_password: password,
+      confirm_password: password,
+    })
+    expect(screen.getByRole('alert').textContent).toMatch(message)
+    expect(document.body.textContent).not.toContain('private database diagnostic')
+    expect(document.body.textContent).not.toContain('temporary-auth')
   })
 
   it('shows a retry message when the password-reset confirmation cannot reach the server', async () => {

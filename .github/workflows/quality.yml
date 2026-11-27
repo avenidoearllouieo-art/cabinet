@@ -8,6 +8,7 @@ jobs:
   web:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         app: [frontend, cabinet]
     defaults:
@@ -30,6 +31,12 @@ jobs:
     env:
       DJANGO_SECRET_KEY: ci-only-not-for-production
       DJANGO_DEBUG: "false"
+      TAPTRACK_NFC_REGISTRATION_URL_BASE: https://taptrack-ci.invalid/register
+      TAPTRACK_NFC_DEVICE_MAP: "[]"
+      DATABASE_URL: "sqlite:///:memory:"
+      DJANGO_EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      DJANGO_DEFAULT_FROM_EMAIL: ci@taptrack.invalid
+      DJANGO_MEDIA_STORAGE_BACKEND: filesystem
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -38,6 +45,11 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt
       - run: python -m pip check
+      - name: Prepare isolated upload and media directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/taptrack/media" "$RUNNER_TEMP/taptrack/uploads"
+          printf 'DJANGO_MEDIA_ROOT=%s\n' "$RUNNER_TEMP/taptrack/media" >> "$GITHUB_ENV"
+          printf 'DJANGO_FILE_UPLOAD_TEMP_DIR=%s\n' "$RUNNER_TEMP/taptrack/uploads" >> "$GITHUB_ENV"
       - run: python backend/manage.py check
       - run: python backend/manage.py makemigrations --check --dry-run
-      - run: python backend/manage.py test api
+      - run: python backend/manage.py test api --testrunner=config.ci_test_runner.CIHttpTestRunner
