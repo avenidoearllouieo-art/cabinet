@@ -47,11 +47,19 @@ class FakeSerial:
         self.responses = deque()
         self.writes = []
         self.timeout = None
+        self.write_timeout = None
         self.port = None
         self.dtr = None
         self.rts = None
         self.opened = False
         self.closed = False
+        self.stop_latched = False
+        self.open_inputs = [False, False]
+        self.status_override = None
+
+    @property
+    def is_open(self):
+        return not self.closed
 
     @property
     def in_waiting(self):
@@ -73,6 +81,12 @@ class FakeSerial:
                 self.responses.append(
                     f'READY,2,{session_id},{nonce},{self.last_transaction_id},{self.motor_state}\n'.encode('ascii')
                 )
+        elif payload.startswith(b'STATUS,2,'):
+            nonce = payload[:-1].decode('ascii').split(',')[2]
+            self.responses.append(self.status_override if self.status_override is not None else (
+                f'STATE,2,{self.session_ids[0]},{nonce},{self.last_transaction_id},{self.motor_state},'
+                f'{int(self.stop_latched)},{int(self.open_inputs[0])},{int(self.open_inputs[1])},BENCH_OPEN_ONLY\n'
+            ).encode('ascii'))
         elif payload.startswith(b'CMD,2,'):
             self.command_started = True
             fields = payload[:-1].decode('ascii').split(',')
@@ -91,8 +105,8 @@ class FakeSerial:
         pass
 
     def read_until(self, expected=b'\n', size=None):
-        self.read_started.set()
         if self.block_command_read and self.command_started and not self.blocked_once:
+            self.read_started.set()
             self.blocked_once = True
             self.release_read.wait(timeout=2)
         if not self.responses:
@@ -130,9 +144,7 @@ class SerialMotorControllerTests(unittest.TestCase):
     def test_mapping_and_correlated_v2_response_sequence(self):
         cases = (
             ('Station 1', 'OPEN', '1'),
-            ('Station 1', 'CLOSE', '2'),
             ('Station 2', 'OPEN', '3'),
-            ('Station 2', 'CLOSE', '4'),
         )
         for station, action, command in cases:
             with self.subTest(station=station, action=action):
@@ -149,7 +161,7 @@ class SerialMotorControllerTests(unittest.TestCase):
                 self.assertEqual(result.session_id, SESSION)
                 self.assertEqual(result.transaction_id, 1)
                 self.assertEqual(serial_port.writes[0].split(b',')[0], b'HELLO')
-                self.assertEqual(serial_port.writes[1], f'CMD,2,{SESSION},1,{command}\n'.encode())
+                self.assertEqual(serial_port.writes[-1], f'CMD,2,{SESSION},1,{command}\n'.encode())
                 self.assertEqual([line.split(',')[4] for line in result.responses], ['ACCEPTED', 'BUSY', 'DONE'])
 
     def test_invalid_station_or_action_is_rejected_before_serial_access(self):
@@ -208,7 +220,7 @@ class SerialMotorControllerTests(unittest.TestCase):
                 self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
                 self.assertFalse(result.command_transmitted)
                 self.assertIsNone(result.transaction_id)
-                self.assertIn(str(error), result.error)
+                self.assertIn('operator recovery is required', result.error)
 
     def test_environment_configuration_and_inactive_dtr_rts_before_open(self):
         serial_port = FakeSerial()
@@ -435,7 +447,7 @@ class SerialMotorControllerTests(unittest.TestCase):
             operator_confirmed_esp32_power_cycled=True,
         ))
         self.assertFalse(any(write.startswith(b'CMD,') for write in new_port.writes))
-        self.assertTrue(all(write.startswith(b'HELLO,') for write in new_port.writes))
+        self.assertTrue(all(write.startswith((b'HELLO,', b'STATUS,')) for write in new_port.writes))
 
     def test_recovery_refuses_same_session_and_keeps_latch(self):
         old_port = FakeSerial(command_responses=(response(SESSION, 1, 'ACCEPTED', '1'),))

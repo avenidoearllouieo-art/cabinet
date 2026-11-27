@@ -657,7 +657,7 @@ class CabinetSessionAdmin(admin.ModelAdmin):
     list_filter = ('status', 'station', 'opened_by__role', 'closed_by__role')
     search_fields = ('station', 'notes', 'opened_by__first_name', 'opened_by__last_name', 'opened_by__student_id', 'closed_by__first_name', 'closed_by__last_name')
     ordering = ('-opened_at',)
-    readonly_fields = ('opened_by', 'closed_by', 'opened_at', 'closed_at', 'created_at', 'updated_at')
+    readonly_fields = ('session_uuid', 'motor_dispatch_eligible', 'opened_by', 'closed_by', 'opened_at', 'closed_at', 'created_at', 'updated_at')
     date_hierarchy = 'opened_at'
 
     def get_urls(self):

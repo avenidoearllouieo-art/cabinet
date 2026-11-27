@@ -1331,6 +1331,8 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
         model = CabinetSession
         fields = [
             'id',
+            'session_uuid',
+            'motor_dispatch_eligible',
             'station',
             'station_name',
             'opened_by',

@@ -274,6 +274,7 @@ function validateWorkflowResponse(payload, command, station, expectedMode) {
 
 async function requestWorkflow(command, { signal, fetcher = fetch, station } = {}) {
   const body = command ? { command, station } : null
+  const openUnconfirmed = 'OPEN transmission and outcome are unconfirmed. Inspect and reconcile before initiating another OPEN.'
   let response
   try {
     response = await fetcher(workflowUrl, {
@@ -287,12 +288,26 @@ async function requestWorkflow(command, { signal, fetcher = fetch, station } = {
       signal,
     })
   } catch (error) {
+    if (command === 'finish_open') throw new Error(openUnconfirmed, { cause: error })
     if (error.name === 'AbortError') throw error
     throw new Error('NFC bridge unavailable. Check the NFC service connection.', { cause: error })
   }
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.error || `Cabinet workflow returned HTTP ${response.status}.`)
-  return validateWorkflowResponse(payload, command, station, 'hardware')
+  if (!response.ok) {
+    const confirmedExpiry = response.status === 408
+      && payload.code === 'WORKFLOW_EXPIRED_BEFORE_DISPATCH'
+      && payload.serial_command_sent === false
+    if (command === 'finish_open' && (response.status >= 500 || (response.status === 408 && !confirmedExpiry))) {
+      throw new Error(openUnconfirmed)
+    }
+    throw new Error(payload.error || `Cabinet workflow returned HTTP ${response.status}.`)
+  }
+  try {
+    return validateWorkflowResponse(payload, command, station, 'hardware')
+  } catch (error) {
+    if (command === 'finish_open') throw new Error(`${error.message} ${openUnconfirmed}`, { cause: error })
+    throw error
+  }
 }
 
 export function fetchCabinetWorkflow(options) {
