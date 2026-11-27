@@ -9,6 +9,7 @@ import os
 import re
 import queue
 import secrets
+import signal
 import sqlite3
 import threading
 import time
@@ -24,14 +25,24 @@ from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from motor_controller import (
+    CLOSE_UNAVAILABLE,
     DEFAULT_BAUD_RATE,
     DEFAULT_RESPONSE_TIMEOUT_SECONDS,
     MotorCommandResult,
     MotorOutcome,
+    OPEN_REQUEST_EXPIRED,
     SerialMotorController,
 )
 from motor_recovery import MotorRecoveryServer
+from motor_identity import canonical_session_uuid
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, normalize_uid
+from workflow_timing import (
+    IngressExpired,
+    IngressTimingError,
+    WORKFLOW_DISPATCH_SECONDS,
+    WORKFLOW_EXPIRED_CODE,
+    WorkflowIngressClock,
+)
 
 
 BRIDGE_HOST = '127.0.0.1'
@@ -94,6 +105,9 @@ ALLOWED_ORIGINS = load_allowed_origins()
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 REQUEST_TIMEOUT_SECONDS = 5
+WORKFLOW_RESPONSE_TIMEOUT_SECONDS = 2.0
+WORKFLOW_PROXY_HEADER = 'X-TapTrack-Workflow-Authorization'
+WORKFLOW_PROXY_TOKEN_PATTERN = re.compile(r'[0-9a-f]{64}')
 PASSWORD_RECOVERY_MAX_REQUEST_ID_LENGTH = 128
 PASSWORD_RECOVERY_DEFAULT_TTL_SECONDS = 120
 PASSWORD_RECOVERY_MAX_TTL_SECONDS = 300
@@ -167,7 +181,7 @@ class MockMotorController:
         self.closed = True
 
 
-def motor_result_from_action(action: dict) -> MotorCommandResult:
+def motor_result_from_action(action: dict, *, historical: bool = False) -> MotorCommandResult:
     outcomes = {
         'PENDING': MotorOutcome.BUSY,
         'DISPATCHED': MotorOutcome.UNCERTAIN,
@@ -197,9 +211,15 @@ def motor_result_from_action(action: dict) -> MotorCommandResult:
         command=action.get('command') or 'MOCK',
         outcome=outcome,
         transaction_id=action.get('transaction_id'),
-        command_transmitted=command_transmitted,
-        responses=tuple(responses),
-        error=action.get('error') or (
+        command_transmitted=False if historical else command_transmitted,
+        dispatch_skipped=historical,
+        responses=() if historical else tuple(responses),
+        error=(
+            f"Motor dispatch skipped: existing {action['status']} action retained; no command was sent for this request. "
+            f"Historical outcome: {outcome.value}. "
+            + ('Safety review and manual recovery are required. ' if action['status'] in ('UNCERTAIN', 'DISPATCHED', 'PENDING') else '')
+            + (action.get('error') or '')
+        ) if historical else action.get('error') or (
             'Action requires manual review.' if action['status'] == 'UNCERTAIN' else None
         ),
     )
@@ -210,6 +230,13 @@ def _motor_actuation_enabled() -> bool:
     if configured not in {'true', 'false'}:
         raise RuntimeError('TAPTRACK_MOTOR_ACTUATION_ENABLED must be true or false.')
     return configured == 'true'
+
+
+def _workflow_proxy_token() -> str:
+    token = os.environ.get('TAPTRACK_CABINET_WORKFLOW_PROXY_TOKEN', '')
+    if token and not WORKFLOW_PROXY_TOKEN_PATTERN.fullmatch(token):
+        raise RuntimeError('The Cabinet workflow proxy token must be 64 lowercase hexadecimal characters.')
+    return token
 
 
 def create_motor_controller() -> MockMotorController | SerialMotorController:
@@ -228,12 +255,17 @@ def create_motor_controller() -> MockMotorController | SerialMotorController:
             'TAPTRACK_MOTOR_LIMIT_SWITCHES_INSTALLED',
             'TAPTRACK_MOTOR_ESTOP_INSTALLED',
             'TAPTRACK_MOTOR_RECOVERY_PROCEDURE_APPROVED',
+            'TAPTRACK_MOTOR_BENCH_OPEN_ONLY_CONFIRMED',
+            'TAPTRACK_MOTOR_INDEPENDENT_STOP_VERIFIED',
         )
         if any(os.environ.get(name, '').strip().lower() != 'true' for name in required_confirmations):
             raise RuntimeError(
                 'Serial motor actuation requires confirmed limit switches, an emergency stop, '
-                'and an approved recovery procedure.'
+                'an approved recovery procedure, verified OPEN-only bench wiring, and an independent hardware stop.'
             )
+        if (not _workflow_proxy_token()
+                or os.environ.get('TAPTRACK_CABINET_WORKFLOW_INGRESS_VERIFIED') != 'true'):
+            raise RuntimeError('Motor actuation requires a verified authenticated Cabinet workflow ingress and proxy token.')
 
     device = os.environ.get('TAPTRACK_MOTOR_SERIAL_DEVICE', '').strip()
     device_id = device.removeprefix('/dev/serial/by-id/')
@@ -752,6 +784,17 @@ class SQLiteScanEventStore:
                 connection.execute('ALTER TABLE motor_actions ADD COLUMN transaction_id INTEGER')
             if 'responses_json' not in columns:
                 connection.execute('ALTER TABLE motor_actions ADD COLUMN responses_json TEXT')
+            connection.execute('''
+                CREATE TABLE IF NOT EXISTS motor_action_identity_links (
+                    session_uuid TEXT NOT NULL,
+                    station TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK (operation IN ('OPEN', 'CLOSE')),
+                    action_id TEXT NOT NULL UNIQUE REFERENCES motor_actions(action_id),
+                    review_reference TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (session_uuid, station, operation)
+                )
+            ''')
 
     def create_motor_action(self, workflow_session: str, station: str, operation: str) -> dict:
         if station not in MOTOR_STATIONS or operation not in {'OPEN', 'CLOSE'}:
@@ -759,6 +802,16 @@ class SQLiteScanEventStore:
         action_id = str(uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connection() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            link = connection.execute('''
+                SELECT action_id FROM motor_action_identity_links
+                WHERE session_uuid = ? AND station = ? AND operation = ?
+            ''', (str(workflow_session), station, operation)).fetchone()
+            if link is not None:
+                linked = connection.execute('SELECT * FROM motor_actions WHERE action_id = ?', (link['action_id'],)).fetchone()
+                if linked is None:
+                    raise sqlite3.IntegrityError('Reconciled history is missing; dispatch must remain inhibited.')
+                return {**dict(linked), 'identity_reconciled': True}
             connection.execute('''
                 INSERT INTO motor_actions (
                     action_id, workflow_session, station, operation,
@@ -772,6 +825,37 @@ class SQLiteScanEventStore:
             ''', (str(workflow_session), station, operation)).fetchone()
             if row is None:
                 raise sqlite3.IntegrityError('Unable to retrieve the persisted motor action.')
+            return dict(row)
+
+    def reconcile_legacy_motor_identity(self, session_uuid: str, action_id: str, review_reference: str) -> dict:
+        """Bind reviewed history to a UUID without modifying or replaying it."""
+        identity = canonical_session_uuid(session_uuid)
+        if not isinstance(review_reference, str) or not review_reference.strip() or len(review_reference) > 500:
+            raise ValueError('A human reconciliation reference is required.')
+        with self._lock, self._connection() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT * FROM motor_actions WHERE action_id = ?', (action_id,)).fetchone()
+            if row is None or not row['workflow_session'].isascii() or not row['workflow_session'].isdecimal():
+                raise ValueError('Select an existing numeric legacy action explicitly.')
+            if row['status'] in MOTOR_ACTION_IN_PROGRESS:
+                raise ValueError('In-progress history requires safety review; no identity can be reassigned.')
+            if connection.execute('''
+                SELECT 1 FROM motor_actions WHERE workflow_session = ? AND station = ? AND operation = ?
+            ''', (identity, row['station'], row['operation'])).fetchone():
+                raise ValueError('A UUID action already exists; it cannot be replaced.')
+            existing = connection.execute('''
+                SELECT * FROM motor_action_identity_links
+                WHERE (session_uuid = ? AND station = ? AND operation = ?) OR action_id = ?
+            ''', (identity, row['station'], row['operation'], action_id)).fetchall()
+            if existing:
+                if len(existing) == 1 and existing[0]['session_uuid'] == identity and existing[0]['action_id'] == action_id:
+                    return dict(row)
+                raise ValueError('Identity already reconciled differently; automatic remapping is forbidden.')
+            connection.execute('''
+                INSERT INTO motor_action_identity_links
+                (session_uuid, station, operation, action_id, review_reference, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (identity, row['station'], row['operation'], action_id, review_reference.strip(), datetime.now(timezone.utc).isoformat()))
             return dict(row)
 
     def claim_motor_action(self, action_id: str) -> bool:
@@ -1045,6 +1129,8 @@ class NFCService:
         self.reader = reader
         self.store = store
         self.verifier = verifier
+        self.workflow_proxy_token = _workflow_proxy_token()
+        self.workflow_clock = WorkflowIngressClock()
         self.photo_capture = photo_capture if photo_capture is not None else getattr(verifier, 'photo_capture', None)
         selected_motor_controller = motor_controller if motor_controller is not None else create_motor_controller()
         if not callable(getattr(selected_motor_controller, 'command', None)) or not callable(
@@ -1310,6 +1396,8 @@ class NFCService:
             'serial_connection': getattr(self.motor_controller, 'connection_status', 'not_applicable'),
             'armed': getattr(self.motor_controller, 'armed', False),
         }
+        if isinstance(self.motor_controller, SerialMotorController):
+            status['motor'].update(self.motor_controller.status_snapshot())
         return status
 
     def recover_motor_controller(
@@ -1369,7 +1457,13 @@ class NFCService:
         finally:
             self._motor_command_lock.release()
 
-    def dispatch_motor_transition(self, command: str, station: str, status_code: int, response: dict):
+    def dispatch_motor_transition(
+        self, command: str, station: str, status_code: int, response: dict, *, deadline: float | None = None,
+    ):
+        if deadline is None:
+            deadline = time.monotonic()
+            if not isinstance(self.motor_controller, SerialMotorController):
+                deadline += WORKFLOW_DISPATCH_SECONDS  # Internal mock calls have no HTTP authority.
         if self._stop_event.is_set():
             return None
         action = MOTOR_WORKFLOW_TRANSITIONS.get(command)
@@ -1416,6 +1510,17 @@ class NFCService:
             )
             return None
 
+        try:
+            workflow_identity = canonical_session_uuid(session.get('session_uuid'))
+        except ValueError:
+            return MotorCommandResult(station, action, '', MotorOutcome.REJECTED,
+                dispatch_skipped=True,
+                error='Motor dispatch skipped: missing or invalid session UUID. Update the backend; legacy sessions require reconciliation.')
+        if session.get('motor_dispatch_eligible') is not True:
+            return MotorCommandResult(station, action, '', MotorOutcome.REJECTED,
+                dispatch_skipped=True,
+                error='Motor dispatch skipped: legacy or unresolved session requires explicit reconciliation. Historical commands must not be replayed.')
+
         if self.store is None:
             logger.error(
                 'motor_action_skipped workflow_action=%s station=%s reason=action_store_unavailable',
@@ -1431,7 +1536,7 @@ class NFCService:
             )
 
         try:
-            action_record = self.store.create_motor_action(str(session['id']), station, action)
+            action_record = self.store.create_motor_action(workflow_identity, station, action)
         except Exception as error:
             logger.exception(
                 'motor_action_skipped workflow_action=%s station=%s reason=action_store_write_failed error_type=%s',
@@ -1447,7 +1552,7 @@ class NFCService:
                 error='Action persistence failed; dispatch skipped.',
             )
 
-        if action_record['status'] != 'PENDING':
+        if action_record['status'] != 'PENDING' or action_record.get('identity_reconciled'):
             logger.info(
                 'motor_action_reused workflow_action=%s station=%s action_id=%s state=%s',
                 command,
@@ -1455,8 +1560,9 @@ class NFCService:
                 action_record['action_id'],
                 action_record['status'],
             )
-            return motor_result_from_action(action_record)
-        if not self._motor_command_lock.acquire(blocking=False):
+            return motor_result_from_action(action_record, historical=True)
+        # CLOSE is journaled as an inhibition and needs no controller access.
+        if action == 'OPEN' and not self._motor_command_lock.acquire(blocking=False):
             logger.warning(
                 'motor_action_skipped workflow_action=%s station=%s action_id=%s reason=another_action_in_progress',
                 command,
@@ -1502,7 +1608,7 @@ class NFCService:
                 latest = self.store.get_motor_action(action_record['action_id'])
             except Exception:
                 latest = None
-            return motor_result_from_action(latest) if latest else MotorCommandResult(
+            return motor_result_from_action(latest, historical=True) if latest else MotorCommandResult(
                 station=station,
                 action=action,
                 command='MOCK',
@@ -1549,7 +1655,7 @@ class NFCService:
                         outcome=MotorOutcome.UNCERTAIN,
                         error='Action state is unavailable; manual review is required.',
                     )
-                return motor_result_from_action(latest) if latest else MotorCommandResult(
+                return motor_result_from_action(latest, historical=True) if latest else MotorCommandResult(
                     station=station,
                     action=action,
                     command='MOCK',
@@ -1557,13 +1663,22 @@ class NFCService:
                     error='Action state is unavailable; dispatch skipped.',
                 )
 
-            if not self.motor_actuation_enabled:
+            if action == 'CLOSE':
+                inhibited_reason, reason_code = CLOSE_UNAVAILABLE, 'bench_open_only'
+            elif not self.motor_actuation_enabled:
+                inhibited_reason, reason_code = MOTOR_ACTUATION_DISABLED, 'actuation_disabled'
+            elif time.monotonic() >= deadline:
+                inhibited_reason, reason_code = OPEN_REQUEST_EXPIRED, 'request_expired'
+            else:
+                inhibited_reason = None
+            if inhibited_reason:
                 logger.warning(
                     'motor_action_skipped workflow_action=%s station=%s action_id=%s '
-                    'reason=actuation_disabled serial_connection=%s',
+                    'reason=%s serial_connection=%s',
                     command,
                     station,
                     action_record['action_id'],
+                    reason_code,
                     getattr(self.motor_controller, 'connection_status', 'not_applicable'),
                 )
                 result = MotorCommandResult(
@@ -1572,14 +1687,14 @@ class NFCService:
                     command='MOCK' if isinstance(self.motor_controller, MockMotorController) else '',
                     outcome=MotorOutcome.REJECTED,
                     command_transmitted=False,
-                    error=MOTOR_ACTUATION_DISABLED,
+                    error=inhibited_reason,
                 )
                 try:
                     updated = self.store.finish_motor_action(
                         action_record['action_id'],
                         'FAILED',
                         command_transmitted=False,
-                        error=MOTOR_ACTUATION_DISABLED,
+                        error=inhibited_reason,
                         outcome=result.outcome.value,
                     )
                 except Exception as error:
@@ -1626,7 +1741,10 @@ class NFCService:
                 type(self.motor_controller).__name__,
             )
             try:
-                result = self.motor_controller.command(station, action)
+                if isinstance(self.motor_controller, SerialMotorController):
+                    result = self.motor_controller.command(station, action, deadline=deadline)
+                else:
+                    result = self.motor_controller.command(station, action)
                 if (
                     not isinstance(result, MotorCommandResult)
                     or not isinstance(result.outcome, MotorOutcome)
@@ -1721,7 +1839,8 @@ class NFCService:
                 )
             return result
         finally:
-            self._motor_command_lock.release()
+            if action == 'OPEN':
+                self._motor_command_lock.release()
 
     def process_uid(self, uid: str) -> dict:
         """Verify one completed UID and persist exactly one resulting event."""
@@ -1758,6 +1877,8 @@ class NFCService:
         return event
 
     def run(self) -> None:
+        if isinstance(self.motor_controller, SerialMotorController):
+            self.motor_controller.start()
         while not self._stop_event.is_set():
             try:
                 uid = self.reader.wait_for_card()
@@ -1933,6 +2054,22 @@ class NFCHandler(BaseHTTPRequestHandler):
             'has_more': has_more,
         })
 
+    def _send_workflow_json(self, status: HTTPStatus, payload: dict) -> None:
+        try:
+            self.connection.settimeout(WORKFLOW_RESPONSE_TIMEOUT_SECONDS)
+            self._send_json(status, payload)
+        except (TimeoutError, ConnectionError):
+            # The SQLite outcome is already durable. Never send a second response or rerun it.
+            self.close_connection = True
+            logger.info('cabinet_workflow_response_delivery_failed')
+
+    def _send_workflow_expired(self) -> None:
+        self._send_workflow_json(HTTPStatus.REQUEST_TIMEOUT, {
+            'code': WORKFLOW_EXPIRED_CODE,
+            'serial_command_sent': False,
+            'error': 'Cabinet workflow expired before dispatch. No motor command was sent.',
+        })
+
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         service = self.server.service
@@ -1992,55 +2129,89 @@ class NFCHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {'success': False, 'error': 'Invalid photo capture payload.'})
             return
         if path == '/cabinet/workflow':
+            supplied_tokens = self.headers.get_all(WORKFLOW_PROXY_HEADER, [])
+            origins = self.headers.get_all('Origin', [])
+            if (
+                not service.workflow_proxy_token
+                or len(supplied_tokens) != 1
+                or not WORKFLOW_PROXY_TOKEN_PATTERN.fullmatch(supplied_tokens[0])
+                or not secrets.compare_digest(supplied_tokens[0], service.workflow_proxy_token)
+                or len(origins) != 1
+                or origins[0] not in ALLOWED_ORIGINS
+            ):
+                self._send_json(HTTPStatus.FORBIDDEN, {'error': 'Cabinet workflow requires authorized kiosk ingress.'})
+                return
             try:
-                length = int(self.headers.get('Content-Length', '0'))
-                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
-                command = str(payload.get('command') or '')
-                station = str(payload.get('station') or '').strip()
-                if command not in {'open', 'finish_open', 'start_close', 'finish_close', 'cancel'}:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
-                    return
+                deadline = service.workflow_clock.deadline(self.headers)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise IngressExpired
+                self.connection.settimeout(remaining)
+                payload = self._read_json_body()
+            except IngressTimingError:
+                self._send_workflow_json(HTTPStatus.FORBIDDEN, {'error': 'Cabinet workflow ingress timing is invalid.'})
+                return
+            except TimeoutError:
+                self._send_workflow_expired()
+                return
+            except ValueError:
+                self._send_workflow_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})
+                return
+
+            command = str(payload.get('command') or '')
+            station = str(payload.get('station') or '').strip()
+            if command not in {'open', 'finish_open', 'start_close', 'finish_close', 'cancel'}:
+                self._send_workflow_json(HTTPStatus.BAD_REQUEST, {'error': 'Unsupported cabinet workflow command.'})
+                return
+            if time.monotonic() >= deadline:
+                self._send_workflow_expired()
+                return
+            try:
                 status_code, response = service.verifier.workflow(command, station)
-                motor_result = service.dispatch_motor_transition(command, station, status_code, response)
-                if command in MOTOR_WORKFLOW_TRANSITIONS and status_code == HTTPStatus.OK:
-                    payload = dict(response) if isinstance(response, dict) else {}
-                    payload['motor_dispatch'] = {
-                        'workflow_action': command,
-                        'outcome': motor_result.outcome.value if motor_result else 'skipped',
-                        'serial_command': motor_result.command or None if motor_result else None,
-                        'transaction_id': motor_result.transaction_id if motor_result else None,
-                        'serial_responses': list(motor_result.responses) if motor_result else [],
-                        'serial_accepted': bool(motor_result and motor_result.accepted),
-                        'serial_command_completed': bool(
-                            motor_result
-                            and motor_result.outcome == MotorOutcome.COMPLETED
-                            and motor_result.command_transmitted is True
-                        ),
-                        'serial_command_sent': (
-                            motor_result.command_transmitted
-                            if isinstance(service.motor_controller, SerialMotorController)
-                            and motor_result is not None
-                            else False
-                        ),
-                        'controller_armed': getattr(service.motor_controller, 'armed', False),
-                        'serial_connection': getattr(
-                            service.motor_controller,
-                            'connection_status',
-                            'not_applicable',
-                        ),
-                        'physical_movement_verified': False,
-                        'error': (
-                            sanitize_error(motor_result.error)
-                            if motor_result and motor_result.error else
-                            'Motor dispatch was skipped because the Django transition response was invalid.'
-                        ),
-                    }
-                    response = payload
-                self._send_json(HTTPStatus(status_code), response)
-            except (ValueError, json.JSONDecodeError):
-                self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Invalid cabinet workflow payload.'})
             except DjangoRequestError as error:
-                self._send_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error)})
+                self._send_workflow_json(HTTPStatus.BAD_GATEWAY, {'error': sanitize_error(error)})
+                return
+
+            motor_result = service.dispatch_motor_transition(command, station, status_code, response, deadline=deadline)
+            if command in MOTOR_WORKFLOW_TRANSITIONS and status_code == HTTPStatus.OK:
+                payload = dict(response) if isinstance(response, dict) else {}
+                payload['motor_dispatch'] = {
+                    'workflow_action': command,
+                    'dispatch_skipped': motor_result.dispatch_skipped if motor_result else True,
+                    'outcome': motor_result.outcome.value if motor_result else 'skipped',
+                    'serial_command': motor_result.command or None if motor_result else None,
+                    'transaction_id': motor_result.transaction_id if motor_result else None,
+                    'serial_responses': list(motor_result.responses) if motor_result else [],
+                    'serial_accepted': bool(motor_result and motor_result.accepted),
+                    'serial_command_completed': bool(
+                        motor_result
+                        and motor_result.outcome == MotorOutcome.COMPLETED
+                        and motor_result.command_transmitted is True
+                    ),
+                    'serial_command_sent': (
+                        motor_result.command_transmitted
+                        if isinstance(service.motor_controller, SerialMotorController)
+                        and motor_result is not None
+                        else False
+                    ),
+                    'controller_armed': getattr(service.motor_controller, 'armed', False),
+                    'serial_connection': getattr(
+                        service.motor_controller,
+                        'connection_status',
+                        'not_applicable',
+                    ),
+                    'physical_movement_verified': False,
+                    'error': (
+                        sanitize_error(motor_result.error)
+                        if motor_result and motor_result.error else
+                        None if motor_result else
+                        'Motor dispatch was skipped because the Django transition response was invalid.'
+                    ),
+                }
+                if isinstance(service.motor_controller, SerialMotorController):
+                    payload['motor_dispatch'].update(service.motor_controller.status_snapshot())
+                response = payload
+            self._send_workflow_json(HTTPStatus(status_code), response)
             return
         if path not in ('/nfc/mock-scan', '/nfc/mock-remove'):
             self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found.'})
@@ -2082,6 +2253,11 @@ def create_http_server(store: SQLiteScanEventStore, service: NFCService, host: s
 
 
 def main() -> None:
+    # SIGTERM from systemd follows the same cleanup path as Ctrl-C.
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, terminate)
     reader = build_reader()
     store = SQLiteScanEventStore()
     verifier = DjangoVerifier()

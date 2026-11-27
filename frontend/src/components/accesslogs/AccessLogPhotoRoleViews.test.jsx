@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import api from '../../services/api.js'
 import AdminAccessLogs from '../../pages/admin/AccessLogs.jsx'
@@ -62,6 +61,7 @@ function mockRoleApi(log) {
 
 describe('access-log photo role views', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     api.get.mockReset()
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -72,6 +72,7 @@ describe('access-log photo role views', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -80,7 +81,6 @@ describe('access-log photo role views', () => {
     ['Instructor', InstructorAccessLogs, 502, 'Cabinet Access Log Details'],
     ['Student', StudentAccessLogs, 503, 'Cabinet Access Log Details'],
   ])('%s displays its own row photo and event details photo', async (role, Page, eventId, dialogName) => {
-    const user = userEvent.setup()
     const log = makeLog(eventId)
     mockRoleApi(log)
     const page = role === 'Admin'
@@ -89,8 +89,11 @@ describe('access-log photo role views', () => {
         ? <MemoryRouter><Page /></MemoryRouter>
         : <Page />
     render(page)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
 
-    const rowThumbnail = await screen.findByRole('img', { name: `Access event ${eventId} photo thumbnail` })
+    const rowThumbnail = screen.getByRole('img', { name: `Access event ${eventId} photo thumbnail` })
     expect(rowThumbnail.getAttribute('src')).toBe('blob:role-access-photo')
     if (role === 'Instructor') {
       expect(screen.queryByText(log.nfc_uid)).toBeNull()
@@ -99,27 +102,27 @@ describe('access-log photo role views', () => {
     }
 
     if (role === 'Admin') {
-      await user.click(screen.getByRole('button', { name: 'Open access log actions' }))
-      await user.click(screen.getByRole('button', { name: 'View Details' }))
-    } else {
-      const actionButton = screen.getByRole('button', { name: /View Details/i })
-      await user.click(actionButton)
+      fireEvent.click(screen.getByRole('button', { name: 'Open access log actions' }))
     }
+    fireEvent.click(screen.getByRole('button', { name: /View Details/i }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
 
-    const details = await screen.findByRole('dialog', { name: dialogName })
+    const details = screen.getByRole('dialog', { name: dialogName })
     expect(within(details).queryByText(log.nfc_uid)).toBeNull()
     expect(within(details).getByRole('img', { name: `Access event ${eventId} photo thumbnail` })).toBeTruthy()
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/access-logs/${eventId}/photo/image/`, expect.any(Object)))
+    expect(api.get).toHaveBeenCalledWith(`/access-logs/${eventId}/photo/image/`, expect.any(Object))
     expect(api.get).toHaveBeenCalledWith(`/access-logs/${eventId}/photo/`, expect.any(Object))
 
-    await user.click(within(details).getByRole('button', { name: `Open photo for access event ${eventId}` }))
-    const photoViewer = await screen.findByRole('dialog', { name: 'Access event photo viewer' })
-    await user.click(within(photoViewer).getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(within(details).getByRole('button', { name: `Open photo for access event ${eventId}` }))
+    const photoViewer = screen.getByRole('dialog', { name: 'Access event photo viewer' })
+    fireEvent.click(within(photoViewer).getByRole('button', { name: 'Zoom in' }))
     expect(within(photoViewer).getByText('125%')).toBeTruthy()
-    await user.click(within(photoViewer).getByRole('button', { name: 'View at full size' }))
+    fireEvent.click(within(photoViewer).getByRole('button', { name: 'View at full size' }))
     expect(within(photoViewer).getByRole('button', { name: 'View at full size' }).getAttribute('aria-pressed')).toBe('true')
-    await user.click(within(photoViewer).getByRole('button', { name: 'Fit to screen' }))
-    await user.click(within(photoViewer).getByRole('button', { name: 'Close photo viewer' }))
+    fireEvent.click(within(photoViewer).getByRole('button', { name: 'Fit to screen' }))
+    fireEvent.click(within(photoViewer).getByRole('button', { name: 'Close photo viewer' }))
     expect(screen.queryByRole('dialog', { name: 'Access event photo viewer' })).toBeNull()
   })
 })

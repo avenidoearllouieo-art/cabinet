@@ -126,6 +126,35 @@ describe('Cabinet workflow status requests', () => {
     expect(status.reader_connected).toBe(true)
   })
 
+  it('reports OPEN as unconfirmed when the proxy times out or the response is lost', async () => {
+    const fetchers = [
+      async () => new Response('', { status: 504 }),
+      async () => new Response(JSON.stringify({ error: 'Request timed out' }), { status: 408 }),
+      async () => new Response(JSON.stringify({ code: 'WORKFLOW_EXPIRED_BEFORE_DISPATCH' }), { status: 408 }),
+      async () => { throw new TypeError('connection lost') },
+      async () => { throw new DOMException('Request aborted', 'AbortError') },
+    ]
+    for (const fetcher of fetchers) {
+      await expect(sendCabinetWorkflow('finish_open', {
+        mode: 'hardware',
+        station: 'Station 1',
+        fetcher,
+      })).rejects.toThrow('OPEN transmission and outcome are unconfirmed.')
+    }
+  })
+
+  it('reports confirmed pre-dispatch expiry when the bridge explicitly confirms no write', async () => {
+    await expect(sendCabinetWorkflow('finish_open', {
+      mode: 'hardware',
+      station: 'Station 1',
+      fetcher: async () => new Response(JSON.stringify({
+        code: 'WORKFLOW_EXPIRED_BEFORE_DISPATCH',
+        serial_command_sent: false,
+        error: 'Cabinet workflow expired before dispatch. No motor command was sent.',
+      }), { status: 408 }),
+    })).rejects.toThrow('No motor command was sent.')
+  })
+
   it('rejects malformed or non-final backend workflow success payloads', async () => {
     for (const payload of [
       { mode: 'hardware', station: 'Station 1', session: null },

@@ -9,12 +9,30 @@ export function motorDispatchStatus(dispatch, expectedAction) {
   const reason = typeof dispatch.error === 'string' && dispatch.error
     ? ` ${dispatch.error}`
     : ''
+  const recovery = dispatch.safety_recovery_required ? ' Operator recovery is required.' : ''
   const serialConnection = typeof dispatch.serial_connection === 'string'
     ? dispatch.serial_connection
     : null
   const accepted = dispatch.serial_accepted === true
     || (Array.isArray(dispatch.serial_responses)
       && dispatch.serial_responses.some((response) => /,ACCEPTED,/.test(response)))
+
+  if (dispatch.dispatch_skipped === true || /^ Motor dispatch skipped:/i.test(reason)) {
+    if (dispatch.serial_command_sent !== false) {
+      return `Motor dispatch skipped; transmission status is unconfirmed. Physical movement was not verified.${reason}`
+    }
+    return `Motor dispatch skipped; no command was transmitted for this request. Physical movement was not verified.${reason}`
+  }
+
+  if (expectedAction === 'finish_close' && dispatch.serial_command_sent === false && /BENCH_OPEN_ONLY/.test(reason)) {
+    return 'CLOSE unavailable in bench-test mode. No movement command was sent.'
+  }
+  if (dispatch.stop_latched === true || /STOP_LATCHED/.test(reason)) {
+    return 'Emergency stop circuit open or stop latched. Operator recovery is required. Physical position is unverified.'
+  }
+  if (/LIMIT_INPUT_OPEN|TARGET_LIMIT_ACTIVE/.test(reason)) {
+    return `OPEN limit active or disconnected. Physical position is unverified.${recovery}`
+  }
 
   if (
     dispatch.outcome === 'completed'
@@ -27,7 +45,7 @@ export function motorDispatchStatus(dispatch, expectedAction) {
     return 'ESP32 completed its command sequence; physical shutter movement was not verified.'
   }
   if (dispatch.serial_command_sent === null) {
-    return `Motor outcome unknown: the Pi could not determine whether a serial command was sent. Manual inspection is required.${reason}`
+    return `Motor outcome unknown: the Pi could not determine whether a serial command was sent. Manual inspection is required.${recovery}${reason}`
   }
   if (dispatch.outcome === 'completed') {
     return 'Motor outcome unknown: the result is inconsistent; serial command completion was not confirmed.'
@@ -44,6 +62,9 @@ export function motorDispatchStatus(dispatch, expectedAction) {
     return `Motor dispatch disabled; no serial command was sent.${connection}${armed}${reason}`
   }
   if (dispatch.serial_command_sent === false) {
+    if (dispatch.communication_ready === false && dispatch.safety_recovery_required === true) {
+      return 'Motor command not sent. Serial communication is unavailable. Operator recovery is required before movement.'
+    }
     if (dispatch.outcome === 'busy') {
       return `Motor controller busy; no serial command was sent.${reason}`
     }
@@ -71,13 +92,13 @@ export function motorDispatchStatus(dispatch, expectedAction) {
     return `Motor dispatch failed (${outcome}).${reason}`
   }
   if (accepted) {
-    return `ESP32 accepted the command, but completion is unconfirmed. Physical shutter movement was not verified.${reason}`
+    return `ESP32 accepted the command, but completion is unconfirmed. Physical shutter movement was not verified.${recovery}${reason}`
   }
   if (dispatch.serial_command_sent === true) {
-    return `Serial command was transmitted, but ESP32 acceptance and completion are unconfirmed.${reason}`
+    return `Serial command was transmitted, but ESP32 acceptance and completion are unconfirmed.${recovery}${reason}`
   }
   if (dispatch.outcome === 'uncertain') {
-    return `Motor command was transmitted, but its result is unconfirmed. Manual inspection is required.${reason}`
+    return `Motor transmission and outcome are unconfirmed. Manual inspection is required.${reason}`
   }
   return `Motor dispatch status unknown (${outcome}).${reason}`
 }

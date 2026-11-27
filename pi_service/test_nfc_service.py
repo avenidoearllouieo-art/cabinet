@@ -1,8 +1,12 @@
 import json
+import hashlib
+import http.client
+from uuid import UUID
 import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -11,6 +15,8 @@ from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from test_motor_controller import FakeSerial, SerialFactory, SESSION, response
 
 from nfc_service import (
     ALLOWED_ORIGINS,
@@ -22,7 +28,9 @@ from nfc_service import (
     DjangoPhotoCapture,
     MockNFCReader,
     MockMotorController,
+    NFCHandler,
     NFCService,
+    WORKFLOW_PROXY_HEADER,
     SQLiteScanEventStore,
     create_motor_controller,
     create_http_server,
@@ -32,6 +40,13 @@ from nfc_service import (
 )
 from reader_adapters import EvdevNFCReader, ReaderUnavailable, UIDKeyParser, build_key_map
 from motor_controller import MotorCommandResult, MotorOutcome, SerialMotorController
+from workflow_timing import (
+    INGRESS_AGE_HEADER, INGRESS_FORWARDED_AT_HEADER, WORKFLOW_EXPIRED_CODE, WorkflowIngressClock,
+)
+
+
+def workflow_uuid(identifier):
+    return str(UUID(bytes=hashlib.sha256(str(identifier).encode()).digest()[:16], version=4))
 
 
 class FakeVerifier:
@@ -111,47 +126,6 @@ class FakeMotorController(MockMotorController):
         finally:
             with self._lock:
                 self.in_flight -= 1
-
-
-class FakeProtocolSerial:
-    def __init__(self):
-        self.responses = []
-        self.writes = []
-        self.last_transaction_id = 0
-        self.command_response_mode = 'success'
-        self.timeout = None
-
-    @property
-    def in_waiting(self):
-        return sum(len(frame) for frame in self.responses)
-
-    def write(self, frame):
-        self.writes.append(frame)
-        fields = frame.decode('ascii').rstrip('\n').split(',')
-        if fields[0] == 'HELLO':
-            self.responses.append(
-                f'READY,2,0123456789abcdef,{fields[2]},{self.last_transaction_id},IDLE\n'.encode('ascii')
-            )
-        elif fields[0] == 'CMD':
-            self.last_transaction_id = int(fields[3])
-            if self.command_response_mode == 'success':
-                statuses = ('ACCEPTED', 'BUSY', 'DONE')
-                for response_status in statuses:
-                    self.responses.append(
-                        f'RSP,2,{fields[2]},{fields[3]},{response_status},{fields[4]}\n'.encode('ascii')
-                    )
-            elif self.command_response_mode == 'malformed':
-                self.responses.append(b'NOT_A_V2_RESPONSE\n')
-        return len(frame)
-
-    def flush(self):
-        pass
-
-    def read_until(self, expected=b'\n', size=None):
-        return self.responses.pop(0) if self.responses else b''
-
-    def close(self):
-        pass
 
 
 class FakeResponse:
@@ -751,6 +725,8 @@ class MotorDispatchTests(unittest.TestCase):
             'station': station,
             'session': {
                 'id': session_id,
+                'session_uuid': workflow_uuid(session_id),
+                'motor_dispatch_eligible': True,
                 'station': station,
                 'status': status,
                 'workflow_state': 'idle',
@@ -846,6 +822,26 @@ class MotorDispatchTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'limit switches, an emergency stop'):
                 create_motor_controller()
 
+    def test_serial_actuation_requires_configured_and_verified_workflow_ingress(self):
+        safety_env = {
+            'TAPTRACK_MOTOR_MODE': 'serial',
+            'TAPTRACK_MOTOR_ACTUATION_ENABLED': 'true',
+            'TAPTRACK_MOTOR_SERIAL_DEVICE': '/dev/serial/by-id/usb-Test-controller',
+            'TAPTRACK_MOTOR_LIMIT_SWITCHES_INSTALLED': 'true',
+            'TAPTRACK_MOTOR_ESTOP_INSTALLED': 'true',
+            'TAPTRACK_MOTOR_RECOVERY_PROCEDURE_APPROVED': 'true',
+            'TAPTRACK_MOTOR_BENCH_OPEN_ONLY_CONFIRMED': 'true',
+            'TAPTRACK_MOTOR_INDEPENDENT_STOP_VERIFIED': 'true',
+        }
+        with patch.dict(os.environ, safety_env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, 'verified authenticated Cabinet workflow ingress'):
+                create_motor_controller()
+            with patch.dict(os.environ, {'TAPTRACK_CABINET_WORKFLOW_PROXY_TOKEN': 'c' * 64}):
+                with self.assertRaisesRegex(RuntimeError, 'verified authenticated Cabinet workflow ingress'):
+                    create_motor_controller()
+                with patch.dict(os.environ, {'TAPTRACK_CABINET_WORKFLOW_INGRESS_VERIFIED': 'true'}):
+                    self.assertIsInstance(create_motor_controller(), SerialMotorController)
+
     def test_disabled_actuation_records_final_transition_without_calling_controller(self):
         service = NFCService(
             MockNFCReader(),
@@ -934,12 +930,12 @@ class MotorDispatchTests(unittest.TestCase):
     def test_only_validated_successful_final_transitions_dispatch(self):
         self.dispatch()
         self.dispatch(
-            command='finish_close',
+            command='finish_open',
             station='Station 2',
-            payload=self.response('session-2', 'Station 2', 'closed'),
+            payload=self.response('session-2', 'Station 2', 'open'),
         )
 
-        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN'), ('Station 2', 'CLOSE')])
+        self.assertEqual(self.controller.calls, [('Station 1', 'OPEN'), ('Station 2', 'OPEN')])
 
     def test_get_nonfinal_invalid_and_failed_transitions_do_not_dispatch(self):
         valid_open = self.response('session-1', 'Station 1', 'open')
@@ -994,13 +990,13 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(duplicate.outcome, first.outcome)
         self.assertEqual(duplicate.command, first.command)
         self.assertEqual(duplicate.transaction_id, first.transaction_id)
-        self.assertEqual(duplicate.command_transmitted, first.command_transmitted)
-        self.assertEqual(duplicate.responses, first.responses)
+        self.assertFalse(duplicate.command_transmitted)
+        self.assertEqual(duplicate.responses, ())
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         actions = self.store.list_motor_actions()
         self.assertEqual(len(actions), 1)
         self.assertTrue(actions[0]['action_id'])
-        self.assertEqual(actions[0]['workflow_session'], 'session-1')
+        self.assertEqual(actions[0]['workflow_session'], workflow_uuid('session-1'))
         self.assertEqual(actions[0]['station'], 'Station 1')
         self.assertEqual(actions[0]['operation'], 'OPEN')
         self.assertTrue(actions[0]['created_at'])
@@ -1037,7 +1033,7 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(first.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(duplicate.outcome, MotorOutcome.UNCERTAIN)
         self.assertIsNone(first.command_transmitted)
-        self.assertIsNone(duplicate.command_transmitted)
+        self.assertFalse(duplicate.command_transmitted)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         self.assertEqual(self.store.list_motor_actions()[0]['status'], 'UNCERTAIN')
 
@@ -1049,9 +1045,9 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertTrue(self.controller.entered.wait(timeout=1))
 
         second = self.dispatch(
-            command='finish_close',
+            command='finish_open',
             station='Station 2',
-            payload=self.response('session-2', 'Station 2', 'closed'),
+            payload=self.response('session-2', 'Station 2', 'open'),
         )
         self.controller.release.set()
         worker.join(timeout=2)
@@ -1063,15 +1059,15 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
         busy_action = next(
             action for action in self.store.list_motor_actions()
-            if action['workflow_session'] == 'session-2'
+            if action['workflow_session'] == workflow_uuid('session-2')
         )
         self.assertEqual(busy_action['status'], 'FAILED')
         self.assertEqual(busy_action['outcome'], 'busy')
         self.assertEqual(busy_action['command_transmitted'], 0)
         duplicate_busy = self.dispatch(
-            command='finish_close',
+            command='finish_open',
             station='Station 2',
-            payload=self.response('session-2', 'Station 2', 'closed'),
+            payload=self.response('session-2', 'Station 2', 'open'),
         )
         self.assertEqual(duplicate_busy.outcome, MotorOutcome.BUSY)
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
@@ -1127,8 +1123,8 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(self.store.list_motor_actions()[0]['status'], 'COMPLETED')
 
     def test_service_startup_recovers_pending_and_dispatched_actions_as_uncertain(self):
-        pending = self.store.create_motor_action('pending-session', 'Station 1', 'OPEN')
-        dispatched = self.store.create_motor_action('dispatched-session', 'Station 2', 'CLOSE')
+        pending = self.store.create_motor_action(workflow_uuid('pending-session'), 'Station 1', 'OPEN')
+        dispatched = self.store.create_motor_action(workflow_uuid('dispatched-session'), 'Station 2', 'CLOSE')
         self.assertTrue(self.store.claim_motor_action(dispatched['action_id']))
         restarted_store = SQLiteScanEventStore(self.database_path)
         restarted_controller = FakeMotorController()
@@ -1156,7 +1152,7 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
         self.assertEqual(self.controller.calls, [])
 
-        self.store.create_motor_action('claim-failure', 'Station 1', 'OPEN')
+        self.store.create_motor_action(workflow_uuid('claim-failure'), 'Station 1', 'OPEN')
         with patch.object(self.store, 'claim_motor_action', side_effect=sqlite3.OperationalError('storage unavailable')):
             result = self.dispatch(payload=self.response('claim-failure', 'Station 1', 'open'))
         self.assertEqual(result.outcome, MotorOutcome.UNCERTAIN)
@@ -1176,6 +1172,9 @@ class MotorDispatchTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [('Station 1', 'OPEN')])
 
 
+TEST_WORKFLOW_PROXY_TOKEN = 'a' * 64
+
+
 class NFCBridgeHTTPTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -1187,6 +1186,7 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             motor_controller=MockMotorController(),
             motor_actuation_enabled=False,
         )
+        self.service.workflow_proxy_token = TEST_WORKFLOW_PROXY_TOKEN
         self.server = create_http_server(self.store, self.service, host='127.0.0.1', port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -1204,8 +1204,14 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(self.url + path, headers=headers)) as response:
             return response.status, response.headers, json.loads(response.read().decode('utf-8'))
 
-    def post_json(self, path, payload, origin='http://127.0.0.1:4000'):
-        headers = {'Content-Type': 'application/json'}
+    def post_json(self, path, payload, origin='http://127.0.0.1:4000', *,
+                  proxy_token=TEST_WORKFLOW_PROXY_TOKEN, content_type='application/json', ingress_headers=None):
+        headers = {'Content-Type': content_type}
+        if path == '/cabinet/workflow' and proxy_token:
+            headers[WORKFLOW_PROXY_HEADER] = proxy_token
+            if ingress_headers is None:
+                ingress_headers = {INGRESS_AGE_HEADER: '0.000', INGRESS_FORWARDED_AT_HEADER: f'{time.time():.3f}'}
+            headers.update(ingress_headers)
         if origin:
             headers['Origin'] = origin
         request = urllib.request.Request(
@@ -1269,6 +1275,14 @@ class NFCBridgeHTTPTests(unittest.TestCase):
             'actuation_enabled': False,
             'serial_connection': 'disconnected',
             'armed': False,
+            'communication_ready': False,
+            'safety_recovery_required': True,
+            'recovery_reason': serial_controller.status_snapshot()['recovery_reason'],
+            'bench_mode': 'open_only',
+            'close_available': False,
+            'stop_latched': None,
+            'open_inputs': None,
+            'physical_movement_verified': False,
         })
         self.assertIsNone(serial_controller._serial)
 
@@ -1536,6 +1550,146 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(self.service.verifier.calls, ['NORMAL-CARD'])
         self.assertEqual(self.service.motor_controller.calls, [])
 
+    def test_workflow_post_rejects_unauthorized_callers_before_using_device_identity(self):
+        payload = {'command': 'finish_open', 'station': 'Station 1'}
+        for options in (
+            {'proxy_token': None},
+            {'proxy_token': 'b' * 64},
+            {'origin': None},
+            {'origin': 'https://untrusted.invalid'},
+        ):
+            with self.subTest(options=options), patch.object(self.service.verifier, 'workflow', create=True) as workflow:
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    self.post_json('/cabinet/workflow', payload, **options)
+                self.assertEqual(error.exception.code, 403)
+                workflow.assert_not_called()
+        self.assertEqual(self.store.list_motor_actions(), [])
+
+    def test_workflow_fails_closed_with_no_proxy_configuration_or_wrong_media_type(self):
+        payload = {'command': 'open', 'station': 'Station 1'}
+        with patch.object(self.service.verifier, 'workflow', create=True) as workflow:
+            with patch.object(self.service, 'workflow_proxy_token', ''):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    self.post_json('/cabinet/workflow', payload)
+                self.assertEqual(error.exception.code, 403)
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post_json('/cabinet/workflow', payload, content_type='text/plain')
+            self.assertEqual(error.exception.code, 400)
+            workflow.assert_not_called()
+
+    def test_stale_ingress_and_combined_buffering_and_queue_delay_expire_before_django(self):
+        payload = {'command': 'finish_open', 'station': 'Station 1'}
+        port = FakeSerial()
+        self._fake_workflow_on_serial(port)
+        before = list(port.writes)
+        for age, transit in ((16, 0), (0, 16), (6, 4)):
+            with self.subTest(age=age, transit=transit), patch.object(self.service.verifier, 'workflow') as workflow:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.post_json('/cabinet/workflow', payload, ingress_headers={
+                        INGRESS_AGE_HEADER: f'{age:.3f}', INGRESS_FORWARDED_AT_HEADER: f'{time.time() - transit:.3f}',
+                    })
+                self.assertEqual(caught.exception.code, 408)
+                with caught.exception as response:
+                    body = json.load(response)
+                self.assertEqual(body['code'], WORKFLOW_EXPIRED_CODE)
+                self.assertIs(body['serial_command_sent'], False)
+                workflow.assert_not_called()
+        self.assertEqual(port.writes, before)
+        self.assertEqual(self.store.list_motor_actions(), [])
+
+    def test_invalid_or_missing_ingress_timing_fails_closed(self):
+        payload = {'command': 'finish_open', 'station': 'Station 1'}
+        for headers in (
+            {},
+            {INGRESS_AGE_HEADER: '1.000'},
+            {INGRESS_AGE_HEADER: '-1.000', INGRESS_FORWARDED_AT_HEADER: f'{time.time():.3f}'},
+            {INGRESS_AGE_HEADER: 'NaN', INGRESS_FORWARDED_AT_HEADER: f'{time.time():.3f}'},
+            {INGRESS_AGE_HEADER: '0.000, 0.000', INGRESS_FORWARDED_AT_HEADER: f'{time.time():.3f}'},
+            {INGRESS_AGE_HEADER: '0.000', INGRESS_FORWARDED_AT_HEADER: f'{time.time() + 2:.3f}'},
+        ):
+            with self.subTest(headers=headers), patch.object(self.service.verifier, 'workflow', create=True) as workflow:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.post_json('/cabinet/workflow', payload, ingress_headers=headers)
+                self.assertEqual(caught.exception.code, 403)
+                workflow.assert_not_called()
+
+    def test_clock_step_latches_ingress_closed(self):
+        payload = {'command': 'finish_open', 'station': 'Station 1'}
+        with patch.object(self.service.verifier, 'workflow', create=True) as workflow:
+            with patch('workflow_timing.time.time', return_value=time.time() - 1):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.post_json('/cabinet/workflow', payload)
+                self.assertEqual(caught.exception.code, 403)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.post_json('/cabinet/workflow', payload)
+            self.assertEqual(caught.exception.code, 403)
+            workflow.assert_not_called()
+
+    def test_response_delivery_failure_preserves_journal_and_never_replays(self):
+        port = FakeSerial()
+        self._fake_workflow_on_serial(port)
+        original = NFCHandler._send_json
+
+        def fail_delivery(handler, status, payload):
+            if 'motor_dispatch' in payload:
+                raise TimeoutError('Simulated response write timeout')
+            return original(handler, status, payload)
+
+        with patch.object(NFCHandler, '_send_json', autospec=True, side_effect=fail_delivery) as sent:
+            with self.assertRaises((http.client.RemoteDisconnected, ConnectionResetError)):
+                self._finish_bench_workflow()
+        sent.assert_called_once()
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'COMPLETED')
+        self.assertTrue(self._finish_bench_workflow()['dispatch_skipped'])
+        self.assertEqual(sum(frame.startswith(b'CMD,') for frame in port.writes), 1)
+
+    def test_delayed_backend_expiry_is_terminal_and_never_transmits(self):
+        port = FakeSerial()
+        self._fake_workflow_on_serial(port)
+        verifier = self.service.verifier
+        original = verifier.workflow
+
+        def delayed_workflow(*args):
+            result = original(*args)
+            clock.return_value = 110.0
+            return result
+
+        before = list(port.writes)
+        with patch('nfc_service.time.monotonic', return_value=100.0) as clock:
+            with patch.object(self.service, 'workflow_clock', WorkflowIngressClock()):
+                with patch.object(verifier, 'workflow', side_effect=delayed_workflow):
+                    result = self._finish_bench_workflow()
+        self.assertEqual(result['outcome'], 'rejected')
+        self.assertIn('request expired', result['error'])
+        self.assertIs(result['serial_command_sent'], False)
+        self.assertEqual(self.store.list_motor_actions()[0]['status'], 'FAILED')
+        self.assertTrue(self._finish_bench_workflow()['dispatch_skipped'])
+        self.assertEqual(port.writes, before)
+
+    def test_journal_claim_expiry_or_busy_dispatch_lock_never_transmits(self):
+        port = FakeSerial()
+        self._fake_workflow_on_serial(port)
+        before = list(port.writes)
+        with self.service._motor_command_lock:
+            self.assertEqual(self._finish_bench_workflow()['outcome'], 'busy')
+        self.assertTrue(self._finish_bench_workflow()['dispatch_skipped'])
+        self.service.verifier.identity = workflow_uuid('delayed-claim')
+        original = self.store.claim_motor_action
+
+        def delayed_claim(action_id):
+            claimed = original(action_id)
+            clock.return_value = 110.0
+            return claimed
+
+        with patch('nfc_service.time.monotonic', return_value=100.0) as clock:
+            with patch.object(self.service, 'workflow_clock', WorkflowIngressClock()):
+                with patch.object(self.store, 'claim_motor_action', side_effect=delayed_claim):
+                    result = self._finish_bench_workflow()
+        self.assertEqual(result['outcome'], 'rejected')
+        self.assertIn('request expired', result['error'])
+        self.assertIs(result['serial_command_sent'], False)
+        self.assertEqual(port.writes, before)
+
     def test_cabinet_workflow_get_and_post_proxy_to_django(self):
         class WorkflowVerifier:
             def __init__(self):
@@ -1568,6 +1722,8 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                     'station': station,
                     'session': {
                         'id': 42,
+                        'session_uuid': workflow_uuid(42),
+                        'motor_dispatch_eligible': True,
                         'station': station,
                         'status': 'open',
                         'workflow_state': 'idle',
@@ -1600,6 +1756,8 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                     'station': station,
                     'session': {
                         'id': 'disabled-session',
+                        'session_uuid': workflow_uuid('disabled-session'),
+                        'motor_dispatch_eligible': True,
                         'station': station,
                         'status': 'open',
                         'workflow_state': 'idle',
@@ -1642,6 +1800,8 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                     'station': station,
                     'session': {
                         'id': 'disarmed-session',
+                        'session_uuid': workflow_uuid('disarmed-session'),
+                        'motor_dispatch_eligible': True,
                         'station': station,
                         'status': 'open',
                         'workflow_state': 'idle',
@@ -1672,102 +1832,113 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertIn('recovery is required', payload['motor_dispatch']['error'])
         self.assertIsNone(controller._serial)
 
-    def test_django_workflow_http_path_dispatches_v2_serial_actions_once(self):
-        serial_port = FakeProtocolSerial()
-        controller = SerialMotorController(serial_instance=serial_port, response_timeout=0.01)
+    def _fake_workflow_on_serial(self, port, factory=None):
+        controller = SerialMotorController(serial_instance=port, serial_factory=factory)
         self.service.motor_controller = controller
         self.service.motor_actuation_enabled = True
-
-        class SuccessfulWorkflowVerifier:
-            def workflow(self, command=None, station=None):
-                status = 'closed' if command == 'finish_close' else 'open'
-                session_id = 'open-session' if command == 'finish_open' else 'close-session'
-                return 200, {
-                    'station': station,
-                    'session': {
-                        'id': session_id,
-                        'station': station,
-                        'status': status,
-                        'workflow_state': 'idle',
-                    },
-                }
-
-        self.service.verifier = SuccessfulWorkflowVerifier()
         self.assertTrue(self.service.recover_motor_controller(
             operator_confirmed_driver_power_isolated=True,
             operator_confirmed_stationary=True,
             operator_confirmed_esp32_power_cycled=True,
         ))
 
-        with self.assertLogs('nfc_service', level='INFO') as captured:
-            open_status, open_payload = self.post_json('/cabinet/workflow', {
-                'command': 'finish_open',
-                'station': 'Station 1',
-            })
-            serial_port.command_response_mode = 'malformed'
-            close_status, close_payload = self.post_json('/cabinet/workflow', {
-                'command': 'finish_close',
-                'station': 'Station 2',
-            })
-            duplicate_status, _ = self.post_json('/cabinet/workflow', {
-                'command': 'finish_close',
-                'station': 'Station 2',
-            })
+        class WorkflowVerifier:
+            identity = workflow_uuid('first')
+            eligible = True
 
-        commands = [
-            frame.decode('ascii').rstrip('\n').split(',')
-            for frame in serial_port.writes
-            if frame.startswith(b'CMD,')
-        ]
-        self.assertEqual((open_status, close_status, duplicate_status), (200, 200, 200))
-        self.assertEqual(open_payload['motor_dispatch']['outcome'], 'completed')
-        self.assertTrue(open_payload['motor_dispatch']['serial_command_sent'])
-        self.assertTrue(open_payload['motor_dispatch']['controller_armed'])
-        self.assertTrue(open_payload['motor_dispatch']['serial_accepted'])
-        self.assertTrue(open_payload['motor_dispatch']['serial_command_completed'])
-        self.assertEqual(open_payload['motor_dispatch']['serial_command'], '1')
-        self.assertEqual(open_payload['motor_dispatch']['transaction_id'], 1)
-        self.assertEqual(
-            [line.split(',')[4] for line in open_payload['motor_dispatch']['serial_responses']],
-            ['ACCEPTED', 'BUSY', 'DONE'],
-        )
-        self.assertFalse(open_payload['motor_dispatch']['physical_movement_verified'])
-        self.assertEqual(close_payload['motor_dispatch']['outcome'], 'uncertain')
-        self.assertTrue(close_payload['motor_dispatch']['serial_command_sent'])
-        self.assertFalse(close_payload['motor_dispatch']['serial_command_completed'])
-        self.assertFalse(close_payload['motor_dispatch']['physical_movement_verified'])
+            def workflow(self, command=None, station=None):
+                return 200, {'station': station, 'session': {
+                    'id': 55, 'session_uuid': self.identity, 'motor_dispatch_eligible': self.eligible,
+                    'station': station, 'status': 'closed' if command == 'finish_close' else 'open',
+                    'workflow_state': 'idle',
+                }}
+
+        self.service.verifier = WorkflowVerifier()
+        return controller
+
+    def _finish_bench_workflow(self, command='finish_open', station='Station 1'):
+        status, payload = self.post_json('/cabinet/workflow', {'command': command, 'station': station})
+        self.assertEqual(status, 200)
+        return payload['motor_dispatch']
+
+    def test_bench_http_workflow_dispatches_uuid_opens_once_and_never_writes_for_close(self):
+        serial_port = FakeSerial()
+        self._fake_workflow_on_serial(serial_port)
+        legacy = self.store.create_motor_action('55', 'Station 1', 'OPEN')
+        self.assertTrue(self.store.claim_motor_action(legacy['action_id']))
+        self.assertTrue(self.store.finish_motor_action(legacy['action_id'], 'COMPLETED',
+                                                     command_transmitted=True))
+
+        self.service.verifier.eligible = False
+        before = list(serial_port.writes)
+        self.assertTrue(self._finish_bench_workflow()['dispatch_skipped'])
+        self.assertEqual(serial_port.writes, before)
+        self.service.verifier.eligible = True
+        opened = self._finish_bench_workflow()
+        self.assertEqual(opened['outcome'], 'completed')
+        self.assertTrue(opened['serial_accepted'])
+        self.assertTrue(opened['serial_command_sent'])
+        self.assertTrue(opened['serial_command_completed'])
+        self.assertFalse(opened['physical_movement_verified'])
+        self.assertTrue(opened['communication_ready'])
+
+        before = list(serial_port.writes)
+        duplicate = self._finish_bench_workflow()
+        self.assertTrue(duplicate['dispatch_skipped'])
+        self.assertFalse(duplicate['serial_command_sent'])
+        self.assertFalse(duplicate['serial_command_completed'])
+        for station in ('Station 1', 'Station 2'):
+            with self.service._motor_command_lock:
+                closed = self._finish_bench_workflow('finish_close', station)
+            self.assertEqual(closed['outcome'], 'rejected')
+            self.assertFalse(closed['serial_command_sent'])
+            self.assertIn('BENCH_OPEN_ONLY', closed['error'])
+            self.assertFalse(closed['close_available'])
+            self.assertTrue(self._finish_bench_workflow('finish_close', station)['dispatch_skipped'])
+        self.assertEqual(serial_port.writes, before)
+
+        self.service.verifier.identity = workflow_uuid('second')
+        self.assertEqual(self._finish_bench_workflow()['transaction_id'], 2)
+        commands = [frame for frame in serial_port.writes if frame.startswith(b'CMD,')]
         self.assertEqual(commands, [
-            ['CMD', '2', '0123456789abcdef', '1', '1'],
-            ['CMD', '2', '0123456789abcdef', '2', '4'],
+            f'CMD,2,{SESSION},1,1\n'.encode(), f'CMD,2,{SESSION},2,1\n'.encode(),
         ])
-        action_states = {
-            record['workflow_session']: record['status']
-            for record in self.store.list_motor_actions()
-        }
-        self.assertEqual(action_states, {'open-session': 'COMPLETED', 'close-session': 'UNCERTAIN'})
-        action_transmission = {
-            record['workflow_session']: record['command_transmitted']
-            for record in self.store.list_motor_actions()
-        }
-        self.assertEqual(action_transmission, {'open-session': 1, 'close-session': 1})
-        self.assertTrue(any(
-            'motor_action_result workflow_action=finish_open station=Station 1' in message
-            and 'result=completed' in message
-            for message in captured.output
-        ))
-        self.assertTrue(any(
-            'motor_action_result workflow_action=finish_close station=Station 2' in message
-            and 'reason=Unexpected frame while waiting for command response.' in message
-            for message in captured.output
-        ))
-        self.assertTrue(any(
-            'motor_action_reused workflow_action=finish_close station=Station 2' in message
-            and 'state=UNCERTAIN' in message
-            for message in captured.output
-        ))
+        records = self.store.list_motor_actions()
+        self.assertEqual({row['workflow_session'] for row in records}, {
+            '55', workflow_uuid('first'), workflow_uuid('second'),
+        })
+        history = self.store.get_motor_action(legacy['action_id'])
+        self.assertEqual(history['status'], 'COMPLETED')
+        self.assertEqual(history['command_transmitted'], 1)
+        self.assertTrue(all(row['status'] == 'FAILED' and not row['command_transmitted']
+                            for row in records if row['operation'] == 'CLOSE'))
+
+    def test_interrupted_uuid_open_stays_uncertain_after_communication_reconnect(self):
+        interrupted = FakeSerial(command_responses=(response(SESSION, 1, 'ACCEPTED', '1'),))
+        reconnected = FakeSerial()
+        reconnected.last_transaction_id = 1
+        controller = self._fake_workflow_on_serial(interrupted, SerialFactory([reconnected]))
+
+        dispatch = self._finish_bench_workflow()
+        self.assertEqual(dispatch['outcome'], 'uncertain')
+        self.assertTrue(dispatch['serial_accepted'])
+        self.assertFalse(dispatch['serial_command_completed'])
+        self.assertTrue(dispatch['safety_recovery_required'])
+        with controller._lock:
+            self.assertTrue(controller._connect_locked())
+        before = list(reconnected.writes)
+        dispatch = self._finish_bench_workflow()
+        self.assertTrue(dispatch['dispatch_skipped'])
+        self.assertTrue(dispatch['communication_ready'])
+        self.assertFalse(dispatch['controller_armed'])
+        self.assertFalse(dispatch['serial_command_sent'])
+        self.assertEqual(reconnected.writes, before)
+        self.assertFalse(any(frame.startswith(b'CMD,') for frame in before))
+        record, = self.store.list_motor_actions()
+        self.assertEqual(record['status'], 'UNCERTAIN')
 
     def test_operator_recovery_is_refused_when_actuation_disabled_or_confirmation_missing(self):
-        serial_port = FakeProtocolSerial()
+        serial_port = FakeSerial()
         controller = SerialMotorController(serial_instance=serial_port, response_timeout=0.01)
         self.service.motor_controller = controller
 

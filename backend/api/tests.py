@@ -2244,28 +2244,111 @@ class ProfileAdminFormTests(TestCase):
             student.full_clean()
         self.assertIn('student_id', raised.exception.message_dict)
 
-    def test_admin_creation_form_does_not_create_mixed_role_data(self):
-        from .admin import AdminCreationForm
-
-        form = AdminCreationForm(data={
+    def admin_creation_data(self):
+        return {
             'first_name': 'Test',
             'last_name': 'Admin',
+            'administrator_id': 'ADMIN-001',
             'email': 'test-admin@example.com',
             'nfc_uid': 'NFC-ADMIN-001',
             'password1': 'secret1234',
             'password2': 'secret1234',
             'is_active': True,
-        })
+        }
+
+    def test_admin_creation_form_does_not_create_mixed_role_data(self):
+        from .admin import AdminCreationForm
+        from .models import AdminProfile
+
+        section = Section.objects.create(
+            subject_code='AD001', section_name='Test section',
+        )
+        data = self.admin_creation_data()
+        data.update(
+            role=User.RoleChoices.INSTRUCTOR, student_id='STUDENT-001',
+            instructor_id='INSTRUCTOR-001', section=section.pk, assigned_sections=[section.pk],
+            is_superuser=False,
+        )
+        form = AdminCreationForm(data=data)
 
         self.assertTrue(form.is_valid(), msg=form.errors)
         user = form.save()
-        self.assertEqual(user.role, 'admin')
+        user.refresh_from_db()
+        self.assertEqual(user.role, User.RoleChoices.ADMIN)
+        self.assertEqual(user.administrator_id, data['administrator_id'])
+        self.assertEqual(user.username, data['email'])
+        self.assertTrue(user.check_password(data['password1']))
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
         self.assertIsNone(user.student_id)
         self.assertIsNone(user.instructor_id)
+        self.assertIsNone(user.section)
         self.assertFalse(user.assigned_sections.exists())
-        from .models import AdminProfile
         self.assertIsInstance(user, AdminProfile)
-        self.assertEqual(user._meta.model_name, 'adminprofile')
+
+    def test_admin_creation_form_rejects_missing_and_invalid_fields(self):
+        from .admin import AdminCreationForm
+
+        for field, value, error_code in [
+            ('administrator_id', None, 'required'),
+            ('administrator_id', '  ', 'required'),
+            ('administrator_id', 'X' * 51, 'max_length'),
+            ('email', '', 'required'),
+            ('password1', '', 'required'),
+            ('password2', 'Different-Password-123', None),
+        ]:
+            with self.subTest(field=field, value=value):
+                data = self.admin_creation_data()
+                if value is None:
+                    data.pop(field)
+                else:
+                    data[field] = value
+                form = AdminCreationForm(data=data)
+                self.assertFalse(form.is_valid())
+                self.assertEqual(form.errors.as_data()[field][0].code, error_code)
+        self.assertFalse(User.objects.filter(email='test-admin@example.com').exists())
+
+    def test_admin_creation_form_rejects_duplicate_identifier_and_fallback_username(self):
+        from .admin import AdminCreationForm
+
+        data = self.admin_creation_data()
+        User.objects.create_user(
+            username=data['email'], email='existing-admin@example.com', password='irrelevant-fixture',
+            role=User.RoleChoices.ADMIN, administrator_id=data['administrator_id'],
+        )
+        form = AdminCreationForm(data=data)
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors.as_data()['administrator_id'][0].code, 'unique')
+        self.assertEqual(form.errors.as_data()['username'][0].code, 'unique')
+        self.assertFalse(User.objects.filter(email=data['email']).exists())
+
+    def test_admin_profile_add_requires_superuser(self):
+        from django.contrib.auth.models import Permission
+
+        admin_url = reverse('admin:api_adminprofile_add')
+        data = self.admin_creation_data()
+        staff = User.objects.create_user(
+            username='delegated-admin', email='delegated@example.test', password='irrelevant-fixture',
+            role=User.RoleChoices.ADMIN, administrator_id='DELEGATED-ADMIN', is_staff=True,
+        )
+        staff.user_permissions.add(Permission.objects.get(
+            content_type__app_label='api', codename='add_adminprofile',
+        ))
+        self.client.force_login(staff)
+        self.assertEqual(self.client.post(admin_url, data).status_code, 403)
+        self.assertFalse(User.objects.filter(email=data['email']).exists())
+
+        superuser = User.objects.create_superuser(
+            username='existing-root', email='existing-root@example.test', password='irrelevant-fixture',
+            administrator_id='EXISTING-ROOT',
+        )
+        self.client.force_login(superuser)
+        self.assertContains(self.client.get(admin_url), 'name="administrator_id"')
+        self.assertEqual(self.client.post(admin_url, data).status_code, 302)
+        self.assertTrue(User.objects.filter(
+            administrator_id=data['administrator_id'], is_superuser=True,
+        ).exists())
 
     def test_create_superuser_sets_admin_role_and_superuser_flags(self):
         from .models import User, AdminProfile, StudentProfile, InstructorProfile
@@ -6422,6 +6505,8 @@ class NFCEnrollmentRegistrationTests(TestCase):
         )
         enrollment = self.make_enrollment('IDENTITY-PRIVACY-CARD', 'privacy-identity-token')
 
+        student_before = User.objects.filter(pk=student.pk).values().get()
+        access_log_count = AccessLog.objects.count()
         unknown = self.register(
             'privacy-identity-token', 'student', 'student_id', 'NOT-A-REAL-ID',
             'unknown_user', 'Cobalt!93-RiverQuartz',
@@ -6430,13 +6515,31 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'privacy-identity-token', 'instructor', 'instructor_id', student.student_id,
             'wrong_role_user', 'Cobalt!93-RiverQuartz',
         )
-        self.assertEqual(unknown.status_code, 400, unknown.json())
-        self.assertEqual(wrong_role.status_code, 400, wrong_role.json())
-        self.assertNotIn('name', unknown.json())
-        self.assertNotIn('email', unknown.json())
+        mismatched_email = self.client.post('/api/cabinet/enrollment/register/', {
+            'token': 'privacy-identity-token',
+            'id_number': student.student_id,
+            'email': 'different-email@example.test',
+            'username': 'wrong_email_user',
+            'password': 'Cobalt!93-RiverQuartz',
+            'confirm_password': 'Cobalt!93-RiverQuartz',
+        }, format='json')
+        for result in (unknown, wrong_role, mismatched_email):
+            self.assert_enrollment_rejection(result, 404, 'ACCOUNT_NOT_FOUND', student)
         enrollment.refresh_from_db()
         self.assertEqual(enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
-        self.assertIsNone(student.nfc_uid)
+        self.assertIsNone(enrollment.completed_by_id)
+        self.assertEqual(User.objects.filter(pk=student.pk).values().get(), student_before)
+        self.assertEqual(AccessLog.objects.count(), access_log_count)
+
+    def assert_enrollment_rejection(self, response, status, code, *accounts):
+        body = response.json()
+        self.assertEqual(response.status_code, status, body)
+        self.assertEqual(set(body), {'code', 'error'}, body)
+        self.assertEqual(body['code'], code)
+        for account in accounts:
+            for value in (account.username, account.email, account.student_id, account.nfc_uid):
+                if value:
+                    self.assertNotIn(value, body['error'])
 
     def test_existing_account_and_duplicate_card_are_rejected(self):
         already_registered = User.objects.create_user(
@@ -6464,6 +6567,9 @@ class NFCEnrollmentRegistrationTests(TestCase):
         account_enrollment = self.make_enrollment('IDENTITY-ACCOUNT-CARD', 'already-registered-token')
         card_enrollment = self.make_enrollment('IDENTITY-DUPLICATE-CARD', 'duplicate-card-token')
 
+        account_ids = [already_registered.pk, pending.pk, existing_card_owner.pk]
+        accounts_before = list(User.objects.filter(pk__in=account_ids).order_by('pk').values())
+        access_log_count = AccessLog.objects.count()
         account_result = self.register(
             'already-registered-token', 'student', 'student_id', already_registered.student_id,
             'new_username', 'Cobalt!93-RiverQuartz',
@@ -6472,17 +6578,16 @@ class NFCEnrollmentRegistrationTests(TestCase):
             'duplicate-card-token', 'student', 'student_id', pending.student_id,
             'pending_duplicate', 'Cobalt!93-RiverQuartz',
         )
-        self.assertEqual(account_result.status_code, 409, account_result.json())
-        self.assertEqual(card_result.status_code, 400, card_result.json())
-        already_registered.refresh_from_db()
-        pending.refresh_from_db()
+        self.assert_enrollment_rejection(account_result, 409, 'SESSION_ALREADY_USED', already_registered)
+        self.assert_enrollment_rejection(card_result, 409, 'NFC_OWNERSHIP_CONFLICT', pending, existing_card_owner)
+        self.assertEqual(list(User.objects.filter(pk__in=account_ids).order_by('pk').values()), accounts_before)
+        self.assertEqual(AccessLog.objects.count(), access_log_count)
         account_enrollment.refresh_from_db()
         card_enrollment.refresh_from_db()
-        self.assertIsNone(already_registered.nfc_uid)
-        self.assertIsNone(pending.nfc_uid)
+        self.assertIsNone(account_enrollment.completed_by_id)
+        self.assertIsNone(card_enrollment.completed_by_id)
         self.assertEqual(account_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
         self.assertEqual(card_enrollment.status, NFCEnrollmentSession.StatusChoices.PENDING)
-        self.assertEqual(existing_card_owner.nfc_uid, 'IDENTITY-DUPLICATE-CARD')
 
     def test_admin_assigned_card_cannot_be_claimed_from_a_different_scan(self):
         assigned_student = User.objects.create_user(
@@ -6498,22 +6603,34 @@ class NFCEnrollmentRegistrationTests(TestCase):
         assigned_card.registration_target_user = assigned_student
         assigned_card.save(update_fields=['registration_target_user'])
 
+        account_before = User.objects.filter(pk=assigned_student.pk).values().get()
+        access_log_count = AccessLog.objects.count()
         wrong_registration = self.register(
             'different-card-token', 'student', 'student_id', assigned_student.student_id,
             'different_card_claim', 'Cobalt!93-RiverQuartz',
         )
 
-        self.assertEqual(wrong_registration.status_code, 400, wrong_registration.json())
-        assigned_student.refresh_from_db()
+        self.assert_enrollment_rejection(wrong_registration, 409, 'NFC_OWNERSHIP_CONFLICT', assigned_student)
+        self.assertEqual(User.objects.filter(pk=assigned_student.pk).values().get(), account_before)
+        self.assertEqual(AccessLog.objects.count(), access_log_count)
         wrong_card.refresh_from_db()
-        self.assertFalse(assigned_student.has_usable_password())
         self.assertEqual(wrong_card.status, NFCEnrollmentSession.StatusChoices.PENDING)
+        self.assertIsNone(wrong_card.completed_by_id)
 
         correct_registration = self.register(
             'assigned-card-token', 'student', 'student_id', assigned_student.student_id,
             'assigned_card_owner', 'Cobalt!93-RiverQuartz',
         )
         self.assertEqual(correct_registration.status_code, 201, correct_registration.json())
+        self.assertNotIn('nfc_uid', correct_registration.json())
+        assigned_student.refresh_from_db()
+        assigned_card.refresh_from_db()
+        self.assertEqual(assigned_student.nfc_uid, 'IDENTITY-ADMIN-ASSIGNED-CARD')
+        self.assertEqual(assigned_student.username, 'assigned_card_owner')
+        self.assertTrue(assigned_student.check_password('Cobalt!93-RiverQuartz'))
+        self.assertEqual(assigned_card.status, NFCEnrollmentSession.StatusChoices.COMPLETED)
+        self.assertEqual(assigned_card.completed_by_id, assigned_student.pk)
+        self.assertEqual(AccessLog.objects.count(), access_log_count + 1)
 
     def test_inactive_roster_account_cannot_register_a_card(self):
         inactive_student = User.objects.create_user(

@@ -35,7 +35,7 @@ describe('Login', () => {
 
   it('shows matching user and administrator copy with text-only navigation links', () => {
     renderLogin()
-    expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Welcome' })).toBeTruthy()
     expect(screen.getByText('Sign in to access your TapTrack cabinet')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Administrator Login →' }).getAttribute('href')).toBe('/admin/login')
     expect(screen.getByRole('link', { name: 'User Guide' }).getAttribute('href')).toBe('/guide')

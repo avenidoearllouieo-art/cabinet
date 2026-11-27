@@ -10,7 +10,7 @@ const actionLabels = {
   bulk_delete: { title: 'Delete selected accounts', confirm: 'Delete accounts' },
 }
 
-export default function UserActionDialog({ action, user, count = 0, busy = false, error = '', issuedPin = '', onClose, onConfirm }) {
+export default function UserActionDialog({ action, user, count = 0, busy = false, error = '', onClose, onConfirm }) {
   const [nfcUid, setNfcUid] = useState(user?.nfc_uid || '')
   const [replacementConfirmed, setReplacementConfirmed] = useState(false)
   const [validationError, setValidationError] = useState('')

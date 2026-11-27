@@ -1,5 +1,10 @@
 # TapTrack Raspberry Pi deployment
 
+For the Phase 1 OPEN-only bench and UUID dispatch update, use the
+[integrated rollout and rollback runbook](../../docs/MOTOR_SESSION_IDENTITY_FIX.md).
+Its deployment steps use the active systemd configuration, SQLite journal, and
+Nginx document root. The installation examples below use historical paths.
+
 ## Overview
 
 This repository runs the official Cabinet touchscreen UI and Pi-local NFC reader/scan bridge.

@@ -508,7 +508,28 @@ class Submission(models.Model):
         ordering = ['-submitted_at']
 
 
+class CabinetSessionQuerySet(models.QuerySet):
+    identity_fields = frozenset({'session_uuid', 'motor_dispatch_eligible'})
+
+    def update(self, **kwargs):
+        if self.identity_fields.intersection(kwargs):
+            raise ValidationError('Cabinet session motor identity is immutable.')
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        if self.identity_fields.intersection(fields):
+            raise ValidationError('Cabinet session motor identity is immutable.')
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None):
+        if self.identity_fields.intersection(update_fields or ()):
+            raise ValidationError('Cabinet session motor identity is immutable.')
+        return super().bulk_create(objs, batch_size=batch_size, ignore_conflicts=ignore_conflicts,
+                                   update_conflicts=update_conflicts, update_fields=update_fields, unique_fields=unique_fields)
+
+
 class CabinetSession(models.Model):
+    objects = CabinetSessionQuerySet.as_manager()
     class StatusChoices(models.TextChoices):
         OPEN = 'open', 'Open'
         CLOSED = 'closed', 'Closed'
@@ -519,6 +540,10 @@ class CabinetSession(models.Model):
         CLOSING = 'closing', 'Closing'
 
     id = models.AutoField(primary_key=True)
+    session_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # Backfilled sessions are permanently inhibited. Only newly created sessions
+    # receive True; assigning a UUID must never authorize historical movement.
+    motor_dispatch_eligible = models.BooleanField(default=True, editable=False)
     station = models.CharField(max_length=100, blank=True, default='')
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.OPEN)
     workflow_state = models.CharField(max_length=20, choices=WorkflowStateChoices.choices, default=WorkflowStateChoices.IDLE)
@@ -534,6 +559,19 @@ class CabinetSession(models.Model):
     def __str__(self):
         status_label = self.status or self.StatusChoices.OPEN
         return f"Cabinet session {self.station or 'unknown'} ({status_label})"
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            using = kwargs.get('using') or self._state.db or 'default'
+            previous = type(self).objects.using(using).filter(pk=self.pk).values(
+                'session_uuid', 'motor_dispatch_eligible',
+            ).first()
+            if previous and (
+                str(previous['session_uuid']) != str(self.session_uuid)
+                or previous['motor_dispatch_eligible'] != self.motor_dispatch_eligible
+            ):
+                raise ValidationError('Cabinet session motor identity is immutable.')
+        return super().save(*args, **kwargs)
 
     class Meta:
         ordering = ['-opened_at']

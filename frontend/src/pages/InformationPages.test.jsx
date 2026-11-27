@@ -32,7 +32,7 @@ describe('TapTrack information pages', () => {
     expect(screen.queryByText('Django media and Tigris')).toBeNull()
     expect(screen.getByText('Ramiro, Christian Joseph F.')).toBeTruthy()
     expect(screen.getByText('Engr. Jay Noel Rojo')).toBeTruthy()
-    expect(screen.getByText(/4th Floor Hallway, near the College of Information Technology and Computing/)).toBeTruthy()
+    expect(screen.getByText('Hallway near the CITC Office')).toBeTruthy()
     expect(screen.getByText('College of Information Technology and Computing', { exact: true })).toBeTruthy()
     expect(screen.getByText(/automatically attempts to capture a photo/)).toBeTruthy()
     expect(screen.queryByText(/Version\s*\d/i)).toBeNull()
