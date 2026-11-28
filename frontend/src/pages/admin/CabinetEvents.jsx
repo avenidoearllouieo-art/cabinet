@@ -8,7 +8,7 @@ import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEve
 import DeleteCabinetEventModal from '../../components/cabinetevents/DeleteCabinetEventModal.jsx'
 import SearchField from '../../components/SearchField.jsx'
 import Modal from '../../components/Modal.jsx'
-import { Box, Plus } from 'lucide-react'
+import { Box } from 'lucide-react'
 
 export default function CabinetEvents() {
   const [events, setEvents] = useState([])
@@ -117,14 +117,6 @@ export default function CabinetEvents() {
   const formatDuration = (seconds) => seconds == null ? '—' : seconds < 60 ? `${seconds} sec` : `${Math.floor(seconds / 60)} min`
 
   const columns = [
-    {
-      key: 'actions', label: 'Action', className: 'w-[12%]',
-      render: (_value, row) => (
-        <button type="button" onClick={() => handleOpenDetails(row.id, row)} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-taptrack-navy hover:border-taptrack-gold">
-          <Plus size={14} /> View Details
-        </button>
-      ),
-    },
     { key: 'id', label: 'Session ID', className: 'w-[8%]', render: (value) => `#${value}` },
     { key: 'station', label: 'Station', className: 'w-[10%]' },
     { key: 'session_initiator', label: 'Initiator', className: 'w-[15%]', render: (value) => value?.fullName || 'Not recorded' },
@@ -134,6 +126,14 @@ export default function CabinetEvents() {
     { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: formatDuration },
     { key: 'participant_count', label: 'Participants', className: 'w-[8%]' },
     { key: 'status', label: 'Status', className: 'w-[8%]', render: (value) => <StatusBadge status={value === 'open' ? 'Active' : 'Completed'} label={value === 'open' ? 'Active' : 'Completed'} /> },
+    {
+      key: 'actions', label: 'Actions', className: 'w-[12%]',
+      render: (_value, row) => (
+        <button type="button" onClick={() => handleOpenDetails(row.id, row)} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-taptrack-navy hover:border-taptrack-gold">
+          View
+        </button>
+      ),
+    },
   ]
 
   return (
@@ -226,7 +226,27 @@ export default function CabinetEvents() {
           </div>
         </div>
 
-        <DataTable columns={columns} data={filteredEvents} loading={loading} showActions={false} variant="monitoring" emptyMessage={events.length ? 'No cabinet sessions match these filters.' : 'No cabinet sessions recorded.'} />
+        <DataTable
+          columns={columns}
+          data={filteredEvents}
+          loading={loading}
+          showActions={false}
+          expandable
+          variant="monitoring"
+          emptyMessage={events.length ? 'No cabinet sessions match these filters.' : 'No cabinet sessions recorded.'}
+          renderExpandedRow={(row) => (
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
+              <div><dt className="text-slate-500">Opening initiator</dt><dd className="font-semibold text-slate-900">{row.session_initiator?.fullName || 'Identity not recorded'}</dd></div>
+              <div><dt className="text-slate-500">Closing initiator</dt><dd className="font-semibold text-slate-900">{row.closing_initiator?.fullName || (row.status === 'open' ? 'Not closed yet' : 'Identity not recorded')}</dd></div>
+              <div><dt className="text-slate-500">Opening attendance</dt><dd>{row.opening_attendance_count}</dd></div>
+              <div><dt className="text-slate-500">Closing attendance</dt><dd>{row.closing_attendance_count}</dd></div>
+              <div><dt className="text-slate-500">Opened at</dt><dd>{formatTimestamp(row.opened_at)}</dd></div>
+              <div><dt className="text-slate-500">Closed at</dt><dd>{row.closed_at ? formatTimestamp(row.closed_at) : 'Session still active'}</dd></div>
+              <div><dt className="text-slate-500">Duration</dt><dd>{formatDuration(row.duration_seconds)}</dd></div>
+              <div><dt className="text-slate-500">Motor outcome</dt><dd>{row.motor_command_outcome}</dd></div>
+            </dl>
+          )}
+        />
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <span className="text-sm text-slate-600">{serverCount} matching sessions</span>
           <label className="flex items-center gap-2 text-sm text-slate-600">Rows

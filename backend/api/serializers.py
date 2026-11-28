@@ -1400,6 +1400,9 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
     def get_participant_count(self, obj):
         return obj.opened_by.count()
 
+    def get_opened_participant_count(self, obj):
+        return obj.opened_by.count()
+
     def get_opening_attendance_count(self, obj):
         return obj.opened_by.count()
 
@@ -1439,6 +1442,19 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
 
     def get_session_initiator(self, obj):
         initiator = obj.session_initiator
+        if initiator is None:
+            opening_log = obj.access_logs.filter(
+                action=AccessLog.AccessActionChoices.OPEN,
+                status=AccessLog.AccessStatusChoices.SUCCESS,
+                user__isnull=False,
+            ).select_related('user', 'user__section').order_by('access_time', 'pk').first()
+            initiator = opening_log.user if opening_log else None
+        if initiator is None:
+            first_attendance = obj.attendance_records.filter(
+                opened_attended_at__isnull=False,
+                user__isnull=False,
+            ).select_related('user', 'user__section').order_by('opened_attended_at', 'pk').first()
+            initiator = first_attendance.user if first_attendance else None
         if not initiator:
             return None
         if not self._is_instructor_authorized_user(initiator):
@@ -1449,6 +1465,19 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
 
     def get_closing_initiator(self, obj):
         initiator = obj.closing_initiator
+        if initiator is None:
+            closing_log = obj.access_logs.filter(
+                action=AccessLog.AccessActionChoices.CLOSE,
+                status=AccessLog.AccessStatusChoices.SUCCESS,
+                user__isnull=False,
+            ).select_related('user', 'user__section').order_by('access_time', 'pk').first()
+            initiator = closing_log.user if closing_log else None
+        if initiator is None:
+            first_attendance = obj.attendance_records.filter(
+                closed_attended_at__isnull=False,
+                user__isnull=False,
+            ).select_related('user', 'user__section').order_by('closed_attended_at', 'pk').first()
+            initiator = first_attendance.user if first_attendance else None
         if not initiator:
             return None
         if not self._is_instructor_authorized_user(initiator):

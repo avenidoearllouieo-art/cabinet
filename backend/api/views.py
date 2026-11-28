@@ -3583,6 +3583,7 @@ class VerifyNFCView(APIView):
             'name': user.get_full_name().strip() if user else None,
             'role': user.role if user else None,
             'student_id': user.student_id if user else None,
+            'section': user.section.section_name if user and user.section else '',
         }
 
     def _unregistered_response(self, nfc_uid, device_context, registration_target_user=None):

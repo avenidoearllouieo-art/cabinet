@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.db import connection, IntegrityError, transaction
@@ -7,7 +8,7 @@ from django.test import RequestFactory, TestCase, TransactionTestCase
 from django.utils import timezone
 
 from .admin import CabinetSessionAdmin
-from .models import AccessLog, CabinetSession, User
+from .models import AccessLog, CabinetSession, Section, User
 from .serializers import CabinetSessionSerializer
 
 
@@ -48,6 +49,46 @@ class CabinetIdentityTests(TestCase):
         first = self.session()
         with self.assertRaises(IntegrityError), transaction.atomic():
             self.session(session_uuid=first.session_uuid)
+
+    def test_completed_session_preserves_participants_duration_and_initiators(self):
+        opening_user = User.objects.create_user(
+            username='completed-opening',
+            email='completed-opening@example.com',
+            password='secret',
+            role=User.RoleChoices.STUDENT,
+            student_id='COMPLETED-OPEN',
+            first_name='Mika',
+            last_name='Reyes',
+            section=Section.objects.create(section_name='Section C'),
+        )
+        closing_user = User.objects.create_user(
+            username='completed-closing',
+            email='completed-closing@example.com',
+            password='secret',
+            role=User.RoleChoices.STUDENT,
+            student_id='COMPLETED-CLOSE',
+            first_name='Ana',
+            last_name='Lopez',
+            section=opening_user.section,
+        )
+        session = CabinetSession.objects.create(
+            station='Station 1',
+            status=CabinetSession.StatusChoices.CLOSED,
+            session_initiator=opening_user,
+            closing_initiator=closing_user,
+            closed_at=timezone.now(),
+        )
+        CabinetSession.objects.filter(pk=session.pk).update(opened_at=timezone.now() - timedelta(minutes=12))
+        session.refresh_from_db()
+        session.opened_by.add(opening_user, closing_user)
+        session.closed_by.add(closing_user)
+        data = CabinetSessionSerializer(session).data
+        self.assertEqual(data['participant_count'], 2)
+        self.assertEqual(data['opening_attendance_count'], 2)
+        self.assertEqual(data['closing_attendance_count'], 1)
+        self.assertEqual(data['session_initiator']['fullName'], 'Mika Reyes')
+        self.assertEqual(data['closing_initiator']['fullName'], 'Ana Lopez')
+        self.assertGreaterEqual(data['duration_seconds'], 600)
 
     def test_serializer_and_admin_expose_identity_read_only(self):
         session = self.session()

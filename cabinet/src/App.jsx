@@ -1152,14 +1152,9 @@ export default function App() {
               <span className={`status-dot ${scanFeedback?.type === 'success' ? 'good' : scanFeedback?.type === 'duplicate' ? 'warning-dot' : 'good'}`} />
               <span>{statusMessage || 'Tap NFC cards to record closing attendance.'}</span>
             </div>
-            <div className="confirm-list">
-              <div className="confirm-row"><span>Session Status</span><strong>ACTIVE</strong></div>
-              <div className="confirm-row"><span>Opened by</span><strong>{getParticipantCount(selectedSession)}</strong></div>
-              <div className="confirm-row"><span>Closed by</span><strong>{closingParticipants.length}</strong></div>
-              <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
-            </div>
             <div className="confirm-list close-session-summary">
-              <div className="confirm-row"><span>Session initiator</span><strong>{selectedSession?.session_initiator?.fullName || 'Historically unrecorded'}</strong></div>
+              <div className="confirm-row"><span>Opened by</span><strong>{selectedSession?.session_initiator?.fullName || 'Identity not recorded'}</strong></div>
+              <div className="confirm-row"><span>Section</span><strong>{selectedSession?.session_initiator?.section || 'Section unavailable'}</strong></div>
               <div className="confirm-row"><span>Opening time</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
               <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
               <div className="confirm-row"><span>Closing attendance</span><strong>{closingParticipants.length}</strong></div>
