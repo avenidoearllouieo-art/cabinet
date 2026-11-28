@@ -16,7 +16,13 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
   }, [])
 
   const renderCell = (col, row) => {
-    const cellValue = col.render ? col.render(row[col.key], row) : row[col.key] ?? '—'
+    const rawValue = row[col.key]
+    const hasPresentValue = rawValue !== null && rawValue !== undefined && !(typeof rawValue === 'string' && !rawValue.trim())
+    const cellValue = col.render
+      ? col.render(rawValue, row)
+      : hasPresentValue
+        ? rawValue
+        : 'No value recorded'
 
     if (typeof cellValue === 'string' || typeof cellValue === 'number') {
       const text = String(cellValue)

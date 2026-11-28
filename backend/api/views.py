@@ -3318,7 +3318,22 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
             'start': start.isoformat(),
             'end': end.isoformat(),
             'successful_access': base_qs.filter(status=AccessLog.AccessStatusChoices.SUCCESS).count(),
-            'denied_access': base_qs.filter(status__in=denied_statuses).count(),
+            'denied_access': base_qs.filter(status__in=denied_statuses).exclude(
+                Q(reason__icontains='timeout') |
+                Q(reason__icontains='motor') |
+                Q(reason__icontains='serial') |
+                Q(reason__icontains='backend') |
+                Q(reason__icontains='unavailable')
+            ).count(),
+            'technical_failures': base_qs.filter(
+                status=AccessLog.AccessStatusChoices.FAILED,
+            ).filter(
+                Q(reason__icontains='timeout') |
+                Q(reason__icontains='motor') |
+                Q(reason__icontains='serial') |
+                Q(reason__icontains='backend') |
+                Q(reason__icontains='unavailable')
+            ).count(),
             'cabinet_sessions': cabinet_sessions.count(),
             'unique_users': base_qs.filter(user__isnull=False).values('user').distinct().count(),
         })
@@ -4129,17 +4144,28 @@ class PasswordRecoveryHistoryView(APIView):
         if view == 'stats':
             today = timezone.localdate()
             preset = str(request.query_params.get('range') or 'today').lower()
-            if preset == '7d':
+            if preset == 'yesterday':
+                start = today - timedelta(days=1)
+                period_end = start
+            elif preset == '7d':
                 start = today - timedelta(days=6)
+                period_end = today
             elif preset == '30d':
                 start = today - timedelta(days=29)
+                period_end = today
             else:
                 start = today
+                period_end = today
             return Response({
                 'pending_verification': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.PENDING).count(),
                 'verified_awaiting_completion': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.VERIFIED).count(),
-                'completed_in_range': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.USED, used_at__date__gte=start, used_at__date__lte=today).count(),
-                'rejected_attempts_in_range': PasswordRecoveryAuditEvent.objects.filter(event_type=PasswordRecoveryAuditEvent.EventType.NFC_REJECTED, timestamp__date__gte=start, timestamp__date__lte=today).count(),
+                'awaiting_password_reset': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.VERIFIED).count(),
+                'completed_requests': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.USED, used_at__date__gte=start, used_at__date__lte=period_end).count(),
+                'completed_in_range': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.USED, used_at__date__gte=start, used_at__date__lte=period_end).count(),
+                'expired_requests': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.EXPIRED, expires_at__date__gte=start, expires_at__date__lte=period_end).count(),
+                'rejected_attempts_in_range': PasswordRecoveryAuditEvent.objects.filter(event_type=PasswordRecoveryAuditEvent.EventType.NFC_REJECTED, timestamp__date__gte=start, timestamp__date__lte=period_end).count(),
+                'start': start.isoformat(),
+                'end': period_end.isoformat(),
             })
 
         if view == 'requests':

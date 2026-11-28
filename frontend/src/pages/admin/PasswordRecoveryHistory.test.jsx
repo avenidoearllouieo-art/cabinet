@@ -46,7 +46,7 @@ describe('PasswordRecoveryHistory', () => {
 
     expect(await screen.findByText('Student A')).toBeTruthy()
     expect(screen.getByText('•••-001')).toBeTruthy()
-    expect(screen.getByText('Verified – Awaiting Reset')).toBeTruthy()
+    expect(screen.getAllByText('Verified – Awaiting Reset').length).toBeGreaterThan(0)
     expect(screen.getAllByText('1').length).toBeGreaterThan(0)
     expect(document.body.textContent).not.toContain('request_id')
     expect(document.body.textContent).not.toContain('nfc_uid')

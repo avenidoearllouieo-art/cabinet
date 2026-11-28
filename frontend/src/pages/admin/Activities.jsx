@@ -12,6 +12,7 @@ import { fetchAllResults } from '../../services/paginatedResults.js'
 import Pagination from '../../components/Pagination.jsx'
 import SearchField from '../../components/SearchField.jsx'
 import { pluralize } from '../../utils/labels.js'
+import ExpandedDetailsGrid from '../../components/ExpandedDetailsGrid.jsx'
 import { ClipboardList, CalendarDays, CalendarCheck, XCircle, SlidersHorizontal } from 'lucide-react'
 
 const formatDate = (value) => {
@@ -210,13 +211,13 @@ export default function Activities() {
       key: 'section',
       label: 'Assigned Sections',
       className: 'w-[16%]',
-      render: (_value, row) => getActivitySectionNames(row).join(', ') || '—',
+      render: (_value, row) => getActivitySectionNames(row).join(', ') || 'No section assigned',
     },
     {
       key: 'created_by',
       label: 'Created By',
       className: 'w-[13%]',
-      render: (_value, row) => row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—',
+      render: (_value, row) => row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || 'No instructor assigned',
     },
     {
       key: 'due_date',
@@ -350,11 +351,16 @@ export default function Activities() {
               )
             }}
             renderExpandedRow={(row) => (
-              <dl className="grid gap-2 sm:grid-cols-2">
-                <div><dt className="font-semibold">Activity Type</dt><dd>{getActivityType(row)}</dd></div>
-                <div><dt className="font-semibold">Assigned Instructor</dt><dd>{row.assigned_instructor_name || row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—'}</dd></div>
-                <div className="sm:col-span-2"><dt className="font-semibold">Description</dt><dd className="whitespace-pre-wrap">{row.description || '—'}</dd></div>
-              </dl>
+              <ExpandedDetailsGrid
+                items={[
+                  { label: 'Activity Type', value: getActivityType(row) },
+                  { label: 'Assigned Instructor', value: row.assigned_instructor_name || row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || 'No instructor assigned' },
+                  { label: 'Assigned Sections', value: getActivitySectionNames(row).join(', ') || 'No section assigned' },
+                  { label: 'Deadline', value: formatDate(row.due_date) },
+                  { label: 'Description', value: row.description || 'No description provided', className: 'sm:col-span-2 lg:col-span-2' },
+                  { label: 'Submission Progress', value: `${getSubmittedStudentCount(row)}${Number(row.assigned_student_count) > 0 ? ` of ${Number(row.assigned_student_count)} submitted` : ' submitted'}` },
+                ]}
+              />
             )}
             emptyMessage={activities.length ? 'No activities match your filters.' : 'No activities available.'}
           />

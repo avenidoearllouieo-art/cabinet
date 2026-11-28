@@ -9,6 +9,7 @@ import SummaryCard from '../../components/SummaryCard'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import Pagination from '../../components/Pagination.jsx'
+import ExpandedDetailsGrid from '../../components/ExpandedDetailsGrid.jsx'
 import SubmissionActionsMenu from '../../components/submissions/SubmissionActionsMenu.jsx'
 import ViewSubmissionModal from '../../components/submissions/ViewSubmissionModal.jsx'
 import { pluralize } from '../../utils/labels.js'
@@ -23,7 +24,7 @@ const statusOptions = [
 const PAGE_SIZE = 10
 
 const formatDate = (value) => {
-  if (!value) return '—'
+  if (!value) return 'No date recorded'
   try {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
@@ -288,12 +289,16 @@ export default function Submissions() {
             )
           }}
           renderExpandedRow={(row) => (
-            <dl className="grid gap-2 sm:grid-cols-2">
-              <div><dt className="font-semibold">Student ID</dt><dd>{row.student?.student_id || row.student_id || '—'}</dd></div>
-              <div><dt className="font-semibold">Instructor</dt><dd>{resolveInstructor(row)}</dd></div>
-              <div className="sm:col-span-2"><dt className="font-semibold">Remarks</dt><dd className="whitespace-pre-wrap">{row.remarks || '—'}</dd></div>
-              <div className="sm:col-span-2"><dt className="font-semibold">Feedback</dt><dd className="whitespace-pre-wrap">{row.feedback || '—'}</dd></div>
-            </dl>
+            <ExpandedDetailsGrid
+              items={[
+                { label: 'Student ID', value: row.student?.student_id || row.student_id || 'Student ID unavailable' },
+                { label: 'Instructor', value: resolveInstructor(row) },
+                { label: 'Section', value: row.student?.section_name || row.student_section || 'No section assigned' },
+                { label: 'Submission time', value: formatDate(row.submitted_at) },
+                { label: 'Remarks', value: row.remarks || 'No remarks provided', className: 'sm:col-span-2' },
+                { label: 'Feedback', value: row.feedback || 'No feedback provided', className: 'sm:col-span-2' },
+              ]}
+            />
           )}
           emptyMessage={query || activityIdFilter || statusFilter || submittedDate ? 'No submissions match your filters.' : 'No submissions available.'}
         />

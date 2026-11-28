@@ -1,3 +1,5 @@
+import ExpandedDetailsGrid from '../ExpandedDetailsGrid.jsx'
+
 function roleLabel(role) {
   const normalized = String(role || '').toLowerCase()
   if (normalized === 'admin' || normalized === 'administrator') return 'Administrator'
@@ -60,13 +62,9 @@ export default function UserDetailsPanel({ user }) {
   ]
 
   return (
-    <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
-      {details.map(([label, value]) => (
-        <div key={label} className="min-w-0 border-b border-slate-200/80 pb-2">
-          <dt className="text-[11px] font-semibold uppercase text-slate-500">{label}</dt>
-          <dd className="mt-0.5 min-w-0 break-words text-sm font-medium text-[#102a4c]">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <ExpandedDetailsGrid
+      columns="grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+      items={details.map(([label, value]) => ({ label, value }))}
+    />
   )
 }

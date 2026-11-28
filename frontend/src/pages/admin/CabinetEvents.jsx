@@ -8,6 +8,7 @@ import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEve
 import DeleteCabinetEventModal from '../../components/cabinetevents/DeleteCabinetEventModal.jsx'
 import SearchField from '../../components/SearchField.jsx'
 import Modal from '../../components/Modal.jsx'
+import ExpandedDetailsGrid from '../../components/ExpandedDetailsGrid.jsx'
 import { Box } from 'lucide-react'
 
 export default function CabinetEvents() {
@@ -17,9 +18,6 @@ export default function CabinetEvents() {
   const [query, setQuery] = useState('')
   const [cabinetFilter, setCabinetFilter] = useState('all')
   const [sectionFilter, setSectionFilter] = useState('all')
-  const [roleFilter, setRoleFilter] = useState('all')
-  const [eventTypeFilter, setEventTypeFilter] = useState('all')
-  const [resultFilter, setResultFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortOrder, setSortOrder] = useState('newest')
@@ -33,6 +31,7 @@ export default function CabinetEvents() {
   const [pageSize, setPageSize] = useState(10)
   const [serverCount, setServerCount] = useState(0)
   const [sessionStats, setSessionStats] = useState({ active_sessions: 0, completed_sessions: 0, average_completed_duration_seconds: 0, sessions_pending_closing_attendance: 0 })
+  const nearbyPages = [...new Set([1, Math.max(1, Math.ceil(serverCount / pageSize)), page - 1, page, page + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= Math.max(1, Math.ceil(serverCount / pageSize))))].sort((left, right) => left - right)
   const params = new URLSearchParams(window.location.search)
   const selectedUserId = params.get('user') || params.get('user_id')
 
@@ -106,7 +105,6 @@ export default function CabinetEvents() {
 
   const uniqueCabinets = [...new Set(events.flatMap((event) => [event.station, event.cabinet_id]).filter(Boolean))].sort()
   const uniqueSections = [...new Set(events.map((event) => event.section_name).filter(Boolean))].sort()
-  const uniqueRoles = [...new Set(events.map((event) => event.role).filter(Boolean))].sort()
 
   const getResultBadge = (result) => {
     if (!result || result === '—') return <span className="text-[#6B7280]">—</span>
@@ -184,32 +182,11 @@ export default function CabinetEvents() {
               </select>
             </label>
             <label>
-              <span className="sr-only">Filter role</span>
-              <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">
-                <option value="all">All roles</option>
-                {uniqueRoles.map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
-            </label>
-            <label>
               <span className="sr-only">Filter session status</span>
               <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
                 <option value="all">All statuses</option>
                 <option value="open">Active</option>
                 <option value="closed">Completed</option>
-              </select>
-            </label>
-            <label>
-              <span className="sr-only">Filter event type</span>
-              <select value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">
-                <option value="all">All event types</option>
-                {['Access Granted', 'Access Denied', 'Cabinet Opened', 'Cabinet Closed', 'Unlock Failed', 'Session Timeout'].map((type) => <option key={type} value={type}>{type}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="sr-only">Filter result</span>
-              <select value={resultFilter} onChange={(event) => setResultFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">
-                <option value="all">All results</option>
-                {['Success', 'Denied', 'Failed', 'Timeout'].map((result) => <option key={result} value={result}>{result}</option>)}
               </select>
             </label>
             <label>
@@ -235,16 +212,18 @@ export default function CabinetEvents() {
           variant="monitoring"
           emptyMessage={events.length ? 'No cabinet sessions match these filters.' : 'No cabinet sessions recorded.'}
           renderExpandedRow={(row) => (
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
-              <div><dt className="text-slate-500">Opening initiator</dt><dd className="font-semibold text-slate-900">{row.session_initiator?.fullName || 'Identity not recorded'}</dd></div>
-              <div><dt className="text-slate-500">Closing initiator</dt><dd className="font-semibold text-slate-900">{row.closing_initiator?.fullName || (row.status === 'open' ? 'Not closed yet' : 'Identity not recorded')}</dd></div>
-              <div><dt className="text-slate-500">Opening attendance</dt><dd>{row.opening_attendance_count}</dd></div>
-              <div><dt className="text-slate-500">Closing attendance</dt><dd>{row.closing_attendance_count}</dd></div>
-              <div><dt className="text-slate-500">Opened at</dt><dd>{formatTimestamp(row.opened_at)}</dd></div>
-              <div><dt className="text-slate-500">Closed at</dt><dd>{row.closed_at ? formatTimestamp(row.closed_at) : 'Session still active'}</dd></div>
-              <div><dt className="text-slate-500">Duration</dt><dd>{formatDuration(row.duration_seconds)}</dd></div>
-              <div><dt className="text-slate-500">Motor outcome</dt><dd>{row.motor_command_outcome}</dd></div>
-            </dl>
+            <ExpandedDetailsGrid
+              items={[
+                { label: 'Opening initiator', value: row.session_initiator?.fullName || 'Identity not recorded' },
+                { label: 'Closing initiator', value: row.closing_initiator?.fullName || (row.status === 'open' ? 'Not closed yet' : 'Identity not recorded') },
+                { label: 'Opening attendance', value: row.opening_attendance_count },
+                { label: 'Closing attendance', value: row.closing_attendance_count },
+                { label: 'Opened at', value: formatTimestamp(row.opened_at) },
+                { label: 'Closed at', value: row.closed_at ? formatTimestamp(row.closed_at) : 'Session still active' },
+                { label: 'Duration', value: formatDuration(row.duration_seconds) },
+                { label: 'Motor outcome', value: row.motor_command_outcome || 'Not recorded' },
+              ]}
+            />
           )}
         />
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -257,7 +236,12 @@ export default function CabinetEvents() {
           <div className="flex items-center gap-2">
             <button type="button" disabled={page === 1} onClick={() => setPage(1)} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">First</button>
             <button type="button" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Previous</button>
-            <span className="text-sm text-slate-600">Page {page}</span>
+            {nearbyPages.map((pageNumber, index) => (
+              <span key={pageNumber} className="flex items-center gap-1">
+                {index > 0 && pageNumber - nearbyPages[index - 1] > 1 && <span aria-label="More pages">…</span>}
+                <button type="button" onClick={() => setPage(pageNumber)} aria-current={pageNumber === page ? 'page' : undefined} className={`h-10 min-w-10 rounded-md px-2 text-sm ${pageNumber === page ? 'bg-taptrack-gold font-semibold text-taptrack-navy' : 'border border-slate-300'}`}>{pageNumber}</button>
+              </span>
+            ))}
             <button type="button" disabled={page * pageSize >= serverCount} onClick={() => setPage((value) => value + 1)} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Next</button>
             <button type="button" disabled={page * pageSize >= serverCount} onClick={() => setPage(Math.max(1, Math.ceil(serverCount / pageSize)))} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Last</button>
           </div>

@@ -12,10 +12,12 @@ import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogMod
 import { formatAccessLogDuration } from '../../components/accesslogs/accessLogFormatters.js'
 import SearchField from '../../components/SearchField.jsx'
 import { pluralize } from '../../utils/labels.js'
+import StatisticsStrip from '../../components/StatisticsStrip.jsx'
+import ExpandedDetailsGrid from '../../components/ExpandedDetailsGrid.jsx'
 import { LogIn, CheckCircle2, AlertCircle, Eye, Trash2, ShieldCheck, MoreHorizontal, Globe, KeyRound, Lock, LogOut, UserPlus, FileSpreadsheet } from 'lucide-react'
 
 const formatDate = (value) => {
-  if (!value) return '—'
+  if (!value) return 'No date recorded'
   try {
     return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium',
@@ -64,6 +66,8 @@ export default function AccessLogs() {
   const [customEnd, setCustomEnd] = useState('')
   const [stats, setStats] = useState(null)
   const [statsError, setStatsError] = useState(false)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [statsRetry, setStatsRetry] = useState(0)
   const actionMenuRef = useRef(null)
 
   useEffect(() => {
@@ -129,10 +133,18 @@ export default function AccessLogs() {
   }, [fetchLogs])
 
   useEffect(() => {
+    if (dateRange === 'custom' && (!customStart || !customEnd)) {
+      setStats(null)
+      setStatsError(false)
+      setStatsLoading(false)
+      return
+    }
+    setStatsLoading(true)
     api.get('/access-logs/stats/', { params: dateRange === 'custom' ? { range: 'custom', start: customStart, end: customEnd } : { range: dateRange } })
       .then((response) => { setStats(response.data); setStatsError(false) })
       .catch(() => { setStats(null); setStatsError(true) })
-  }, [dateRange, customStart, customEnd])
+      .finally(() => setStatsLoading(false))
+  }, [dateRange, customStart, customEnd, statsRetry])
 
   const handleLogDeleted = async (deletedLogId) => {
     setLogs((existingLogs) => existingLogs.filter((log) => log.id !== deletedLogId))
@@ -471,23 +483,17 @@ export default function AccessLogs() {
           </div>
         )}
       </div>
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Access statistics">
-        <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 sm:grid-cols-4 sm:divide-y-0">
-          {[
-            ['Successful Access', stats?.successful_access],
-            ['Denied Access', stats?.denied_access],
-            ['Cabinet Sessions', stats?.cabinet_sessions],
-            ['Unique Users', stats?.unique_users],
-          ].map(([label, value]) => (
-            <div key={label} className="flex min-h-20 items-center justify-between gap-3 px-4 py-3 sm:justify-center sm:text-center">
-              <div>
-                <strong className={`block text-2xl leading-none ${statsError ? 'text-slate-400' : 'text-taptrack-navy'}`}>{statsError ? 'Unavailable' : value === null || value === undefined ? 'Loading' : value}</strong>
-                <span className="mt-1 block text-xs font-semibold text-slate-500">{label}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <StatisticsStrip
+        loading={statsLoading}
+        error={statsError ? 'Statistics unavailable' : ''}
+        onRetry={() => setStatsRetry((value) => value + 1)}
+        items={[
+          { key: 'successful', label: 'Successful Access', value: stats?.successful_access },
+          { key: 'denied', label: 'Denied Access', value: stats?.denied_access },
+          { key: 'sessions', label: 'Cabinet Sessions', value: stats?.cabinet_sessions },
+          { key: 'users', label: 'Unique Users', value: stats?.unique_users },
+        ]}
+      />
 
       {error && (
         <div className="rounded-[12px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
@@ -621,8 +627,8 @@ export default function AccessLogs() {
           columns={[
             { key: 'access_time', label: 'Date & Time', className: 'w-[14%]', render: (value) => formatDate(value) },
             { key: 'user', label: 'User', className: 'w-[15%]', render: (_value, row) => row.student_name || row.username || row.user_name || 'Unregistered card' },
-            { key: 'role', label: 'Role', className: 'w-[8%]', render: (_value, row) => row.role || '—' },
-            { key: 'station', label: 'Station', className: 'w-[10%]', render: (_value, row) => row.station || '—' },
+            { key: 'role', label: 'Role', className: 'w-[8%]', render: (_value, row) => row.role || 'Role unavailable' },
+            { key: 'station', label: 'Station', className: 'w-[10%]', render: (_value, row) => row.station || 'Station unavailable' },
             { key: 'access_type', label: 'Access Type', className: 'w-[17%]', render: (_value, row) => getAccessTypeBadge(row) },
             { key: 'status', label: 'Result', className: 'w-[10%]', render: (_value, row) => getResultBadge(row) },
             {
@@ -663,13 +669,15 @@ export default function AccessLogs() {
           variant="monitoring"
           emptyMessage={logs.length ? 'No access logs match your filters.' : 'No access logs available.'}
           renderExpandedRow={(row) => (
-            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <div><dt className="font-semibold">Event ID</dt><dd>{row.id}</dd></div>
-              <div><dt className="font-semibold">Access Method</dt><dd>{row.access_method || '—'}</dd></div>
-              <div><dt className="font-semibold">Photo Status</dt><dd>{row.photo_capture_status === 'success' ? 'Captured' : row.photo_capture_status === 'pending' ? 'Pending' : row.photo_capture_status === 'failed' ? 'Unavailable' : 'Unavailable'}</dd></div>
-              {row.nfc_uid && <div><dt className="font-semibold">NFC UID</dt><dd className="break-all">{row.nfc_uid}</dd></div>}
-              {resolveResult(row) === 'failed' && row.reason && <div className="sm:col-span-2 lg:col-span-3"><dt className="font-semibold">Failure Reason</dt><dd>{row.reason}</dd></div>}
-            </dl>
+            <ExpandedDetailsGrid
+              items={[
+                { label: 'Event ID', value: row.id },
+                { label: 'Access Method', value: row.access_method || 'Not recorded' },
+                { label: 'Photo Status', value: row.photo_capture_status === 'success' ? 'Captured' : row.photo_capture_status === 'pending' ? 'Pending' : 'No photo available' },
+                { label: 'NFC UID', value: row.nfc_uid || 'Not registered', className: 'lg:col-span-2' },
+                { label: 'Failure Reason', value: resolveResult(row) === 'failed' ? (row.reason || 'Denied access') : 'Not applicable', className: 'lg:col-span-2' },
+              ]}
+            />
           )}
         />
 
