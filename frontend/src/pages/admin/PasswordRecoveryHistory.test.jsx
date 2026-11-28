@@ -42,6 +42,6 @@ describe('PasswordRecoveryHistory', () => {
     expect(screen.getByText('Registered Card Verified')).toBeTruthy()
     expect(document.body.textContent).not.toContain('request_id')
     expect(document.body.textContent).not.toContain('nfc_uid')
-    expect(api.get).toHaveBeenCalledWith('/admin/password-recovery-history/', { params: { page: 1 } })
+    expect(api.get).toHaveBeenCalledWith('/admin/password-recovery-history/', { params: { page: 1, page_size: 25 } })
   })
 })

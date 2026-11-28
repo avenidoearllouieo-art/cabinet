@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../services/api.js'
+import Modal from './Modal.jsx'
 
 const REFRESH_INTERVAL_MS = 15000
 
@@ -10,11 +12,12 @@ function formatOpenedAt(value) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
-export default function CabinetStationStatus({ detailLevel = 'student' }) {
+export default function CabinetStationStatus({ detailLevel = 'student', compact = false }) {
   const [stations, setStations] = useState([])
   const [loadError, setLoadError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [checkedAt, setCheckedAt] = useState(null)
+  const [participantSession, setParticipantSession] = useState(null)
 
   useEffect(() => {
     let mounted = true
@@ -54,6 +57,7 @@ export default function CabinetStationStatus({ detailLevel = 'student' }) {
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm" aria-labelledby="cabinet-station-status-title">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-3 sm:px-6 sm:py-4">
         <h2 id="cabinet-station-status-title" className="text-base font-semibold text-taptrack-navy">Cabinet Station Status</h2>
+        {compact && <Link to="/admin/access-logs" className="text-sm font-semibold text-taptrack-navy hover:underline">View access logs</Link>}
         <span className="text-xs text-slate-500" aria-live="polite">
           {loadError ? `Offline · ${checkedAtLabel ? `last confirmed ${checkedAtLabel}` : 'status unavailable'}` : checkedAtLabel ? `Checked ${checkedAtLabel} · refreshes every 15 seconds` : 'Checking status…'}
         </span>
@@ -89,14 +93,31 @@ export default function CabinetStationStatus({ detailLevel = 'student' }) {
 
                 {loadError ? (
                   <p className="mt-3 text-sm text-slate-500">Station status could not be refreshed.</p>
+                ) : compact ? (
+                  occupied ? (
+                    <p className="mt-3 text-sm text-slate-500">Occupied · {session?.participant_count || 0} participants</p>
+                  ) : available ? (
+                    <p className="mt-3 text-sm text-emerald-700">Available for use</p>
+                  ) : null
                 ) : detailLevel !== 'student' && occupied && session && (
                   <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-                    <dt className="text-slate-500">Opened by</dt>
-                    <dd className="text-right font-medium text-slate-800">Unknown user</dd>
+                    <dt className="text-slate-500">{detailLevel === 'instructor' ? 'Initiator' : 'Opened by'}</dt>
+                    <dd className="text-right font-medium text-slate-800">
+                      {session.initiator?.restricted
+                        ? session.initiator.full_name
+                        : session.initiator?.full_name || 'Identity not recorded'}
+                      {session.initiator?.section ? ` · ${session.initiator.section}` : ''}
+                    </dd>
                     {Number(session.participant_count) > 0 && <><dt className="text-slate-500">Participants</dt><dd className="text-right font-medium text-slate-800">{session.participant_count}</dd></>}
+                    {Array.isArray(session.participant_previews) && session.participant_previews.length > 0 && <><dt className="text-slate-500">Preview</dt><dd className="text-right font-medium text-slate-800">{session.participant_previews.map((participant) => `${participant.full_name}${participant.section ? ` · ${participant.section}` : ''}`).join(', ')}</dd></>}
+                    {session.neutral_message && <><dt className="text-slate-500">Scope</dt><dd className="text-right font-medium text-slate-800">{session.neutral_message}</dd></>}
+                    {detailLevel === 'instructor' && Number(session.anonymous_participant_count) > 0 && <><dt className="text-slate-500">Other participants</dt><dd className="text-right font-medium text-slate-800">{session.anonymous_participant_count} anonymous</dd></>}
                     {session.opened_at && <><dt className="text-slate-500">Opened</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.opened_at)}</dd></>}
                     {session.updated_at && <><dt className="text-slate-500">Last updated</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.updated_at)}</dd></>}
                     {detailLevel === 'admin' && session.id && <><dt className="text-slate-500">Session</dt><dd className="text-right font-medium text-slate-800">#{session.id}</dd></>}
+                    {Array.isArray(session.participants) && session.participants.length > 0 && (
+                      <><dt className="text-slate-500">Details</dt><dd className="text-right"><button type="button" onClick={() => setParticipantSession(session)} className="text-sm font-semibold text-taptrack-navy hover:underline">View all participants</button></dd></>
+                    )}
                   </dl>
                 )}
               </li>
@@ -108,6 +129,26 @@ export default function CabinetStationStatus({ detailLevel = 'student' }) {
           {loadError ? 'Station status is currently unavailable.' : loading ? 'Loading station status…' : 'No station status is configured.'}
         </p>
       )}
+
+      <Modal
+        isOpen={Boolean(participantSession)}
+        onClose={() => setParticipantSession(null)}
+        title="Session participants"
+        description={participantSession ? `${participantSession.station} · Session #${participantSession.id}` : ''}
+        drawer
+        maxWidth="520px"
+      >
+        <div className="max-h-[70vh] space-y-2 overflow-y-auto">
+          {(participantSession?.participants || []).map((participant, index) => (
+            <article key={`${participant.full_name}-${index}`} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <p className="font-semibold text-slate-900">{participant.full_name}</p>
+              <p className="text-sm text-slate-500">{participant.section || 'Section unavailable'}</p>
+              {participant.opening_attended_at && <p className="mt-1 text-xs text-slate-500">Opened: {formatOpenedAt(participant.opening_attended_at)}</p>}
+              {participant.closing_attended_at && <p className="text-xs text-slate-500">Closed: {formatOpenedAt(participant.closing_attended_at)}</p>}
+            </article>
+          ))}
+        </div>
+      </Modal>
     </section>
   )
 }

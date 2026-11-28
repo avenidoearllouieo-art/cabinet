@@ -7,6 +7,7 @@ import StatusBadge from '../../components/StatusBadge'
 import ViewCabinetEventModal from '../../components/cabinetevents/ViewCabinetEventModal.jsx'
 import DeleteCabinetEventModal from '../../components/cabinetevents/DeleteCabinetEventModal.jsx'
 import SearchField from '../../components/SearchField.jsx'
+import Modal from '../../components/Modal.jsx'
 import { Box, Plus } from 'lucide-react'
 
 export default function CabinetEvents() {
@@ -20,6 +21,7 @@ export default function CabinetEvents() {
   const [eventTypeFilter, setEventTypeFilter] = useState('all')
   const [resultFilter, setResultFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [sortOrder, setSortOrder] = useState('newest')
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -27,25 +29,30 @@ export default function CabinetEvents() {
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [deletingEvent, setDeletingEvent] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [serverCount, setServerCount] = useState(0)
+  const [sessionStats, setSessionStats] = useState({ active_sessions: 0, completed_sessions: 0, average_completed_duration_seconds: 0, sessions_pending_closing_attendance: 0 })
   const params = new URLSearchParams(window.location.search)
   const selectedUserId = params.get('user') || params.get('user_id')
 
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)
-      let page = 1
-      const allEvents = []
-      let hasNextPage = true
-      while (hasNextPage) {
-        const response = await api.get('/cabinet-events/', {
-          params: { page, ...(selectedUserId ? { user: selectedUserId } : {}) },
-        })
-        const pageEvents = Array.isArray(response.data) ? response.data : response.data.results || []
-        allEvents.push(...pageEvents)
-        hasNextPage = !Array.isArray(response.data) && Boolean(response.data.next)
-        page += 1
+      const params = { page, page_size: pageSize, ordering: sortOrder === 'oldest' ? 'opened_at' : '-opened_at' }
+      if (query.trim()) params.search = query.trim()
+      if (cabinetFilter !== 'all') params.station = cabinetFilter
+      if (sectionFilter !== 'all') params.section = sectionFilter
+      if (statusFilter !== 'all') params.status = statusFilter
+      if (dateFilter) {
+        params.start = dateFilter
+        params.end = dateFilter
       }
-      setEvents(allEvents)
+      const response = await api.get('/cabinet-sessions/', { params })
+      const payload = response.data
+      const pageEvents = Array.isArray(payload) ? payload : payload.results || []
+      setEvents(pageEvents)
+      setServerCount(Array.isArray(payload) ? pageEvents.length : Number(payload.count || pageEvents.length))
       setError('')
     } catch (err) {
       console.error('Error fetching events:', err)
@@ -53,12 +60,18 @@ export default function CabinetEvents() {
     } finally {
       setLoading(false)
     }
-  }, [selectedUserId])
+  }, [page, pageSize, query, cabinetFilter, sectionFilter, statusFilter, sortOrder, dateFilter])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchEvents, 0)
+    const timeoutId = window.setTimeout(fetchEvents, 300)
     return () => window.clearTimeout(timeoutId)
   }, [fetchEvents])
+
+  useEffect(() => {
+    api.get('/cabinet-sessions/stats/', { params: { range: dateFilter ? '30d' : 'today' } })
+      .then((response) => setSessionStats(response.data))
+      .catch(() => setSessionStats({ active_sessions: 0, completed_sessions: 0, average_completed_duration_seconds: 0, sessions_pending_closing_attendance: 0 }))
+  }, [dateFilter])
 
   const handleEventDeleted = async (deletedEventId) => {
     setEvents((existingEvents) => existingEvents.filter((event) => event.id !== deletedEventId))
@@ -84,37 +97,7 @@ export default function CabinetEvents() {
     setIsDetailsOpen(true)
   }
 
-  const filteredEvents = useMemo(() => {
-    let result = events
-
-    if (query.trim()) {
-      const keyword = query.trim().toLowerCase()
-      result = result.filter((event) =>
-        [event.user_name, event.user_identifier, event.role, event.station, event.cabinet_id, event.section_name, event.event_type, event.result]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(keyword)),
-      )
-    }
-
-    if (cabinetFilter !== 'all') {
-      result = result.filter((event) => [event.station, event.cabinet_id].some((value) => String(value || '') === cabinetFilter))
-    }
-
-    if (sectionFilter !== 'all') result = result.filter((event) => event.section_name === sectionFilter)
-    if (roleFilter !== 'all') result = result.filter((event) => String(event.role || '').toLowerCase() === roleFilter.toLowerCase())
-    if (eventTypeFilter !== 'all') {
-      result = result.filter((event) => event.event_type === eventTypeFilter)
-    }
-
-    if (resultFilter !== 'all') result = result.filter((event) => event.result === resultFilter)
-    if (dateFilter) result = result.filter((event) => event.timestamp && new Date(event.timestamp).toLocaleDateString('en-CA') === dateFilter)
-
-    return [...result].sort((left, right) => {
-      const leftTime = new Date(left.timestamp || 0).getTime()
-      const rightTime = new Date(right.timestamp || 0).getTime()
-      return sortOrder === 'oldest' ? leftTime - rightTime : rightTime - leftTime
-    })
-  }, [events, query, cabinetFilter, sectionFilter, roleFilter, eventTypeFilter, resultFilter, dateFilter, sortOrder])
+  const filteredEvents = useMemo(() => events, [events])
 
   const totalEvents = events.length
   const cabinetOpened = events.filter((event) => event.event_type === 'Cabinet Opened').length
@@ -130,87 +113,41 @@ export default function CabinetEvents() {
     return <StatusBadge status={result} label={result} />
   }
 
+  const formatTimestamp = (value) => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
+  const formatDuration = (seconds) => seconds == null ? '—' : seconds < 60 ? `${seconds} sec` : `${Math.floor(seconds / 60)} min`
+
   const columns = [
     {
-      key: 'actions',
-      label: 'Action',
-      className: 'w-[16%]',
+      key: 'actions', label: 'Action', className: 'w-[12%]',
       render: (_value, row) => (
-        <div className="flex items-center">
-          <button
-            type="button"
-            onClick={() => handleOpenDetails(row.id, row)}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-taptrack-navy transition hover:border-taptrack-gold hover:bg-taptrack-gold/10"
-            title="View details for this event"
-          >
-            <Plus size={14} aria-hidden="true" />
-            View Details
-          </button>
-        </div>
+        <button type="button" onClick={() => handleOpenDetails(row.id, row)} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-taptrack-navy hover:border-taptrack-gold">
+          <Plus size={14} /> View Details
+        </button>
       ),
     },
-    {
-      key: 'timestamp',
-      label: 'Date & Time',
-      className: 'w-[15%]',
-      render: (value) => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—',
-    },
-    {
-      key: 'user_name',
-      label: 'User',
-      className: 'w-[12%]',
-      render: (value) => value || '—',
-    },
-    {
-      key: 'role',
-      label: 'Role',
-      className: 'w-[7%]',
-      render: (value) => value ? value.charAt(0).toUpperCase() + value.slice(1) : '—',
-    },
-    {
-      key: 'station',
-      label: 'Station',
-      className: 'w-[9%]',
-      render: (value) => value || '—',
-    },
-    {
-      key: 'section_name',
-      label: 'Section',
-      className: 'w-[10%]',
-      render: (value) => value || '—',
-    },
-    {
-      key: 'event_type',
-      label: 'Event',
-      className: 'w-[14%]',
-      render: (value) => value || '—',
-    },
-    {
-      key: 'result',
-      label: 'Result',
-      className: 'w-[8%]',
-      render: (value) => getResultBadge(value),
-    },
-    {
-      key: 'duration_seconds',
-      label: 'Duration',
-      className: 'w-[9%]',
-      render: (value) => value == null ? '—' : value < 60 ? `${value} sec` : `${Math.floor(value / 60)} min`,
-    },
+    { key: 'id', label: 'Session ID', className: 'w-[8%]', render: (value) => `#${value}` },
+    { key: 'station', label: 'Station', className: 'w-[10%]' },
+    { key: 'session_initiator', label: 'Initiator', className: 'w-[15%]', render: (value) => value?.fullName || 'Not recorded' },
+    { key: 'closing_initiator', label: 'Closing initiator', className: 'w-[15%]', render: (value) => value?.fullName || 'Not recorded' },
+    { key: 'opened_at', label: 'Opened', className: 'w-[12%]', render: formatTimestamp },
+    { key: 'closed_at', label: 'Closed', className: 'w-[12%]', render: formatTimestamp },
+    { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: formatDuration },
+    { key: 'participant_count', label: 'Participants', className: 'w-[8%]' },
+    { key: 'status', label: 'Status', className: 'w-[8%]', render: (value) => <StatusBadge status={value === 'open' ? 'Active' : 'Completed'} label={value === 'open' ? 'Active' : 'Completed'} /> },
   ]
 
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Cabinet Events Management"
-        description="Monitor and manage all smart cabinet access events."
+        title="Cabinet Sessions"
+        description="Monitor complete cabinet usage sessions and preserve raw access events separately."
       />
 
       <div className="grid gap-6 md:grid-cols-4">
-        <SummaryCard icon={Box} title="Total Events" value={totalEvents} trendText="All cabinet events" iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={Box} title="Cabinet Opened" value={cabinetOpened} trendText="Opened events" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={Box} title="Cabinet Closed" value={cabinetClosed} trendText="Closed events" iconBg="bg-slate-100" iconColor="text-slate-700" />
-        <SummaryCard icon={Box} title="Active Sessions" value={activeSessions} trendText="Unlocked sessions" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={Box} title="Active Sessions" value={sessionStats.active_sessions} trendText="Current open sessions" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={Box} title="Completed Sessions" value={sessionStats.completed_sessions} trendText="Within selected period" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={Box} title="Average Duration" value={sessionStats.average_completed_duration_seconds ? `${Math.floor(sessionStats.average_completed_duration_seconds / 60)} min` : '0 min'} trendText="Completed sessions" iconBg="bg-slate-100" iconColor="text-slate-700" />
+        <SummaryCard icon={Box} title="Pending Closing Attendance" value={sessionStats.sessions_pending_closing_attendance} trendText="Active sessions" iconBg="bg-blue-50" iconColor="text-blue-900" />
       </div>
 
       {error && (
@@ -250,6 +187,14 @@ export default function CabinetEvents() {
               </select>
             </label>
             <label>
+              <span className="sr-only">Filter session status</span>
+              <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                <option value="all">All statuses</option>
+                <option value="open">Active</option>
+                <option value="closed">Completed</option>
+              </select>
+            </label>
+            <label>
               <span className="sr-only">Filter event type</span>
               <select value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">
                 <option value="all">All event types</option>
@@ -277,7 +222,22 @@ export default function CabinetEvents() {
           </div>
         </div>
 
-        <DataTable columns={columns} data={filteredEvents} loading={loading} showActions={false} variant="monitoring" emptyMessage={events.length ? 'No cabinet events match these filters.' : 'No cabinet events recorded.'} />
+        <DataTable columns={columns} data={filteredEvents} loading={loading} showActions={false} variant="monitoring" emptyMessage={events.length ? 'No cabinet sessions match these filters.' : 'No cabinet sessions recorded.'} />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-slate-600">{serverCount} matching sessions</span>
+          <label className="flex items-center gap-2 text-sm text-slate-600">Rows
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }} className="h-9 rounded-md border border-slate-300 px-2">
+              {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={page === 1} onClick={() => setPage(1)} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">First</button>
+            <button type="button" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Previous</button>
+            <span className="text-sm text-slate-600">Page {page}</span>
+            <button type="button" disabled={page * pageSize >= serverCount} onClick={() => setPage((value) => value + 1)} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Next</button>
+            <button type="button" disabled={page * pageSize >= serverCount} onClick={() => setPage(Math.max(1, Math.ceil(serverCount / pageSize)))} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Last</button>
+          </div>
+        </div>
       </div>
 
       {toastMessage && (
@@ -286,25 +246,55 @@ export default function CabinetEvents() {
         </div>
       )}
 
-      <ViewCabinetEventModal
+      <Modal
         isOpen={isDetailsOpen}
-        eventId={viewingEventId}
-        event={selectedEvent}
-        onClose={() => {
-          setIsDetailsOpen(false)
-          setViewingEventId(null)
-          setSelectedEvent(null)
-        }}
-        onDelete={(event) => {
-          setDeletingEvent(event)
-          setIsDeleteModalOpen(true)
-        }}
-        onUnauthorized={() => {
-          setIsDetailsOpen(false)
-          setViewingEventId(null)
-          setSelectedEvent(null)
-        }}
-      />
+        onClose={() => { setIsDetailsOpen(false); setSelectedEvent(null); setViewingEventId(null) }}
+        title="Cabinet session details"
+        description={selectedEvent ? `Session #${selectedEvent.id} · ${selectedEvent.station}` : ''}
+        drawer
+        maxWidth="620px"
+      >
+        {selectedEvent && (
+          <div className="max-h-[75vh] space-y-5 overflow-y-auto">
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <div><dt className="text-slate-500">Opening initiator</dt><dd className="font-semibold text-slate-900">{selectedEvent.session_initiator?.fullName || 'Not recorded'}</dd></div>
+              <div><dt className="text-slate-500">Closing initiator</dt><dd className="font-semibold text-slate-900">{selectedEvent.closing_initiator?.fullName || 'Not recorded'}</dd></div>
+              <div><dt className="text-slate-500">Opening attendance</dt><dd>{selectedEvent.opening_attendance_count}</dd></div>
+              <div><dt className="text-slate-500">Closing attendance</dt><dd>{selectedEvent.closing_attendance_count}</dd></div>
+              <div><dt className="text-slate-500">Pending attendance</dt><dd>{selectedEvent.pending_attendance_count}</dd></div>
+              <div><dt className="text-slate-500">Motor command</dt><dd>{selectedEvent.motor_command_outcome}</dd></div>
+              <div><dt className="text-slate-500">Physical movement</dt><dd>{selectedEvent.physical_movement_status}</dd></div>
+              <div><dt className="text-slate-500">Duration</dt><dd>{formatDuration(selectedEvent.duration_seconds)}</dd></div>
+            </dl>
+
+            <section>
+              <h3 className="mb-2 font-semibold text-taptrack-navy">Participants</h3>
+              <div className="space-y-2">
+                {(selectedEvent.attendance || []).map((participant, index) => (
+                  <article key={`${participant.studentId || participant.fullName}-${index}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <p className="font-semibold text-slate-900">{participant.fullName}</p>
+                    <p className="text-sm text-slate-500">{participant.section || 'Section unavailable'}</p>
+                    <p className="text-xs text-slate-500">Opening: {participant.openingAttendedAt ? formatTimestamp(participant.openingAttendedAt) : 'Not recorded'} · Closing: {participant.closingAttendedAt ? formatTimestamp(participant.closingAttendedAt) : 'Not recorded'}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-2 font-semibold text-taptrack-navy">Session timeline</h3>
+              <div className="space-y-2">
+                {(selectedEvent.access_logs || []).map((log) => (
+                  <article key={log.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                    <p className="font-semibold text-slate-900">{log.action} · {log.status}</p>
+                    <p className="text-slate-500">{formatTimestamp(log.timestamp)}{log.reason ? ` · ${log.reason}` : ''}</p>
+                  </article>
+                ))}
+                {!selectedEvent.access_logs?.length && <p className="text-sm text-slate-500">No related access log events recorded.</p>}
+              </div>
+            </section>
+          </div>
+        )}
+      </Modal>
 
       <DeleteCabinetEventModal
         isOpen={isDeleteModalOpen}

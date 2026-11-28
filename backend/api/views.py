@@ -46,7 +46,7 @@ import re
 import secrets
 
 from .models import Section, User, Activity, ActivityAttachment, Submission, SubmissionAttachment, ActivityDiscussion, ActivityDiscussionAttachment, AccessLog, AccessLogPhoto, CabinetSession, CabinetEvent, Notification, TemporaryUpload, MultipartUploadSession, ActivityAnnouncement
-from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, PrivilegedUserAuditEvent, CabinetLocation
+from .models import PasswordResetRequest, PasswordRecoveryAuditEvent, NFCEnrollmentSession, PrivilegedUserAuditEvent, CabinetLocation, CabinetSessionAttendance
 from .student_import import (
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_ROWS,
@@ -2688,6 +2688,8 @@ class StudentSubmissionUpload(APIView):
 
 
 class AccessLogFilter(filters.FilterSet):
+    role = filters.CharFilter(field_name='user__role', lookup_expr='iexact')
+    access_type = filters.CharFilter(method='filter_access_type')
     status = filters.CharFilter(method='filter_access_result')
     action = filters.CharFilter(field_name='action', lookup_expr='iexact')
     student_id = filters.CharFilter(field_name='user__student_id', lookup_expr='iexact')
@@ -2715,6 +2717,18 @@ class AccessLogFilter(filters.FilterSet):
         if result == 'failed':
             return queryset.exclude(status=AccessLog.AccessStatusChoices.SUCCESS)
         return queryset.filter(status__iexact=value)
+
+    def filter_access_type(self, queryset, name, value):
+        result = str(value or '').strip().lower()
+        if result in ('cabinet opened', 'cabinet open'):
+            return queryset.filter(action=AccessLog.AccessActionChoices.OPEN)
+        if result in ('cabinet closed', 'cabinet close'):
+            return queryset.filter(action=AccessLog.AccessActionChoices.CLOSE)
+        if result in ('nfc registration', 'registration'):
+            return queryset.filter(action=AccessLog.AccessActionChoices.REGISTRATION)
+        if result in ('access denied', 'denied'):
+            return queryset.exclude(status=AccessLog.AccessStatusChoices.SUCCESS)
+        return queryset
 
     def filter_nfc_uid(self, queryset, name, value):
         request_user = getattr(getattr(self, 'request', None), 'user', None)
@@ -2887,8 +2901,8 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [filters.DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'station', 'opened_by', 'closed_by']
     search_fields = ['station', 'opened_by__student_id', 'closed_by__student_id', 'notes']
-    ordering_fields = ['opened_at', 'closed_at', 'station']
-    ordering = ['-opened_at']
+    ordering_fields = ['opened_at', 'closed_at', 'station', 'pk']
+    ordering = ['-opened_at', '-pk']
     pagination_class = AccessLogPagination
 
     def finalize_response(self, request, response, *args, **kwargs):
@@ -2903,7 +2917,12 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
         active_sessions = CabinetSession.objects.filter(
             status=CabinetSession.StatusChoices.OPEN,
             station__in=station_names,
-        ).prefetch_related('opened_by').order_by('-opened_at')
+        ).select_related(
+            'session_initiator', 'session_initiator__section',
+            'closing_initiator', 'closing_initiator__section',
+        ).prefetch_related(
+            'opened_by__section', 'closed_by__section', 'attendance_records__user__section',
+        ).order_by('-opened_at')
         sessions_by_station = {}
         for session in active_sessions:
             sessions_by_station.setdefault(session.station, session)
@@ -2914,36 +2933,203 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
             session = sessions_by_station.get(station)
             session_details = None
             if session and include_session_details:
+                opened_users = list(session.opened_by.all())
+                participant_count = len(opened_users)
+                records = {record.user_id: record for record in session.attendance_records.all()}
+
+                if request.user.role == User.RoleChoices.ADMIN:
+                    participant_previews = []
+                    participants = []
+                    for user in opened_users:
+                        record = records.get(user.pk)
+                        section = user.section
+                        participants.append({
+                            'full_name': user.get_full_name().strip() or user.username,
+                            'section': section.section_name if section else '',
+                            'opening_attended_at': record.opened_attended_at if record else None,
+                            'closing_attended_at': record.closed_attended_at if record else None,
+                        })
+                    for user in opened_users[:2]:
+                        record = records.get(user.pk)
+                        section = user.section
+                        participant_previews.append({
+                            'full_name': user.get_full_name().strip() or user.username,
+                            'section': section.section_name if section else '',
+                            'opening_attended_at': record.opened_attended_at if record else None,
+                            'closing_attended_at': record.closed_attended_at if record else None,
+                        })
+                    initiator = session.session_initiator
+                    initiator_data = None
+                    if initiator:
+                        section = initiator.section
+                        initiator_data = {
+                            'full_name': initiator.get_full_name().strip() or initiator.username,
+                            'section': section.section_name if section else '',
+                        }
+                    else:
+                        initiator_data = {'full_name': 'Not recorded', 'section': ''}
+                else:
+                    assigned_sections = request.user.assigned_sections.all()
+                    assigned_student_ids = set(
+                        User.objects.filter(
+                            role=User.RoleChoices.STUDENT,
+                        ).filter(
+                            Q(section__instructor=request.user) |
+                            Q(section__assigned_instructors=request.user) |
+                            Q(section__in=assigned_sections)
+                        ).values_list('pk', flat=True)
+                    )
+                    authorized_users = [user for user in opened_users if user.pk in assigned_student_ids]
+                    participant_previews = []
+                    participants = []
+                    for user in authorized_users:
+                        section = user.section
+                        participants.append({
+                            'full_name': user.get_full_name().strip() or user.username,
+                            'section': section.section_name if section else '',
+                        })
+                    for user in authorized_users[:2]:
+                        section = user.section
+                        participant_previews.append({
+                            'full_name': user.get_full_name().strip() or user.username,
+                            'section': section.section_name if section else '',
+                        })
+                    initiator = session.session_initiator
+                    initiator_authorized = bool(initiator and initiator.pk in assigned_student_ids)
+                    if initiator_authorized:
+                        section = initiator.section
+                        initiator_data = {
+                            'full_name': initiator.get_full_name().strip() or initiator.username,
+                            'section': section.section_name if section else '',
+                        }
+                    elif initiator:
+                        initiator_data = {'full_name': 'Restricted identity', 'section': '', 'restricted': True}
+                    else:
+                        initiator_data = {'full_name': 'Identity not recorded', 'section': '', 'restricted': True}
+                    if participant_count and not authorized_users:
+                        neutral_message = 'Occupied by another section'
+                        first_sections = {user.section_id for user in opened_users if user.section_id}
+                        if len(first_sections) == 1:
+                            only_section = next(iter(first_sections), None)
+                            if not assigned_sections.filter(pk=only_section).exists():
+                                neutral_message = 'Occupied by another section'
+                            else:
+                                neutral_message = 'Occupied by other users'
+                    else:
+                        neutral_message = ''
+
                 session_details = {
                     'id': session.pk,
                     'station': session.station,
-                    'participant_count': session.opened_by.count(),
+                    'participant_count': participant_count,
                     'opened_at': session.opened_at,
+                    'opening_attendance_count': participant_count,
+                    'closing_attendance_count': session.closed_by.count(),
+                    'pending_attendance_count': session.opened_by.exclude(pk__in=session.closed_by.values('pk')).count(),
+                    'initiator': initiator_data,
+                    'participant_previews': participant_previews,
+                    'participants': participants,
                 }
+                if request.user.role == User.RoleChoices.INSTRUCTOR:
+                    session_details['authorized_participant_count'] = len(authorized_users)
+                    session_details['anonymous_participant_count'] = participant_count - len(authorized_users)
+                    session_details['neutral_message'] = neutral_message
+
             stations.append({
                 'station': station,
                 'status': 'OCCUPIED' if session else 'AVAILABLE',
                 'active_session': session_details,
             })
 
-        return Response({'stations': stations})
+        return Response({'stations': stations, 'checked_at': timezone.now()})
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        today = timezone.localdate()
+        preset = str(request.query_params.get('range') or 'today').lower()
+        if preset == '7d':
+            start = today - timedelta(days=6)
+        elif preset == '30d':
+            start = today - timedelta(days=29)
+        else:
+            start = today
+
+        queryset = self.filter_queryset(self.get_queryset())
+        active = queryset.filter(status=CabinetSession.StatusChoices.OPEN)
+        completed = queryset.filter(
+            status=CabinetSession.StatusChoices.CLOSED,
+            closed_at__date__gte=start,
+            closed_at__date__lte=today,
+        )
+        durations = [
+            int((session.closed_at - session.opened_at).total_seconds())
+            for session in completed
+            if session.opened_at and session.closed_at
+        ]
+        pending_count = sum(
+            1
+            for session in active
+            if session.opened_by.exclude(pk__in=session.closed_by.values('pk')).exists()
+        )
+        return Response({
+            'active_sessions': active.count(),
+            'completed_sessions': completed.count(),
+            'average_completed_duration_seconds': int(sum(durations) / len(durations)) if durations else 0,
+            'sessions_pending_closing_attendance': pending_count,
+            'range_start': start.isoformat(),
+            'range_end': today.isoformat(),
+        })
 
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'admin':
-            return CabinetSession.objects.all()
-        if user.role == 'instructor':
+        station = str(self.request.query_params.get('station') or '').strip()
+        status_filter = str(self.request.query_params.get('status') or '').strip()
+        participant = str(self.request.query_params.get('participant') or '').strip()
+        section = str(self.request.query_params.get('section') or '').strip()
+        start = str(self.request.query_params.get('start') or '').strip()
+        end = str(self.request.query_params.get('end') or '').strip()
+        attendance = str(self.request.query_params.get('attendance') or '').strip().lower()
+
+        if user.role == User.RoleChoices.ADMIN:
+            queryset = CabinetSession.objects.all()
+        elif user.role == User.RoleChoices.INSTRUCTOR:
             assigned_student = Q(role=User.RoleChoices.STUDENT) & (
                 Q(section__instructor=user) | Q(section__assigned_instructors=user)
             )
-            return CabinetSession.objects.filter(
+            queryset = CabinetSession.objects.filter(
                 Q(opened_by__in=User.objects.filter(assigned_student))
                 | Q(closed_by__in=User.objects.filter(assigned_student))
                 | Q(access_logs__user__in=User.objects.filter(assigned_student))
             ).distinct()
-        if user.role == 'student':
-            return CabinetSession.objects.filter(access_logs__user=user).distinct()
-        return CabinetSession.objects.none()
+        elif user.role == User.RoleChoices.STUDENT:
+            queryset = CabinetSession.objects.filter(access_logs__user=user).distinct()
+        else:
+            return CabinetSession.objects.none()
+
+        if station:
+            queryset = queryset.filter(station__iexact=station)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if participant:
+            queryset = queryset.filter(Q(opened_by__pk=participant) | Q(closed_by__pk=participant)).distinct()
+        if section:
+            queryset = queryset.filter(
+                Q(opened_by__section__section_name__icontains=section)
+                | Q(opened_by__section_id=section)
+                | Q(closed_by__section__section_name__icontains=section)
+                | Q(closed_by__section_id=section)
+            ).distinct()
+        if start:
+            queryset = queryset.filter(opened_at__date__gte=start)
+        if end:
+            queryset = queryset.filter(opened_at__date__lte=end)
+        if attendance == 'pending':
+            queryset = queryset.filter(status=CabinetSession.StatusChoices.OPEN).filter(opened_by__isnull=False).distinct()
+        elif attendance == 'opening':
+            queryset = queryset.filter(opened_by__isnull=False).distinct()
+        elif attendance == 'closing':
+            queryset = queryset.filter(closed_by__isnull=False).distinct()
+        return queryset
 
 
 class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -2957,8 +3143,8 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [filters.DjangoFilterBackend, AccessLogSearchFilter, OrderingFilter]
     filterset_class = AccessLogFilter
     search_fields = ['user__student_id', 'user__first_name', 'user__last_name', 'nfc_uid', 'station']
-    ordering_fields = ['access_time', 'user__student_id', 'user__last_name', 'station', 'cabinet_name']
-    ordering = ['-access_time']
+    ordering_fields = ['access_time', 'pk', 'user__student_id', 'user__last_name', 'station', 'cabinet_name']
+    ordering = ['-access_time', '-pk']
     pagination_class = AccessLogPagination
 
     def finalize_response(self, request, response, *args, **kwargs):
@@ -2996,10 +3182,16 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['post'], url_path='export-excel')
     def export_excel(self, request):
         selected_ids = requested_export_ids(request)
-        if selected_ids is None:
+        scope = request.data.get('scope') == 'filtered'
+        if selected_ids is None and not scope:
             return Response({'ids': ['Select one or more access logs to export.']}, status=status.HTTP_400_BAD_REQUEST)
 
-        logs = self.filter_queryset(self.get_queryset()).filter(pk__in=selected_ids).select_related(
+        logs = self.filter_queryset(self.get_queryset())
+        if scope:
+            logs = logs
+        else:
+            logs = logs.filter(pk__in=selected_ids)
+        logs = logs.select_related(
             'user', 'user__section', 'cabinet_session', 'photo',
         ).prefetch_related('user__assigned_sections').order_by('-access_time', '-pk')
         record_count = logs.count()
@@ -3036,14 +3228,14 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
                     format_duration(serializer.get_duration_seconds(log)),
                 )
 
-        scope = 'Current filtered results' if request.data.get('scope') == 'filtered' else 'Selected records'
+        scope_label = 'Current filtered results' if scope else 'Selected records'
         return branded_excel_response(
             report_name='Access History Report',
             filename='access-history-report.xlsx',
             headers=('Date and Time', 'User', 'Role', 'Section', 'Station', 'Cabinet', 'Access Type', 'Action', 'Result', 'Photo Status', 'Duration'),
             rows=export_rows(),
             record_count=record_count,
-            scope=scope,
+            scope=scope_label,
             result_header='Result',
         )
 
@@ -3058,37 +3250,65 @@ class AccessLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Return today's access statistics.
-
-        - For admins: overall counts across all users
-        - For instructors: counts limited to their students (uses get_queryset())
-        """
+        """Return role-scoped access statistics for a shared date range."""
         user = request.user
-        today = timezone.localdate()
-
-        if user.role == 'admin':
-            base_qs = AccessLog.objects.filter(access_time__date=today)
-        elif user.role == 'instructor':
-            base_qs = self.filter_queryset(self.get_queryset()).filter(access_time__date=today)
-        elif user.role == 'student':
-            base_qs = self.filter_queryset(self.get_queryset()).filter(access_time__date=today)
-        else:
+        if user.role not in (User.RoleChoices.ADMIN, User.RoleChoices.INSTRUCTOR, User.RoleChoices.STUDENT):
             return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
 
-        total_accesses = base_qs.count()
-        successful = base_qs.filter(status=AccessLog.AccessStatusChoices.SUCCESS).count()
-        failed = (
-            base_qs.exclude(status=AccessLog.AccessStatusChoices.SUCCESS).count()
-            if user.role == User.RoleChoices.INSTRUCTOR
-            else base_qs.filter(status=AccessLog.AccessStatusChoices.FAILED).count()
+        today = timezone.localdate()
+        preset = str(request.query_params.get('range') or 'today').lower()
+        if preset == 'yesterday':
+            start = today - timedelta(days=1)
+            end = start
+        elif preset == '7d':
+            start = today - timedelta(days=6)
+            end = today
+        elif preset == '30d':
+            start = today - timedelta(days=29)
+            end = today
+        elif preset == 'custom':
+            try:
+                start = datetime.fromisoformat(str(request.query_params.get('start') or today)).date()
+                end = datetime.fromisoformat(str(request.query_params.get('end') or today)).date()
+            except ValueError:
+                return Response({'detail': 'Invalid custom date range.'}, status=status.HTTP_400_BAD_REQUEST)
+            if start > end:
+                return Response({'detail': 'Start date must not be after end date.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            start = today
+            end = today
+
+        base_qs = self.filter_queryset(self.get_queryset()).filter(
+            access_time__date__gte=start,
+            access_time__date__lte=end,
         )
-        active_students = base_qs.filter(user__isnull=False).values('user').distinct().count()
+        denied_statuses = (
+            AccessLog.AccessStatusChoices.FAILED,
+            AccessLog.AccessStatusChoices.UNREGISTERED,
+            AccessLog.AccessStatusChoices.REJECTED,
+            AccessLog.AccessStatusChoices.DUPLICATE,
+        )
+        cabinet_sessions = CabinetSession.objects.filter(
+            opened_at__date__gte=start,
+            opened_at__date__lte=end,
+        )
+        if user.role == User.RoleChoices.INSTRUCTOR:
+            assigned_student_ids = User.objects.filter(
+                role=User.RoleChoices.STUDENT,
+            ).filter(
+                Q(section__instructor=user) | Q(section__assigned_instructors=user)
+            ).values('pk')
+            cabinet_sessions = cabinet_sessions.filter(opened_by__in=assigned_student_ids).distinct()
+        elif user.role == User.RoleChoices.STUDENT:
+            cabinet_sessions = cabinet_sessions.filter(opened_by=user).distinct()
 
         return Response({
-            'total_accesses_today': total_accesses,
-            'successful_accesses_today': successful,
-            'failed_accesses_today': failed,
-            'active_students_today': active_students,
+            'start': start.isoformat(),
+            'end': end.isoformat(),
+            'successful_access': base_qs.filter(status=AccessLog.AccessStatusChoices.SUCCESS).count(),
+            'denied_access': base_qs.filter(status__in=denied_statuses).count(),
+            'cabinet_sessions': cabinet_sessions.count(),
+            'unique_users': base_qs.filter(user__isnull=False).values('user').distinct().count(),
         })
 
 
@@ -3220,7 +3440,10 @@ class VerifyNFCView(APIView):
         action = AccessLog.AccessActionChoices.SCAN
         if cabinet_session and cabinet_session.workflow_state == CabinetSession.WorkflowStateChoices.OPENING:
             if status_value == AccessLog.AccessStatusChoices.SUCCESS:
-                if user.role != User.RoleChoices.STUDENT:
+                if not user:
+                    status_value = AccessLog.AccessStatusChoices.UNREGISTERED
+                    reason_value = 'NFC card is not registered'
+                elif user.role != User.RoleChoices.STUDENT:
                     status_value = AccessLog.AccessStatusChoices.REJECTED
                     reason_value = 'Only students can join a cabinet session'
                 elif cabinet_session.opened_by.filter(pk=user.pk).exists():
@@ -3233,6 +3456,18 @@ class VerifyNFCView(APIView):
                         else AccessLog.AccessActionChoices.SCAN
                     )
                     cabinet_session.opened_by.add(user)
+                    attendance, _ = CabinetSessionAttendance.objects.get_or_create(
+                        session=cabinet_session,
+                        user=user,
+                    )
+                    if attendance.opened_attended_at is None:
+                        attendance.opened_attended_at = timezone.now()
+                        attendance.save(update_fields=['opened_attended_at'])
+                    if cabinet_session.session_initiator_id is None:
+                        cabinet_session.session_initiator = user
+                        cabinet_session.save(update_fields=['session_initiator', 'updated_at'])
+                    cabinet_session.participant_count = cabinet_session.opened_by.count()
+                    cabinet_session.save(update_fields=['participant_count', 'updated_at'])
         elif cabinet_session and cabinet_session.workflow_state == CabinetSession.WorkflowStateChoices.CLOSING:
             action = AccessLog.AccessActionChoices.CLOSE
             if status_value == AccessLog.AccessStatusChoices.SUCCESS:
@@ -3244,6 +3479,16 @@ class VerifyNFCView(APIView):
                     reason_value = 'Duplicate participant scan'
                 else:
                     cabinet_session.closed_by.add(user)
+                    attendance, _ = CabinetSessionAttendance.objects.get_or_create(
+                        session=cabinet_session,
+                        user=user,
+                    )
+                    if attendance.closed_attended_at is None:
+                        attendance.closed_attended_at = timezone.now()
+                        attendance.save(update_fields=['closed_attended_at'])
+                    if cabinet_session.closing_initiator_id is None:
+                        cabinet_session.closing_initiator = user
+                        cabinet_session.save(update_fields=['closing_initiator', 'updated_at'])
                     reason_value = 'Cabinet close attendance recorded'
         elif (
             status_value == AccessLog.AccessStatusChoices.SUCCESS
@@ -3863,9 +4108,122 @@ class PasswordRecoveryHistoryView(APIView):
         paginator.page_size = 25
         paginator.page_size_query_param = 'page_size'
         paginator.max_page_size = 100
+
+        view = str(request.query_params.get('view') or '').lower()
+        if view == 'stats':
+            today = timezone.localdate()
+            preset = str(request.query_params.get('range') or 'today').lower()
+            if preset == '7d':
+                start = today - timedelta(days=6)
+            elif preset == '30d':
+                start = today - timedelta(days=29)
+            else:
+                start = today
+            return Response({
+                'pending_verification': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.PENDING).count(),
+                'verified_awaiting_completion': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.VERIFIED).count(),
+                'completed_in_range': PasswordResetRequest.objects.filter(status=PasswordResetRequest.StatusChoices.USED, used_at__date__gte=start, used_at__date__lte=today).count(),
+                'rejected_attempts_in_range': PasswordRecoveryAuditEvent.objects.filter(event_type=PasswordRecoveryAuditEvent.EventType.NFC_REJECTED, timestamp__date__gte=start, timestamp__date__lte=today).count(),
+            })
+
+        if view == 'requests':
+            requests_qs = PasswordResetRequest.objects.select_related('user', 'user__section').order_by('-requested_at', '-pk')
+            search = str(request.query_params.get('search') or '').strip()
+            if search:
+                requests_qs = requests_qs.filter(
+                    Q(user__first_name__icontains=search)
+                    | Q(user__last_name__icontains=search)
+                    | Q(user__student_id__icontains=search)
+                    | Q(student_id_snapshot__icontains=search)
+                )
+            status_filter = str(request.query_params.get('status') or '').strip().lower()
+            if status_filter:
+                requests_qs = requests_qs.filter(status=status_filter)
+            start = str(request.query_params.get('start') or '').strip()
+            end = str(request.query_params.get('end') or '').strip()
+            if start:
+                requests_qs = requests_qs.filter(requested_at__date__gte=start)
+            if end:
+                requests_qs = requests_qs.filter(requested_at__date__lte=end)
+            page = paginator.paginate_queryset(requests_qs, request, view=self)
+            results = []
+            for reset_request in page:
+                user = reset_request.user
+                if user:
+                    name = user.get_full_name().strip() or user.username
+                    section = user.section.section_name if user.section else ''
+                    identifier = user.student_id or user.username or ''
+                    account_reference = f'•••{identifier[-4:]}' if identifier else '••••'
+                else:
+                    name = 'Unknown account'
+                    section = ''
+                    account_reference = '••••'
+                request_events = PasswordRecoveryAuditEvent.objects.filter(recovery_request=reset_request).order_by('timestamp', 'pk')
+                last_event = request_events.order_by('-timestamp', '-pk').first()
+                verification_attempt_count = request_events.filter(
+                    event_type__in=(
+                        PasswordRecoveryAuditEvent.EventType.NFC_SCAN_RECEIVED,
+                        PasswordRecoveryAuditEvent.EventType.NFC_VERIFIED,
+                        PasswordRecoveryAuditEvent.EventType.NFC_REJECTED,
+                    )
+                ).count()
+                results.append({
+                    'id': reset_request.pk,
+                    'request_id': reset_request.request_id,
+                    'student_name': name,
+                    'section': section,
+                    'account_reference': account_reference,
+                    'requested_at': reset_request.requested_at,
+                    'status': reset_request.status,
+                    'nfc_verified': reset_request.nfc_uid_verified,
+                    'verified_at': reset_request.verified_at,
+                    'expires_at': reset_request.expires_at,
+                    'completed_at': reset_request.used_at,
+                    'last_activity_at': last_event.timestamp if last_event else reset_request.requested_at,
+                    'nfc_verification_attempt_count': verification_attempt_count,
+                    'timeline': [
+                        {
+                            'timestamp': event.timestamp,
+                            'event_type': event.event_type,
+                            'outcome': event.outcome,
+                            'reason_code': event.reason_code,
+                            'actor_type': event.actor_type,
+                        }
+                        for event in request_events
+                    ],
+                })
+            return paginator.get_paginated_response(results)
+
         events = PasswordRecoveryAuditEvent.objects.select_related(
             'user', 'recovery_request__user',
         ).order_by('-timestamp', '-pk')
+        search = str(request.query_params.get('search') or '').strip()
+        if search:
+            events = events.filter(
+                Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search)
+                | Q(user__student_id__icontains=search)
+                | Q(recovery_request__request_id__icontains=search)
+                | Q(reason_code__icontains=search)
+            )
+        event_status = str(request.query_params.get('status') or '').strip().lower()
+        if event_status:
+            events = events.filter(recovery_request__status=event_status)
+        event_type = str(request.query_params.get('event_type') or '').strip()
+        if event_type:
+            events = events.filter(event_type=event_type)
+        outcome = str(request.query_params.get('outcome') or '').strip()
+        if outcome:
+            events = events.filter(outcome=outcome)
+        section = str(request.query_params.get('section') or '').strip()
+        if section:
+            events = events.filter(Q(user__section__section_name__icontains=section) | Q(recovery_request__user__section__section_name__icontains=section))
+        start = str(request.query_params.get('start') or '').strip()
+        end = str(request.query_params.get('end') or '').strip()
+        if start:
+            events = events.filter(timestamp__date__gte=start)
+        if end:
+            events = events.filter(timestamp__date__lte=end)
         page = paginator.paginate_queryset(events, request, view=self)
 
         results = []

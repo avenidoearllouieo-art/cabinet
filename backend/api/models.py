@@ -549,6 +549,14 @@ class CabinetSession(models.Model):
     workflow_state = models.CharField(max_length=20, choices=WorkflowStateChoices.choices, default=WorkflowStateChoices.IDLE)
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    session_initiator = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='initiated_cabinet_sessions',
+    )
+    closing_initiator = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='closing_initiated_cabinet_sessions',
+    )
     opened_by = models.ManyToManyField(User, blank=True, related_name='opened_cabinet_sessions')
     closed_by = models.ManyToManyField(User, blank=True, related_name='closed_cabinet_sessions')
     participant_count = models.PositiveIntegerField(default=0)
@@ -581,6 +589,27 @@ class CabinetSession(models.Model):
                 condition=models.Q(status='open') & ~models.Q(station=''),
                 name='uniq_open_cabinetsession_station',
             ),
+        ]
+
+
+class CabinetSessionAttendance(models.Model):
+    session = models.ForeignKey(
+        CabinetSession, on_delete=models.CASCADE, related_name='attendance_records',
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='cabinet_attendance_records',
+    )
+    opened_attended_at = models.DateTimeField(null=True, blank=True)
+    closed_attended_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['session', 'user'], name='uniq_cabinet_session_attendance'),
+        ]
+        indexes = [
+            models.Index(fields=['session', 'opened_attended_at']),
+            models.Index(fields=['session', 'closed_attended_at']),
         ]
 
 

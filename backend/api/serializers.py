@@ -1326,6 +1326,16 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
     opened_by = serializers.SerializerMethodField()
     closed_by = serializers.SerializerMethodField()
     participant_count = serializers.SerializerMethodField()
+    attendance = serializers.SerializerMethodField()
+    opening_attendance_count = serializers.SerializerMethodField()
+    closing_attendance_count = serializers.SerializerMethodField()
+    pending_attendance_count = serializers.SerializerMethodField()
+    session_initiator = serializers.SerializerMethodField()
+    closing_initiator = serializers.SerializerMethodField()
+    duration_seconds = serializers.SerializerMethodField()
+    access_logs = serializers.SerializerMethodField()
+    motor_command_outcome = serializers.SerializerMethodField()
+    physical_movement_status = serializers.SerializerMethodField()
 
     class Meta:
         model = CabinetSession
@@ -1335,32 +1345,149 @@ class CabinetSessionSerializer(serializers.ModelSerializer):
             'motor_dispatch_eligible',
             'station',
             'station_name',
+            'session_initiator',
+            'closing_initiator',
             'opened_by',
             'closed_by',
+            'attendance',
             'status',
             'workflow_state',
             'opened_at',
             'closed_at',
             'participant_count',
+            'opening_attendance_count',
+            'closing_attendance_count',
+            'pending_attendance_count',
+            'duration_seconds',
+            'access_logs',
+            'motor_command_outcome',
+            'physical_movement_status',
             'notes',
             'created_at',
             'updated_at',
         ]
         read_only_fields = fields
 
+    def _participant(self, user, record=None):
+        section = user.section
+        return {
+            'uid': user.nfc_uid,
+            'studentId': user.student_id,
+            'fullName': user.get_full_name().strip() or user.username,
+            'section': section.section_name if section else '',
+            'yearLevel': section.year_level if section else '',
+            'program': section.program if section else '',
+            'openingAttendedAt': record.opened_attended_at if record else None,
+            'closingAttendedAt': record.closed_attended_at if record else None,
+        }
+
+    def _is_instructor_authorized_user(self, user):
+        request = self.context.get('request')
+        requester = getattr(request, 'user', None)
+        if not requester or requester.role != User.RoleChoices.INSTRUCTOR:
+            return True
+        return bool(
+            user.role == User.RoleChoices.STUDENT
+            and (
+                user.section_id
+                and (
+                    user.section.instructor_id == requester.pk
+                    or user.section.assigned_instructors.filter(pk=requester.pk).exists()
+                )
+            )
+        )
+
     def get_participant_count(self, obj):
         return obj.opened_by.count()
 
+    def get_opening_attendance_count(self, obj):
+        return obj.opened_by.count()
+
+    def get_closing_attendance_count(self, obj):
+        return obj.closed_by.count()
+
+    def get_pending_attendance_count(self, obj):
+        return obj.opened_by.exclude(pk__in=obj.closed_by.values('pk')).count()
+
+    def get_duration_seconds(self, obj):
+        end = obj.closed_at or timezone.now()
+        if not obj.opened_at:
+            return 0
+        return max(0, int((end - obj.opened_at).total_seconds()))
+
+    def get_access_logs(self, obj):
+        logs = obj.access_logs.select_related('user', 'user__section').order_by('access_time', 'pk')
+        results = []
+        for log in logs:
+            if log.user and not self._is_instructor_authorized_user(log.user):
+                continue
+            results.append({
+                'id': log.pk,
+                'timestamp': log.access_time,
+                'action': log.action,
+                'status': log.status,
+                'reason': log.reason,
+                'station': log.station,
+            })
+        return results
+
+    def get_motor_command_outcome(self, obj):
+        return 'Not recorded'
+
+    def get_physical_movement_status(self, obj):
+        return 'Not verified'
+
+    def get_session_initiator(self, obj):
+        initiator = obj.session_initiator
+        if not initiator:
+            return None
+        if not self._is_instructor_authorized_user(initiator):
+            request = self.context.get('request')
+            if getattr(request, 'user', None) and request.user.role == User.RoleChoices.INSTRUCTOR:
+                return {'fullName': 'Restricted identity', 'section': '', 'restricted': True}
+        return self._participant(initiator)
+
+    def get_closing_initiator(self, obj):
+        initiator = obj.closing_initiator
+        if not initiator:
+            return None
+        if not self._is_instructor_authorized_user(initiator):
+            request = self.context.get('request')
+            if getattr(request, 'user', None) and request.user.role == User.RoleChoices.INSTRUCTOR:
+                return {'fullName': 'Restricted identity', 'section': '', 'restricted': True}
+        return self._participant(initiator)
+
     def get_opened_by(self, obj):
+        records = {
+            record.user_id: record
+            for record in obj.attendance_records.select_related('user', 'user__section').all()
+        }
         return [
-            {'uid': user.nfc_uid, 'studentId': user.student_id, 'fullName': user.get_full_name().strip()}
-            for user in obj.opened_by.all()
+            self._participant(user, records.get(user.pk))
+            for user in obj.opened_by.select_related('section').all()
+            if self._is_instructor_authorized_user(user)
         ]
 
     def get_closed_by(self, obj):
+        records = {
+            record.user_id: record
+            for record in obj.attendance_records.select_related('user', 'user__section').all()
+        }
         return [
-            {'uid': user.nfc_uid, 'studentId': user.student_id, 'fullName': user.get_full_name().strip()}
-            for user in obj.closed_by.all()
+            self._participant(user, records.get(user.pk))
+            for user in obj.closed_by.select_related('section').all()
+            if self._is_instructor_authorized_user(user)
+        ]
+
+    def get_attendance(self, obj):
+        return [
+            {
+                **self._participant(record.user, record),
+                'openingAttended': record.opened_attended_at is not None,
+                'closingAttended': record.closed_attended_at is not None,
+            }
+            for record in obj.attendance_records.select_related('user', 'user__section').order_by('opened_attended_at', 'user__last_name', 'user__first_name', 'user_id')
+            if self._is_instructor_authorized_user(record.user)
         ]
 
 

@@ -69,7 +69,7 @@ class CabinetIdentityTests(TestCase):
 
 class CabinetIdentityMigrationTests(TransactionTestCase):
     before = ('api', '0050_alter_user_options')
-    after = ('api', '0053_enforce_cabinetsession_identity')
+    after = ('api', '0055_rename_api_cabinets_sessio_4d0c09_idx_api_cabinet_session_b26f43_idx_and_more')
 
     def setUp(self):
         executor = MigrationExecutor(connection)
@@ -103,6 +103,11 @@ class CabinetIdentityMigrationTests(TransactionTestCase):
         self.assertEqual(first.notes, 'Keep history')
         self.assertEqual(list(first.opened_by.values_list('pk', flat=True)), [self.user_id])
         self.assertEqual(list(first.closed_by.values_list('pk', flat=True)), [self.user_id])
+        attendance = first.attendance_records.get(user_id=self.user_id)
+        self.assertIsNone(attendance.opened_attended_at)
+        self.assertIsNone(attendance.closed_attended_at)
+        self.assertIsNone(first.session_initiator_id)
+        self.assertIsNone(first.closing_initiator_id)
         self.assertEqual(AccessLog.objects.get(pk=self.log_id).cabinet_session_id, first.pk)
         new = CabinetSession.objects.create(station='Station 1', status='closed')
         self.assertTrue(new.motor_dispatch_eligible)

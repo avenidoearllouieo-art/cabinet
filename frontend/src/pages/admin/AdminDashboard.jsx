@@ -56,7 +56,7 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-5">
       <PageHeader compact title="Operations Overview" description="Live cabinet activity and system readiness." />
-      <CabinetStationStatus detailLevel="admin" />
+      <CabinetStationStatus detailLevel="admin" compact />
 
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500 shadow-sm">Loading operations dashboard…</div>
@@ -97,7 +97,7 @@ export default function AdminDashboard() {
 
           <section className="grid gap-4 md:grid-cols-3">
             <Link to="/admin/access-logs" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><ShieldCheck className="text-taptrack-gold" size={24} /><span><strong className="block">Access monitoring</strong><span className="text-sm text-slate-500">Review NFC authentication outcomes.</span></span></Link>
-            <Link to="/admin/cabinet-events" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><Activity className="text-taptrack-gold" size={24} /><span><strong className="block">Cabinet events</strong><span className="text-sm text-slate-500">Inspect locking and alert history.</span></span></Link>
+            <Link to="/admin/cabinet-sessions" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><Activity className="text-taptrack-gold" size={24} /><span><strong className="block">Cabinet sessions</strong><span className="text-sm text-slate-500">Inspect complete cabinet usage sessions.</span></span></Link>
             <Link to="/admin/users" className="flex min-h-24 items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 text-taptrack-navy shadow-sm transition hover:border-taptrack-gold hover:shadow-md"><Users className="text-taptrack-gold" size={24} /><span><strong className="block">User management</strong><span className="text-sm text-slate-500">Maintain authorized users.</span></span></Link>
           </section>
         </>

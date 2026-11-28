@@ -59,6 +59,7 @@ function App() {
           <Route path='activities' element={<Activities />} />
           <Route path='submissions' element={<Submissions />} />
           <Route path='access-logs' element={<AccessLogs />} />
+          <Route path='cabinet-sessions' element={<CabinetEvents />} />
           <Route path='cabinet-events' element={<CabinetEvents />} />
           <Route path='password-recovery-history' element={<PasswordRecoveryHistory />} />
           <Route path='sections' element={<Sections />} />

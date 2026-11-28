@@ -164,6 +164,7 @@ export default function App() {
   const [registrationCountdown, setRegistrationCountdown] = useState(600)
   const [closedSession, setClosedSession] = useState(null)
   const [closingParticipants, setClosingParticipants] = useState([])
+  const [showAllParticipants, setShowAllParticipants] = useState(false)
   const [closeRejectedStudent, setCloseRejectedStudent] = useState('')
   const [scanFeedback, setScanFeedback] = useState(null)
   const [statusMessage, setStatusMessage] = useState('Ready for the next cabinet session.')
@@ -217,6 +218,7 @@ export default function App() {
     setClosedSession(null)
     closingParticipantsRef.current = []
     setClosingParticipants([])
+    setShowAllParticipants(false)
     setCloseRejectedStudent('')
     participantsByUidRef.current.clear()
     setScanFeedback(null)
@@ -1166,9 +1168,14 @@ export default function App() {
               <h3>Closed by</h3>
               {closingParticipants.length === 0
                 ? <EmptyState title="No closing attendance yet" description="Tap a member's registered card to record attendance." />
-                : closingParticipants.map((participant, index) => (
+                : (showAllParticipants ? closingParticipants : closingParticipants.slice(0, 3)).map((participant, index) => (
                   <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
                 ))}
+              {closingParticipants.length > 3 && (
+                <button type="button" className="btn ghost" onClick={() => setShowAllParticipants((value) => !value)}>
+                  {showAllParticipants ? 'SHOW FIRST 3' : `VIEW ALL ${closingParticipants.length} PARTICIPANTS`}
+                </button>
+              )}
             </div>
             <ErrorMessage>{errorMessage}</ErrorMessage>
             <div className="scan-prompt" role="status">Keep hands and objects away from the moving cabinet. Physical movement is not reported as verified.</div>
@@ -1420,11 +1427,16 @@ export default function App() {
                 {participants.length === 0 ? (
                   <EmptyState title="No participants added yet" description="Tap each group member's registered NFC card to record attendance." />
                 ) : (
-                  participants.map((participant, index) => (
+                  (showAllParticipants ? participants : participants.slice(0, 3)).map((participant, index) => (
                     <ParticipantCard key={`${participant.uid}-${index}`} participant={participant} index={index} />
                   ))
                 )}
               </div>
+              {participants.length > 3 && (
+                <button type="button" className="btn ghost" onClick={() => setShowAllParticipants((value) => !value)}>
+                  {showAllParticipants ? 'SHOW FIRST 3' : `VIEW ALL ${participants.length} PARTICIPANTS`}
+                </button>
+              )}
             </div>
 
             <div className="button-row stacked scan-actions">

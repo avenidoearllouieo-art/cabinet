@@ -7,8 +7,8 @@ const menuItems = [
   { label: 'Activities', path: '/admin/activities', icon: ClipboardList },
   { label: 'Submissions', path: '/admin/submissions', icon: Send },
   { label: 'Access Logs', path: '/admin/access-logs', icon: ShieldCheck },
-  { label: 'Cabinet Events', path: '/admin/cabinet-events', icon: CalendarDays },
-  { label: 'Recovery History', path: '/admin/password-recovery-history', icon: KeyRound },
+  { label: 'Cabinet Sessions', path: '/admin/cabinet-sessions', icon: CalendarDays },
+  { label: 'Password Recovery', path: '/admin/password-recovery-history', icon: KeyRound },
   { label: 'Sections', path: '/admin/sections', icon: Library },
 ]
 

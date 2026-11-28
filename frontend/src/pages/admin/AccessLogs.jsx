@@ -7,6 +7,7 @@ import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ViewAccessLogModal from '../../components/accesslogs/ViewAccessLogModal.jsx'
 import AccessLogPhotoPanel from '../../components/accesslogs/AccessLogPhotoPanel.jsx'
+import CabinetStationStatus from '../../components/CabinetStationStatus.jsx'
 import DeleteAccessLogModal from '../../components/accesslogs/DeleteAccessLogModal.jsx'
 import { formatAccessLogDuration } from '../../components/accesslogs/accessLogFormatters.js'
 import SearchField from '../../components/SearchField.jsx'
@@ -54,7 +55,14 @@ export default function AccessLogs() {
   const [exporting, setExporting] = useState(false)
   const [openActionId, setOpenActionId] = useState(null)
   const [page, setPage] = useState(1)
-  const pageSize = 10
+  const [pageSize, setPageSize] = useState(25)
+  const [serverCount, setServerCount] = useState(0)
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
+  const fetchSequenceRef = useRef(0)
+  const [dateRange, setDateRange] = useState('today')
+  const [customStart, setCustomStart] = useState('')
+  const [customEnd, setCustomEnd] = useState('')
+  const [stats, setStats] = useState({ successful_access: 0, denied_access: 0, cabinet_sessions: 0, unique_users: 0 })
   const actionMenuRef = useRef(null)
 
   useEffect(() => {
@@ -74,28 +82,37 @@ export default function AccessLogs() {
       setSelectedIds([])
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, studentFilter, cabinetFilter, stationFilter, actionFilter, photoFilter, sortBy])
+  }, [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, studentFilter, cabinetFilter, stationFilter, actionFilter, photoFilter, sortBy, pageSize])
 
   const fetchLogs = useCallback(async () => {
+    const sequence = ++fetchSequenceRef.current
     try {
       setLoading(true)
-      const rawLogs = []
-      let currentPage = 1
-      let hasNextPage = true
-      while (hasNextPage) {
-        const response = await api.get('/access-logs/', {
-          params: { page: currentPage, page_size: 100 },
-        })
-        if (Array.isArray(response.data)) {
-          rawLogs.push(...response.data)
-          hasNextPage = false
-        } else {
-          rawLogs.push(...(response.data.results || []))
-          hasNextPage = Boolean(response.data.next)
-          currentPage += 1
-        }
+      const params = {
+        page,
+        page_size: pageSize,
+        ordering: sortBy === 'oldest' ? 'access_time' : sortBy === 'name' ? 'user__last_name' : '-access_time',
       }
+      if (query.trim()) params.search = query.trim()
+      if (statusFilter !== 'all') params.status = statusFilter
+      if (roleFilter !== 'all') params.role = roleFilter
+      if (accessTypeFilter !== 'all') params.access_type = accessTypeFilter
+      if (stationFilter !== 'all') params.station = stationFilter
+      if (sectionFilter !== 'all') params.user__section = sectionFilter
+      if (studentFilter !== 'all') params.student_id = studentFilter
+      if (cabinetFilter !== 'all') params.cabinet_name = cabinetFilter
+      if (actionFilter !== 'all') params.action = actionFilter
+      if (photoFilter !== 'all') params.photo_capture_status = photoFilter
+      if (dateFilter) {
+        params.access_time_after = dateFilter
+        params.access_time_before = dateFilter
+      }
+      const response = await api.get('/access-logs/', { params })
+      const payload = response.data
+      const rawLogs = Array.isArray(payload) ? payload : payload.results || []
+      if (sequence !== fetchSequenceRef.current) return
       setLogs(rawLogs)
+      setServerCount(Array.isArray(payload) ? rawLogs.length : Number(payload.count || rawLogs.length))
       setError('')
     } catch (err) {
       console.error('Error fetching logs:', err)
@@ -103,12 +120,18 @@ export default function AccessLogs() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [page, pageSize, query, statusFilter, roleFilter, accessTypeFilter, stationFilter, sectionFilter, studentFilter, cabinetFilter, actionFilter, photoFilter, dateFilter, sortBy])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(fetchLogs, 0)
+    const timeoutId = window.setTimeout(fetchLogs, 300)
     return () => window.clearTimeout(timeoutId)
   }, [fetchLogs])
+
+  useEffect(() => {
+    api.get('/access-logs/stats/', { params: dateRange === 'custom' ? { range: 'custom', start: customStart, end: customEnd } : { range: dateRange } })
+      .then((response) => setStats(response.data))
+      .catch(() => setStats({ successful_access: 0, denied_access: 0, cabinet_sessions: 0, unique_users: 0 }))
+  }, [dateRange, customStart, customEnd])
 
   const handleLogDeleted = async (deletedLogId) => {
     setLogs((existingLogs) => existingLogs.filter((log) => log.id !== deletedLogId))
@@ -388,11 +411,36 @@ export default function AccessLogs() {
     return formatAccessLogDuration(row.duration_seconds)
   }
 
-  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize))
-  const paginatedLogs = filteredLogs.slice((page - 1) * pageSize, page * pageSize)
+  const totalPages = Math.max(1, Math.ceil(serverCount / pageSize))
+  const nearbyPageNumbers = [...new Set([
+    1,
+    totalPages,
+    page - 1,
+    page,
+    page + 1,
+  ].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages))].sort((left, right) => left - right)
+  const paginatedLogs = filteredLogs
 
   const toggleSelection = (id) => {
     setSelectedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))
+  }
+
+  const activeFilterCount = [query, statusFilter, roleFilter, accessTypeFilter, dateFilter, sectionFilter, studentFilter, cabinetFilter, stationFilter, actionFilter, photoFilter]
+    .filter((value) => value && value !== 'all').length
+
+  const clearFilters = () => {
+    setQuery('')
+    setStatusFilter('all')
+    setRoleFilter('all')
+    setAccessTypeFilter('all')
+    setDateFilter('')
+    setSectionFilter('all')
+    setStudentFilter('all')
+    setCabinetFilter('all')
+    setStationFilter('all')
+    setActionFilter('all')
+    setPhotoFilter('all')
+    setSortBy('newest')
   }
 
   return (
@@ -402,11 +450,31 @@ export default function AccessLogs() {
         description="Monitor cabinet and NFC access events across all users."
       />
 
+      <CabinetStationStatus detailLevel="admin" />
+
+      <div className="flex flex-wrap justify-end gap-3">
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          Date range
+          <select value={dateRange} onChange={(event) => setDateRange(event.target.value)} className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800">
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </label>
+        {dateRange === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input type="date" aria-label="Start date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+            <input type="date" aria-label="End date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+          </div>
+        )}
+      </div>
       <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <SummaryCard icon={LogIn} title="Total Access Logs" value={totalLogs} trendText="All login records" iconBg="bg-blue-50" iconColor="text-blue-900" />
-        <SummaryCard icon={CheckCircle2} title="Successful Access" value={successfulLogins} trendText="Completed sessions" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={AlertCircle} title="Failed Access" value={failedLogins} trendText="Login failures" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
-        <SummaryCard icon={ShieldCheck} title="Cabinet Unlocks Today" value={cabinetUnlocksToday} trendText="Unlock events today" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={CheckCircle2} title="Successful Access" value={stats.successful_access} trendText="Authentication success" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
+        <SummaryCard icon={AlertCircle} title="Denied Access" value={stats.denied_access} trendText="Denied or unregistered scans" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
+        <SummaryCard icon={ShieldCheck} title="Cabinet Sessions" value={stats.cabinet_sessions} trendText="Sessions opened in range" iconBg="bg-amber-50" iconColor="text-amber-900" />
+        <SummaryCard icon={LogIn} title="Unique Users" value={stats.unique_users} trendText="Users with access events" iconBg="bg-blue-50" iconColor="text-blue-900" />
       </div>
 
       {error && (
@@ -423,11 +491,18 @@ export default function AccessLogs() {
           </div>
         </div>
 
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setAdvancedFiltersOpen((value) => !value)} aria-expanded={advancedFiltersOpen} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-taptrack-navy">
+            Advanced Filters ({activeFilterCount})
+          </button>
+          {activeFilterCount > 0 && <button type="button" onClick={clearFilters} className="min-h-10 rounded-lg px-3 text-sm font-semibold text-red-700 hover:bg-red-50">Clear Filters</button>}
+        </div>
+
         <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
           <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search access logs..." ariaLabel="Search access logs" className="w-full lg:max-w-[360px]" />
 
           <div className="flex flex-1 flex-wrap gap-3 lg:justify-end">
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter role</span>
               <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {roleOptions.map((option) => (
@@ -435,7 +510,7 @@ export default function AccessLogs() {
                 ))}
               </select>
             </label>
-            <label className="min-w-[165px] flex-1 lg:max-w-[190px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[165px] flex-1 lg:max-w-[190px]`}>
               <span className="sr-only">Filter access type</span>
               <select value={accessTypeFilter} onChange={(e) => setAccessTypeFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {accessTypeOptions.map((option) => (
@@ -451,14 +526,14 @@ export default function AccessLogs() {
                 <option value="failed">Failed / Denied</option>
               </select>
             </label>
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter student</span>
               <select value={studentFilter} onChange={(e) => setStudentFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All students</option>
                 {logOptions.students.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
               </select>
             </label>
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter Cabinet</span>
               <select value={cabinetFilter} onChange={(e) => setCabinetFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All Cabinets</option>
@@ -472,14 +547,14 @@ export default function AccessLogs() {
                 {logOptions.stations.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
               </select>
             </label>
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter action</span>
               <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All actions</option>
                 {logOptions.actions.map(([action, label]) => <option key={action} value={action}>{label}</option>)}
               </select>
             </label>
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter photo status</span>
               <select value={photoFilter} onChange={(e) => setPhotoFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 <option value="all">All photo statuses</option>
@@ -493,7 +568,7 @@ export default function AccessLogs() {
               <span className="sr-only">Filter date</span>
               <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50" />
             </label>
-            <label className="min-w-[150px] flex-1 lg:max-w-[180px]">
+            <label className={`${advancedFiltersOpen ? '' : 'hidden '}min-w-[150px] flex-1 lg:max-w-[180px]`}>
               <span className="sr-only">Filter section</span>
               <select value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)} className="h-11 w-full rounded-[10px] border border-[#D1D5DB] bg-white px-3 text-sm transition focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/50">
                 {sectionOptions.map((option) => (
@@ -586,16 +661,26 @@ export default function AccessLogs() {
           )}
         />
 
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-[#6B7280]">Showing {filteredLogs.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filteredLogs.length)} of {filteredLogs.length}</div>
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3 text-sm text-slate-600">
+            <span>Showing {serverCount ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, serverCount)} of {serverCount}</span>
+            <label className="flex items-center gap-2">Rows
+              <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }} className="h-9 rounded-md border border-slate-300 bg-white px-2">
+                {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+          </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="min-h-11 rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
-            {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-              <button key={pageNumber} type="button" onClick={() => setPage(pageNumber)} className={`h-11 w-11 rounded-[8px] text-sm ${pageNumber === page ? 'bg-taptrack-gold font-semibold text-taptrack-navy' : 'border border-[#D1D5DB] text-[#374151]'}`}>
-                {pageNumber}
-              </button>
+            <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">First</button>
+            <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Previous</button>
+            {nearbyPageNumbers.map((pageNumber, index) => (
+              <span key={pageNumber} className="flex items-center gap-2">
+                {index > 0 && pageNumber - nearbyPageNumbers[index - 1] > 1 && <span aria-label="More pages">…</span>}
+                <button type="button" onClick={() => setPage(pageNumber)} aria-current={pageNumber === page ? 'page' : undefined} className={`h-10 min-w-10 rounded-md px-2 text-sm ${pageNumber === page ? 'bg-taptrack-gold font-semibold text-taptrack-navy' : 'border border-slate-300 text-slate-700'}`}>{pageNumber}</button>
+              </span>
             ))}
-            <button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages} className="min-h-11 rounded-[8px] border border-[#D1D5DB] px-3 py-2 text-sm text-[#374151] disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+            <button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Next</button>
+            <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="min-h-10 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-40">Last</button>
           </div>
         </div>
       </div>

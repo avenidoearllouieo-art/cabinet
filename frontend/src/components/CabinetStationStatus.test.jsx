@@ -18,7 +18,7 @@ describe('CabinetStationStatus', () => {
     ] } })
     render(<CabinetStationStatus detailLevel="instructor" />)
 
-    expect(await screen.findByText('Unknown user')).toBeTruthy()
+    expect(await screen.findByText('Identity not recorded')).toBeTruthy()
     expect(screen.getByText('UNKNOWN')).toBeTruthy()
     expect(screen.queryByText('AVAILABLE')).toBeNull()
     expect(screen.queryByText('Opened by 0')).toBeNull()
