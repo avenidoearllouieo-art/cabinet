@@ -55,14 +55,15 @@ export default function AccessLogs() {
   const [exporting, setExporting] = useState(false)
   const [openActionId, setOpenActionId] = useState(null)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const [pageSize, setPageSize] = useState(10)
   const [serverCount, setServerCount] = useState(0)
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
   const fetchSequenceRef = useRef(0)
   const [dateRange, setDateRange] = useState('today')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
-  const [stats, setStats] = useState({ successful_access: 0, denied_access: 0, cabinet_sessions: 0, unique_users: 0 })
+  const [stats, setStats] = useState(null)
+  const [statsError, setStatsError] = useState(false)
   const actionMenuRef = useRef(null)
 
   useEffect(() => {
@@ -129,8 +130,8 @@ export default function AccessLogs() {
 
   useEffect(() => {
     api.get('/access-logs/stats/', { params: dateRange === 'custom' ? { range: 'custom', start: customStart, end: customEnd } : { range: dateRange } })
-      .then((response) => setStats(response.data))
-      .catch(() => setStats({ successful_access: 0, denied_access: 0, cabinet_sessions: 0, unique_users: 0 }))
+      .then((response) => { setStats(response.data); setStatsError(false) })
+      .catch(() => { setStats(null); setStatsError(true) })
   }, [dateRange, customStart, customEnd])
 
   const handleLogDeleted = async (deletedLogId) => {
@@ -470,12 +471,23 @@ export default function AccessLogs() {
           </div>
         )}
       </div>
-      <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-        <SummaryCard icon={CheckCircle2} title="Successful Access" value={stats.successful_access} trendText="Authentication success" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={AlertCircle} title="Denied Access" value={stats.denied_access} trendText="Denied or unregistered scans" trendColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-900" />
-        <SummaryCard icon={ShieldCheck} title="Cabinet Sessions" value={stats.cabinet_sessions} trendText="Sessions opened in range" iconBg="bg-amber-50" iconColor="text-amber-900" />
-        <SummaryCard icon={LogIn} title="Unique Users" value={stats.unique_users} trendText="Users with access events" iconBg="bg-blue-50" iconColor="text-blue-900" />
-      </div>
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Access statistics">
+        <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 sm:grid-cols-4 sm:divide-y-0">
+          {[
+            ['Successful Access', stats?.successful_access],
+            ['Denied Access', stats?.denied_access],
+            ['Cabinet Sessions', stats?.cabinet_sessions],
+            ['Unique Users', stats?.unique_users],
+          ].map(([label, value]) => (
+            <div key={label} className="flex min-h-20 items-center justify-between gap-3 px-4 py-3 sm:justify-center sm:text-center">
+              <div>
+                <strong className={`block text-2xl leading-none ${statsError ? 'text-slate-400' : 'text-taptrack-navy'}`}>{statsError ? 'Unavailable' : value === null || value === undefined ? 'Loading' : value}</strong>
+                <span className="mt-1 block text-xs font-semibold text-slate-500">{label}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {error && (
         <div className="rounded-[12px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">

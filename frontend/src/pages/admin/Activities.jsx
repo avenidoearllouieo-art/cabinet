@@ -345,7 +345,7 @@ export default function Activities() {
                   </dl>
                   {progress !== null && <div className="mt-2"><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[#FFC107]" style={{ width: `${progress}%` }} /></div><p className="mt-1 text-right text-[10px] text-slate-500">{progress}% submitted</p></div>}
                   <button type="button" aria-expanded={expanded} onClick={toggleExpanded} className="mt-2 min-h-9 text-xs font-semibold text-[#1d5b91] hover:underline">{expanded ? 'Hide details' : 'More details'}</button>
-                  {expanded && <div className="mt-2 space-y-2 border-t border-slate-100 pt-2 text-xs"><p className="whitespace-pre-wrap break-words"><strong>Description:</strong> {row.description || '—'}</p><p className="whitespace-pre-wrap break-words"><strong>Instructions:</strong> {row.instructions || '—'}</p><p><strong>Cabinet station:</strong> {row.cabinet_station || '—'}</p></div>}
+                  {expanded && <div className="mt-2 grid gap-2 border-t border-slate-100 pt-2 text-xs sm:grid-cols-2"><p className="whitespace-pre-wrap break-words sm:col-span-2"><strong>Description:</strong> {row.description || 'No description provided'}</p><p><strong>Activity type:</strong> {getActivityType(row)}</p><p><strong>Due date:</strong> {formatDate(row.due_date)}</p></div>}
                 </div>
               )
             }}
@@ -353,7 +353,6 @@ export default function Activities() {
               <dl className="grid gap-2 sm:grid-cols-2">
                 <div><dt className="font-semibold">Activity Type</dt><dd>{getActivityType(row)}</dd></div>
                 <div><dt className="font-semibold">Assigned Instructor</dt><dd>{row.assigned_instructor_name || row.instructor_name || `${row.created_by_name || ''} ${row.created_by_last_name || ''}`.trim() || '—'}</dd></div>
-                <div><dt className="font-semibold">Cabinet Station</dt><dd>{row.cabinet_station || '—'}</dd></div>
                 <div className="sm:col-span-2"><dt className="font-semibold">Description</dt><dd className="whitespace-pre-wrap">{row.description || '—'}</dd></div>
               </dl>
             )}

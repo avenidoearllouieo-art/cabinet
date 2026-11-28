@@ -86,8 +86,6 @@ export default function ActivityDetailModal({ activity, onClose }) {
   const assignedCount = displayActivity.assigned_student_count
   const submittedCount = displayActivity.submitted_students_count
   const status = String(displayActivity.status || 'Not recorded')
-  const cabinetAssignment = displayActivity.cabinet_station
-
   return (
     <Modal
       isOpen={Boolean(activity)}
@@ -136,7 +134,6 @@ export default function ActivityDetailModal({ activity, onClose }) {
           </dl>
         </DetailSection>
 
-        {cabinetAssignment && <DetailSection icon={ClipboardList} title="Cabinet Assignment"><dl className="grid gap-3 sm:grid-cols-2"><DetailValue label="Cabinet station">{cabinetAssignment}</DetailValue></dl></DetailSection>}
 
         <DetailSection icon={Users} title="Assigned Students and Submission Progress">
           <dl className="grid gap-3 sm:grid-cols-2">

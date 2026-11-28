@@ -2959,6 +2959,9 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
                             'closing_attended_at': record.closed_attended_at if record else None,
                         })
                     initiator = session.session_initiator
+                    if initiator is None:
+                        initiator_log = session.access_logs.filter(action=AccessLog.AccessActionChoices.OPEN, status=AccessLog.AccessStatusChoices.SUCCESS, user__isnull=False).select_related('user', 'user__section').order_by('access_time', 'pk').first()
+                        initiator = initiator_log.user if initiator_log else None
                     initiator_data = None
                     if initiator:
                         section = initiator.section
@@ -2967,7 +2970,11 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
                             'section': section.section_name if section else '',
                         }
                     else:
-                        initiator_data = {'full_name': 'Not recorded', 'section': ''}
+                        initiator_data = {
+                            'full_name': 'Historically unrecorded',
+                            'section': '',
+                            'identity_status': 'historical_missing',
+                        }
                 else:
                     assigned_sections = request.user.assigned_sections.all()
                     assigned_student_ids = set(
@@ -2995,6 +3002,9 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
                             'section': section.section_name if section else '',
                         })
                     initiator = session.session_initiator
+                    if initiator is None:
+                        initiator_log = session.access_logs.filter(action=AccessLog.AccessActionChoices.OPEN, status=AccessLog.AccessStatusChoices.SUCCESS, user__isnull=False).select_related('user', 'user__section').order_by('access_time', 'pk').first()
+                        initiator = initiator_log.user if initiator_log else None
                     initiator_authorized = bool(initiator and initiator.pk in assigned_student_ids)
                     if initiator_authorized:
                         section = initiator.section
@@ -3005,7 +3015,7 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     elif initiator:
                         initiator_data = {'full_name': 'Restricted identity', 'section': '', 'restricted': True}
                     else:
-                        initiator_data = {'full_name': 'Identity not recorded', 'section': '', 'restricted': True}
+                        initiator_data = {'full_name': 'Historically unrecorded', 'section': '', 'restricted': True, 'identity_status': 'historical_missing'}
                     if participant_count and not authorized_users:
                         neutral_message = 'Occupied by another section'
                         first_sections = {user.section_id for user in opened_users if user.section_id}
@@ -3023,6 +3033,8 @@ class CabinetSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     'station': session.station,
                     'participant_count': participant_count,
                     'opened_at': session.opened_at,
+                    'duration_seconds': max(0, int((timezone.now() - session.opened_at).total_seconds())) if session.opened_at else 0,
+                    'updated_at': session.updated_at,
                     'opening_attendance_count': participant_count,
                     'closing_attendance_count': session.closed_by.count(),
                     'pending_attendance_count': session.opened_by.exclude(pk__in=session.closed_by.values('pk')).count(),
@@ -3471,7 +3483,10 @@ class VerifyNFCView(APIView):
         elif cabinet_session and cabinet_session.workflow_state == CabinetSession.WorkflowStateChoices.CLOSING:
             action = AccessLog.AccessActionChoices.CLOSE
             if status_value == AccessLog.AccessStatusChoices.SUCCESS:
-                if not cabinet_session.opened_by.filter(pk=user.pk).exists():
+                if not user:
+                    status_value = AccessLog.AccessStatusChoices.UNREGISTERED
+                    reason_value = 'NFC card is not registered'
+                elif not cabinet_session.opened_by.filter(pk=user.pk).exists():
                     status_value = AccessLog.AccessStatusChoices.REJECTED
                     reason_value = 'Participant is not part of this cabinet session'
                 elif cabinet_session.closed_by.filter(pk=user.pk).exists():

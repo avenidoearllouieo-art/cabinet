@@ -5336,6 +5336,56 @@ class CabinetDeviceIntegrationTests(TestCase):
             ['AVAILABLE', 'AVAILABLE'],
         )
 
+    @override_settings(DEBUG=True, TAPTRACK_CABINET_NAME='Cabinet 1', TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'])
+    def test_new_session_persists_opening_initiator_identity(self):
+        student = User.objects.create_user(
+            username='opening-initiator',
+            email='opening-initiator@example.com',
+            password='secret1234',
+            role=User.RoleChoices.STUDENT,
+            student_id='OPEN-INIT-001',
+            first_name='Mika',
+            last_name='Reyes',
+            nfc_uid='NEW-OPEN-UID',
+            section=self.section,
+        )
+        opened = self.client.post(
+            '/api/cabinet/workflow/',
+            {'command': 'open', 'station': 'Station 1'},
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(opened.status_code, 200, opened.json())
+
+        scanned = self.client.post(
+            '/api/verify-nfc/',
+            {'nfc_uid': 'NEW-OPEN-UID', 'station': 'Station 1'},
+            HTTP_X_TAPTRACK_MOCK_MODE='true',
+            HTTP_X_API_KEY=self.device_api_key,
+            format='json',
+        )
+        self.assertEqual(scanned.status_code, 200, scanned.json())
+
+        session = CabinetSession.objects.get(station='Station 1', status=CabinetSession.StatusChoices.OPEN)
+        self.assertEqual(session.session_initiator_id, student.pk)
+        attendance = session.attendance_records.get(user=student)
+        self.assertIsNotNone(attendance.opened_attended_at)
+        self.assertIsNone(attendance.closed_attended_at)
+
+        admin = User.objects.create_superuser(
+            username='opening-status-admin',
+            email='opening-status-admin@example.com',
+            password='secret1234',
+            administrator_id='OPEN-ADMIN-001',
+        )
+        self.client.force_authenticate(user=admin)
+        response = self.client.get('/api/cabinet-sessions/station-status/')
+        station = next(item for item in response.json()['stations'] if item['station'] == 'Station 1')
+        self.assertEqual(station['active_session']['initiator']['full_name'], 'Mika Reyes')
+        self.assertEqual(station['active_session']['initiator']['section'], 'Cabinet Section')
+        self.assertEqual(station['active_session']['participant_count'], 1)
+
     @override_settings(DEBUG=True, TAPTRACK_CABINET_STATIONS=['Station 1', 'Station 2'])
     def test_mock_workflow_requires_a_matching_device_api_key(self):
         missing_key = self.client.get(

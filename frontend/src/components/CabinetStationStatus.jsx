@@ -12,6 +12,13 @@ function formatOpenedAt(value) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds) || 0)
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`
+}
+
 export default function CabinetStationStatus({ detailLevel = 'student', compact = false }) {
   const [stations, setStations] = useState([])
   const [loadError, setLoadError] = useState(false)
@@ -99,6 +106,8 @@ export default function CabinetStationStatus({ detailLevel = 'student', compact 
                   ) : available ? (
                     <p className="mt-3 text-sm text-emerald-700">Available for use</p>
                   ) : null
+                ) : available ? (
+                  <div className="mt-3"><p className="font-medium text-emerald-700">Ready for use</p><p className="text-sm text-slate-500">No active session</p></div>
                 ) : detailLevel !== 'student' && occupied && session && (
                   <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                     <dt className="text-slate-500">{detailLevel === 'instructor' ? 'Initiator' : 'Opened by'}</dt>
@@ -109,14 +118,15 @@ export default function CabinetStationStatus({ detailLevel = 'student', compact 
                       {session.initiator?.section ? ` · ${session.initiator.section}` : ''}
                     </dd>
                     {Number(session.participant_count) > 0 && <><dt className="text-slate-500">Participants</dt><dd className="text-right font-medium text-slate-800">{session.participant_count}</dd></>}
-                    {Array.isArray(session.participant_previews) && session.participant_previews.length > 0 && <><dt className="text-slate-500">Preview</dt><dd className="text-right font-medium text-slate-800">{session.participant_previews.map((participant) => `${participant.full_name}${participant.section ? ` · ${participant.section}` : ''}`).join(', ')}</dd></>}
+                    {Array.isArray(session.participant_previews) && session.participant_previews.length > 0 && <><dt className="text-slate-500">Participants</dt><dd className="text-right font-medium text-slate-800">{session.participant_previews.map((participant) => `${participant.full_name}${participant.section ? ` · ${participant.section}` : ''}`).join(', ')}</dd></>}
                     {session.neutral_message && <><dt className="text-slate-500">Scope</dt><dd className="text-right font-medium text-slate-800">{session.neutral_message}</dd></>}
                     {detailLevel === 'instructor' && Number(session.anonymous_participant_count) > 0 && <><dt className="text-slate-500">Other participants</dt><dd className="text-right font-medium text-slate-800">{session.anonymous_participant_count} anonymous</dd></>}
                     {session.opened_at && <><dt className="text-slate-500">Opened</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.opened_at)}</dd></>}
+                    {session.opened_at && <><dt className="text-slate-500">Live duration</dt><dd className="text-right font-medium text-slate-800">{formatDuration(session.duration_seconds)}</dd></>}
                     {session.updated_at && <><dt className="text-slate-500">Last updated</dt><dd className="text-right font-medium text-slate-800">{formatOpenedAt(session.updated_at)}</dd></>}
                     {detailLevel === 'admin' && session.id && <><dt className="text-slate-500">Session</dt><dd className="text-right font-medium text-slate-800">#{session.id}</dd></>}
                     {Array.isArray(session.participants) && session.participants.length > 0 && (
-                      <><dt className="text-slate-500">Details</dt><dd className="text-right"><button type="button" onClick={() => setParticipantSession(session)} className="text-sm font-semibold text-taptrack-navy hover:underline">View all participants</button></dd></>
+                      <><dt className="text-slate-500">Details</dt><dd className="text-right"><button type="button" onClick={() => setParticipantSession(session)} className="min-h-9 rounded-md border border-slate-300 px-3 text-sm font-semibold text-taptrack-navy hover:bg-slate-50">View all participants ({session.participant_count})</button></dd></>
                     )}
                   </dl>
                 )}

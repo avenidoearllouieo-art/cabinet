@@ -30,7 +30,7 @@ export default function CabinetEvents() {
   const [deletingEvent, setDeletingEvent] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const [pageSize, setPageSize] = useState(10)
   const [serverCount, setServerCount] = useState(0)
   const [sessionStats, setSessionStats] = useState({ active_sessions: 0, completed_sessions: 0, average_completed_duration_seconds: 0, sessions_pending_closing_attendance: 0 })
   const params = new URLSearchParams(window.location.search)
@@ -139,16 +139,20 @@ export default function CabinetEvents() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Cabinet Sessions"
+        title="Cabinet Sessions Management"
         description="Monitor complete cabinet usage sessions and preserve raw access events separately."
       />
 
-      <div className="grid gap-6 md:grid-cols-4">
-        <SummaryCard icon={Box} title="Active Sessions" value={sessionStats.active_sessions} trendText="Current open sessions" trendColor="text-amber-700" iconBg="bg-amber-50" iconColor="text-amber-900" />
-        <SummaryCard icon={Box} title="Completed Sessions" value={sessionStats.completed_sessions} trendText="Within selected period" trendColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-900" />
-        <SummaryCard icon={Box} title="Average Duration" value={sessionStats.average_completed_duration_seconds ? `${Math.floor(sessionStats.average_completed_duration_seconds / 60)} min` : '0 min'} trendText="Completed sessions" iconBg="bg-slate-100" iconColor="text-slate-700" />
-        <SummaryCard icon={Box} title="Pending Closing Attendance" value={sessionStats.sessions_pending_closing_attendance} trendText="Active sessions" iconBg="bg-blue-50" iconColor="text-blue-900" />
-      </div>
+      <section className="grid grid-cols-2 divide-x divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white py-3 shadow-sm sm:grid-cols-4 sm:divide-y-0" aria-label="Cabinet session statistics">
+        {[
+          ['Active Sessions', sessionStats.active_sessions],
+          ['Completed Sessions', sessionStats.completed_sessions],
+          ['Average Duration', sessionStats.average_completed_duration_seconds ? `${Math.floor(sessionStats.average_completed_duration_seconds / 60)} min` : '0 min'],
+          ['Pending Closing Attendance', sessionStats.sessions_pending_closing_attendance],
+        ].map(([label, value]) => (
+          <div key={label} className="px-3 py-2 text-center"><strong className="block text-2xl text-taptrack-navy">{value}</strong><span className="mt-1 block text-xs font-semibold text-slate-500">{label}</span></div>
+        ))}
+      </section>
 
       {error && (
         <div className="rounded-[12px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
@@ -159,12 +163,12 @@ export default function CabinetEvents() {
       <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-6 shadow-sm">
         <div className="mb-4 flex flex-col gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Cabinet Event Records</h2>
-            <p className="text-sm text-[#6B7280]">Browse and manage smart cabinet access events.</p>
+            <h2 className="text-lg font-semibold text-[#111827]">Cabinet Session Records</h2>
+            <p className="text-sm text-[#6B7280]">Monitor and review cabinet usage sessions.</p>
           </div>
 
           <div className="dashboard-stat-grid grid grid-cols-2 gap-2.5 max-[319px]:grid-cols-1 min-[1024px]:grid-cols-4 lg:gap-4">
-            <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search events" ariaLabel="Search events" />
+            <SearchField value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search sessions" ariaLabel="Search sessions" />
             <label>
               <span className="sr-only">Filter station or cabinet</span>
               <select value={cabinetFilter} onChange={(event) => setCabinetFilter(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-taptrack-navy focus:ring-2 focus:ring-taptrack-gold/40">

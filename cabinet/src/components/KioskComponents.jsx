@@ -83,6 +83,7 @@ export function ParticipantCard({ participant, index, state = 'success' }) {
       <span className="participant-copy">
         <strong>{participant.fullName || 'Student'}</strong>
         <small>{[participant.section, participant.studentId].filter(Boolean).join(' · ') || 'Student ID unavailable'}</small>
+        {participant.closingStatus && <small>Opening: Recorded · Closing: {participant.closingStatus}</small>}
       </span>
       <span className="participant-check" aria-label={state === 'success' ? 'Recorded' : undefined}>
         <KioskIcon name={state === 'success' ? 'check' : 'warning'} size={18} />

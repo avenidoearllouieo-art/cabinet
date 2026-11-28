@@ -1158,22 +1158,28 @@ export default function App() {
               <div className="confirm-row"><span>Closed by</span><strong>{closingParticipants.length}</strong></div>
               <div className="confirm-row"><span>Opened</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
             </div>
-            <div className="participant-list session-participants">
-              <h3>Opened by</h3>
-              {(selectedSession?.opened_by || []).map((participant, index) => (
-                <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
-              ))}
+            <div className="confirm-list close-session-summary">
+              <div className="confirm-row"><span>Session initiator</span><strong>{selectedSession?.session_initiator?.fullName || 'Historically unrecorded'}</strong></div>
+              <div className="confirm-row"><span>Opening time</span><strong>{formatSessionTime(selectedSession?.openedAt)}</strong></div>
+              <div className="confirm-row"><span>Opening attendance</span><strong>{getParticipantCount(selectedSession)}</strong></div>
+              <div className="confirm-row"><span>Closing attendance</span><strong>{closingParticipants.length}</strong></div>
+              <div className="confirm-row"><span>Pending closing attendance</span><strong>{Math.max(0, getParticipantCount(selectedSession) - closingParticipants.length)}</strong></div>
             </div>
-            <div className="participant-list session-participants">
-              <h3>Closed by</h3>
-              {closingParticipants.length === 0
-                ? <EmptyState title="No closing attendance yet" description="Tap a member's registered card to record attendance." />
-                : (showAllParticipants ? closingParticipants : closingParticipants.slice(0, 3)).map((participant, index) => (
-                  <ParticipantCard key={participant.uid || participant.studentId} participant={participant} index={index} />
-                ))}
-              {closingParticipants.length > 3 && (
+            <div className="participant-list unified-attendance-list">
+              {(selectedSession?.opened_by || []).slice(0, showAllParticipants ? undefined : 3).map((participant, index) => {
+                const closingRecorded = closingParticipants.some((member) => member.uid === participant.uid || member.studentId === participant.studentId)
+                return (
+                  <ParticipantCard
+                    key={participant.uid || participant.studentId}
+                    participant={{ ...participant, closingStatus: closingRecorded ? 'Recorded' : 'Pending' }}
+                    index={index}
+                    state="success"
+                  />
+                )
+              })}
+              {getParticipantCount(selectedSession) > 3 && (
                 <button type="button" className="btn ghost" onClick={() => setShowAllParticipants((value) => !value)}>
-                  {showAllParticipants ? 'SHOW FIRST 3' : `VIEW ALL ${closingParticipants.length} PARTICIPANTS`}
+                  {showAllParticipants ? 'SHOW FIRST 3' : `VIEW ALL ${getParticipantCount(selectedSession)} PARTICIPANTS`}
                 </button>
               )}
             </div>

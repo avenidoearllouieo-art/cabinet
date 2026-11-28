@@ -21,12 +21,12 @@ export default function PasswordRecoveryHistory() {
   const [loadedRequestKey, setLoadedRequestKey] = useState('')
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
-  const [view, setView] = useState('audit')
+  const [view, setView] = useState('requests')
   const [search, setSearch] = useState('')
   const [dateFilter, setDateFilter] = useState('')
-  const [pageSize, setPageSize] = useState(25)
+  const [pageSize, setPageSize] = useState(10)
   const [selectedRequest, setSelectedRequest] = useState(null)
-  const [recoveryStats, setRecoveryStats] = useState({ pending_verification: 0, verified_awaiting_completion: 0, completed_in_range: 0, rejected_attempts_in_range: 0 })
+  const [recoveryStats, setRecoveryStats] = useState(null)
   const requestKey = `${view}:${page}:${reload}`
   const loading = loadedRequestKey !== requestKey
 
@@ -57,7 +57,7 @@ export default function PasswordRecoveryHistory() {
   useEffect(() => {
     api.get('/admin/password-recovery-history/', { params: { view: 'stats', range: '30d' } })
       .then((response) => setRecoveryStats(response.data))
-      .catch(() => setRecoveryStats({ pending_verification: 0, verified_awaiting_completion: 0, completed_in_range: 0, rejected_attempts_in_range: 0 }))
+      .catch(() => setRecoveryStats(null))
   }, [])
 
   const requestColumns = [
@@ -65,7 +65,8 @@ export default function PasswordRecoveryHistory() {
     { key: 'student_name', label: 'Student' },
     { key: 'section', label: 'Section' },
     { key: 'account_reference', label: 'Account' },
-    { key: 'status', label: 'Status', render: formatLabel },
+    { key: 'status', label: 'Status', render: (value) => ({ pending: 'Pending Verification', verified: 'Verified – Awaiting Reset', used: 'Completed', expired: 'Expired', cancelled: 'Cancelled' }[value] || formatLabel(value)) },
+    { key: 'nfc_verification_attempt_count', label: 'Verification attempts', render: (value) => Number(value || 0) },
     { key: 'nfc_verified', label: 'NFC', render: (value) => value ? 'Verified' : 'Not verified' },
     { key: 'expires_at', label: 'Expires', render: formatDate },
     { key: 'completed_at', label: 'Completed', render: formatDate },
@@ -103,12 +104,18 @@ export default function PasswordRecoveryHistory() {
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">{error}</div>}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Pending verification</p><strong className="text-2xl text-taptrack-navy">{recoveryStats.pending_verification}</strong></div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Verified awaiting completion</p><strong className="text-2xl text-taptrack-navy">{recoveryStats.verified_awaiting_completion}</strong></div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Completed in 30 days</p><strong className="text-2xl text-taptrack-navy">{recoveryStats.completed_in_range}</strong></div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Rejected NFC attempts</p><strong className="text-2xl text-taptrack-navy">{recoveryStats.rejected_attempts_in_range}</strong></div>
-      </div>
+      <section className="grid grid-cols-3 divide-x divide-slate-200 rounded-xl border border-slate-200 bg-white py-3 shadow-sm" aria-label="Password recovery summary">
+        {[
+          ['Pending Verification', recoveryStats?.pending_verification],
+          ['Verified Awaiting Reset', recoveryStats?.verified_awaiting_completion],
+          ['Completed in Last 30 Days', recoveryStats?.completed_in_range],
+        ].map(([label, value]) => (
+          <div key={label} className="px-3 text-center sm:px-5">
+            <strong className="block text-2xl text-taptrack-navy">{value === null || value === undefined ? 'Unavailable' : value}</strong>
+            <span className="mt-1 block text-xs font-semibold text-slate-500">{label}</span>
+          </div>
+        ))}
+      </section>
 
       <div className="flex flex-wrap items-center gap-3">
         <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} placeholder="Search recovery records" className="h-11 min-w-[220px] rounded-lg border border-slate-300 px-3 text-sm" />
@@ -119,6 +126,12 @@ export default function PasswordRecoveryHistory() {
           </select>
         </label>
       </div>
+
+      {view === 'audit' && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Rejected NFC attempts in the last 30 days: <strong className="text-taptrack-navy">{recoveryStats?.rejected_attempts_in_range ?? 'Unavailable'}</strong>
+        </div>
+      )}
 
       <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="tablist" aria-label="Password recovery views">
         <button type="button" role="tab" aria-selected={view === 'requests'} onClick={() => { setPage(1); setView('requests') }} className={`min-h-10 rounded-md px-4 text-sm font-semibold ${view === 'requests' ? 'bg-taptrack-navy text-white' : 'text-slate-600'}`}>Recovery Requests</button>
