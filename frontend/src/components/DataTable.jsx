@@ -212,7 +212,7 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
                           event.stopPropagation()
                           toggleExpandedRow(rowKey)
                         }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded border border-slate-300 bg-white text-sm font-semibold leading-none text-slate-700 hover:bg-slate-50"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold leading-none text-slate-700 shadow-sm hover:border-taptrack-gold hover:bg-slate-50"
                       >
                         {isExpanded ? '−' : '+'}
                       </button>
@@ -226,8 +226,8 @@ export default function DataTable({ columns, data, rows, loading, onRowClick, sh
                   </tr>
                   {isExpanded && (
                     <tr key={`${rowKey}-expanded`} className="bg-slate-50">
-                      <td colSpan={columns.length + (addActionsColumn ? 1 : 0) + (expandable ? 1 : 0)} className="border-b border-slate-200 px-3 py-3 sm:px-5">
-                        <div className="text-xs text-slate-700 sm:text-sm">{renderExpandedRow?.(row)}</div>
+                      <td colSpan={columns.length + (addActionsColumn ? 1 : 0) + (expandable ? 1 : 0)} className="border-b border-slate-200 px-3 py-2 sm:px-5">
+                        <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-700 sm:text-sm">{renderExpandedRow?.(row)}</div>
                       </td>
                     </tr>
                   )}

@@ -115,8 +115,8 @@ export default function ActivityDetailModal({ activity, onClose }) {
 
         <DetailSection icon={FileText} title="Description and Instructions">
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4"><h4 className="text-xs font-semibold uppercase text-slate-500">Description</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{displayActivity.description || 'No description recorded.'}</p></div>
-            <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4"><h4 className="text-xs font-semibold uppercase text-slate-500">Instructions</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{displayActivity.instructions || 'No instructions recorded.'}</p></div>
+            <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4"><h4 className="text-xs font-semibold uppercase text-slate-500">Description</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{displayActivity.description || 'No description provided'}</p></div>
+            <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4"><h4 className="text-xs font-semibold uppercase text-slate-500">Instructions</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{displayActivity.instructions || 'No instructions provided'}</p></div>
           </div>
         </DetailSection>
 

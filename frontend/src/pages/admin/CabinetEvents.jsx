@@ -111,16 +111,19 @@ export default function CabinetEvents() {
     return <StatusBadge status={result} label={result} />
   }
 
-  const formatTimestamp = (value) => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
-  const formatDuration = (seconds) => seconds == null ? '—' : seconds < 60 ? `${seconds} sec` : `${Math.floor(seconds / 60)} min`
+  const formatTimestamp = (value, fallback = 'Not recorded') => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : fallback
+  const formatDuration = (seconds) => seconds == null ? 'Not recorded' : seconds < 60 ? `${seconds} sec` : `${Math.floor(seconds / 60)} min`
+  const formatParticipants = (participants) => Array.isArray(participants) && participants.length
+    ? participants.map((participant) => participant.fullName).filter(Boolean).join(', ')
+    : 'No participants recorded'
 
   const columns = [
     { key: 'id', label: 'Session ID', className: 'w-[8%]', render: (value) => `#${value}` },
     { key: 'station', label: 'Station', className: 'w-[10%]' },
-    { key: 'session_initiator', label: 'Initiator', className: 'w-[15%]', render: (value) => value?.fullName || 'Not recorded' },
-    { key: 'closing_initiator', label: 'Closing initiator', className: 'w-[15%]', render: (value) => value?.fullName || 'Not recorded' },
-    { key: 'opened_at', label: 'Opened', className: 'w-[12%]', render: formatTimestamp },
-    { key: 'closed_at', label: 'Closed', className: 'w-[12%]', render: formatTimestamp },
+    { key: 'opened_by', label: 'Opened by', className: 'w-[15%]', render: (_value, row) => row.opened_by?.length ? formatParticipants(row.opened_by) : (row.session_initiator?.fullName || 'Identity not recorded') },
+    { key: 'closed_by', label: 'Closed by', className: 'w-[15%]', render: (_value, row) => row.closed_by?.length ? formatParticipants(row.closed_by) : (row.status === 'open' ? 'Not closed yet' : 'Identity not recorded') },
+    { key: 'opened_at', label: 'Opening time', className: 'w-[12%]', render: (value) => formatTimestamp(value) },
+    { key: 'closed_at', label: 'Closing time', className: 'w-[12%]', render: (value, row) => formatTimestamp(value, row.status === 'open' ? 'Session still active' : 'Not recorded') },
     { key: 'duration_seconds', label: 'Duration', className: 'w-[8%]', render: formatDuration },
     { key: 'participant_count', label: 'Participants', className: 'w-[8%]' },
     { key: 'status', label: 'Status', className: 'w-[8%]', render: (value) => <StatusBadge status={value === 'open' ? 'Active' : 'Completed'} label={value === 'open' ? 'Active' : 'Completed'} /> },
