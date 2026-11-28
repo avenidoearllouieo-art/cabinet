@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { getDjangoAccessLogEventId } from './services/accessLogPhoto'
 import { isSessionMember, recordClosingAttendance } from './services/cabinetAttendance'
 import { motorDispatchStatus } from './utils/motorDispatchStatus.js'
 import {
@@ -20,7 +19,6 @@ import {
 import {
   cancelEnrollmentRegistration,
   cancelPasswordRecovery,
-  captureAccessLogPhoto,
   fetchCabinetWorkflow,
   fetchNfcServiceStatus,
   fetchPasswordRecoveryBridgeStatus,
@@ -36,7 +34,6 @@ import './kiosk.css'
 import './touchscreen.css'
 import './kiosk-layout.css'
 
-const NFC_SCAN_CURSOR_KEY = 'taptrack_cabinet_nfc_scan_cursor'
 const SCAN_BRIDGE_POLL_INTERVAL_MS = 750
 const RECOVERY_STATUS_POLL_INTERVAL_MS = 2000
 const ENROLLMENT_STATUS_POLL_INTERVAL_MS = 2000
@@ -64,15 +61,6 @@ function formatSessionTime(date) {
 
 function getParticipantCount(session) {
   return session?.opened_by?.length || session?.openedByStudentIds?.length || session?.openedByUids?.length || 0
-}
-
-function loadNfcScanCursor() {
-  try {
-    const cursor = Number.parseInt(localStorage.getItem(NFC_SCAN_CURSOR_KEY) || '0', 10)
-    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0
-  } catch {
-    return 0
-  }
 }
 
 function normalizeServerSession(session) {
@@ -186,7 +174,6 @@ export default function App() {
   const [recoveryMessage, setRecoveryMessage] = useState('')
   const [recoveryError, setRecoveryError] = useState('')
   const [accessState, setAccessState] = useState({ status: 'idle', name: '', studentId: '', role: '', message: '', registrationUrl: '' })
-  const nfcScanCursorRef = useRef(loadNfcScanCursor())
   const participantsByUidRef = useRef(new Map())
   const closingParticipantsRef = useRef([])
   const bridgePollingRef = useRef(false)
@@ -451,35 +438,39 @@ export default function App() {
     return () => window.clearTimeout(timeoutId)
   }, [view, recoveryPhase])
 
-  const requestScanPhotoCapture = useCallback((event) => {
-    const eventId = getDjangoAccessLogEventId(event)
-    if (!eventId) return
-    captureAccessLogPhoto(eventId).catch(() => {})
-  }, [])
-
   useEffect(() => {
     let cancelled = false
-    fetchCabinetWorkflow()
-      .then((data) => {
+    let retryTimer
+    let startupError
+
+    const loadStations = async () => {
+      try {
+        const data = await fetchCabinetWorkflow()
         if (cancelled) return
-        const stations = (data.stations || []).map((item) => item.name)
         setReaderContext({
           mode: data.mode,
           cabinetName: data.cabinet_name,
-          stations,
+          stations: (data.stations || []).map((item) => item.name),
         })
         const sessions = (data.stations || []).map((item) => normalizeServerSession(item.session)).filter(Boolean)
         setCabinetState({ sessions })
         setWorkflowLoaded(true)
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setBridgeConnectionStatus('unavailable')
-          setErrorMessage(error.message || 'NFC bridge unavailable. Check the NFC service connection.')
-          setWorkflowLoaded(true)
-        }
-      })
-    return () => { cancelled = true }
+        if (startupError) setErrorMessage((current) => current === startupError ? '' : current)
+      } catch (error) {
+        if (cancelled) return
+        startupError = error.message || 'NFC bridge unavailable. Check the NFC service connection.'
+        setBridgeConnectionStatus('unavailable')
+        setErrorMessage(startupError)
+        setWorkflowLoaded(true)
+        retryTimer = window.setTimeout(loadStations, SCAN_BRIDGE_POLL_INTERVAL_MS)
+      }
+    }
+
+    void loadStations()
+    return () => {
+      cancelled = true
+      window.clearTimeout(retryTimer)
+    }
   }, [])
 
   useEffect(() => {
@@ -487,12 +478,13 @@ export default function App() {
 
     let cancelled = false
     let pauseAfterDecision = false
+    let scanCursor = null
     const processScanEvent = (event) => {
       const eventId = Number(event?.event_id)
       if (!Number.isSafeInteger(eventId) || eventId < 1) {
         throw new Error('NFC bridge returned an invalid event ID.')
       }
-      if (eventId <= nfcScanCursorRef.current) return
+      if (eventId <= scanCursor) return
 
       const uid = String(event.uid || '').trim()
       if (!uid) throw new Error(`NFC event ${eventId} is missing its UID.`)
@@ -600,14 +592,7 @@ export default function App() {
         throw new Error(`NFC event ${eventId} has an unsupported status.`)
       }
 
-      requestScanPhotoCapture(event)
-
-      nfcScanCursorRef.current = eventId
-      try {
-        localStorage.setItem(NFC_SCAN_CURSOR_KEY, String(eventId))
-      } catch (error) {
-        console.warn('Unable to persist NFC scan cursor.', error)
-      }
+      scanCursor = eventId
     }
 
     const pollScanBridge = async () => {
@@ -619,9 +604,17 @@ export default function App() {
       try {
         let hasMore = true
         while (hasMore && !cancelled) {
-          const previousCursor = nfcScanCursorRef.current
+          const previousCursor = scanCursor
           const batch = await fetchScanEvents(previousCursor, { signal: controller.signal })
           if (cancelled) return
+          if (previousCursor === null) {
+            if (batch.events.length !== 0 || batch.has_more || batch.next_cursor < 0) {
+              throw new Error('NFC bridge did not establish a fresh scan cursor.')
+            }
+            scanCursor = batch.next_cursor
+            setBridgeConnectionStatus('connected')
+            continue
+          }
           setBridgeConnectionStatus('connected')
           if (batch.has_more && batch.events.length === 0) {
             throw new Error('NFC bridge reported more events but returned none.')
@@ -644,12 +637,13 @@ export default function App() {
           }
           if (pauseAfterDecision) break
           hasMore = batch.has_more
-          if (hasMore && nfcScanCursorRef.current <= previousCursor) {
+          if (hasMore && scanCursor <= previousCursor) {
             throw new Error('NFC bridge did not advance its event cursor.')
           }
         }
       } catch (error) {
         if (!cancelled && !controller.signal.aborted) {
+          scanCursor = null
           const message = error.message || 'NFC bridge unavailable. Check the NFC service connection.'
           setBridgeConnectionStatus('unavailable')
           setErrorMessage(message)
@@ -675,7 +669,7 @@ export default function App() {
       window.clearInterval(intervalId)
       bridgeAbortControllerRef.current?.abort()
     }
-  }, [view, selectedSession, requestScanPhotoCapture])
+  }, [view, selectedSession])
 
   useEffect(() => {
     if (view !== 'status-screen') return undefined

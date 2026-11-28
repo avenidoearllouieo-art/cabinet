@@ -1,3 +1,4 @@
+import email.message
 import json
 import hashlib
 import http.client
@@ -1613,7 +1614,19 @@ class NFCBridgeHTTPTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 403)
                 workflow.assert_not_called()
 
+    def test_boot_clock_step_before_first_request_does_not_latch_ingress(self):
+        with patch('workflow_timing.time.time', return_value=time.time() - 20):
+            self.service.workflow_clock = WorkflowIngressClock()
+        with patch.object(self.service.verifier, 'workflow', create=True, return_value=(200, {})) as workflow:
+            status, _ = self.post_json('/cabinet/workflow', {'command': 'open', 'station': 'Station 1'})
+        self.assertEqual(status, 200)
+        workflow.assert_called_once()
+
     def test_clock_step_latches_ingress_closed(self):
+        initial_headers = email.message.Message()
+        initial_headers[INGRESS_AGE_HEADER] = '0.000'
+        initial_headers[INGRESS_FORWARDED_AT_HEADER] = f'{time.time():.3f}'
+        self.service.workflow_clock.deadline(initial_headers)
         payload = {'command': 'finish_open', 'station': 'Station 1'}
         with patch.object(self.service.verifier, 'workflow', create=True) as workflow:
             with patch('workflow_timing.time.time', return_value=time.time() - 1):
@@ -1980,28 +1993,26 @@ class NFCBridgeHTTPTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 400)
         raised.exception.close()
 
-    def test_photo_capture_endpoint_requires_a_valid_django_event_id(self):
-        class PhotoCapture:
-            def __init__(self):
-                self.event_ids = []
+    def test_old_photo_requests_never_initiate_capture(self):
+        with patch.object(self.service, 'capture_access_log_photo') as capture:
+            for event_id in (714, 714, True):
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    self.post_json('/photo/capture', {'event_id': event_id})
+                self.assertEqual(raised.exception.code, 410)
+                raised.exception.close()
+            capture.assert_not_called()
 
-            def capture(self, event_id):
-                self.event_ids.append(event_id)
-                return True
-
-        photo_capture = PhotoCapture()
-        self.service.photo_capture = photo_capture
-
-        status, captured = self.post_json('/photo/capture', {'event_id': 714})
-        self.assertEqual(status, 200)
-        self.assertEqual(captured, {'success': True, 'event_id': 714})
-        self.assertEqual(photo_capture.event_ids, [714])
-
-        with self.assertRaises(urllib.error.HTTPError) as raised:
-            self.post_json('/photo/capture', {'event_id': True})
-        self.assertEqual(raised.exception.code, 400)
-        raised.exception.close()
-        self.assertEqual(photo_capture.event_ids, [714])
+    def test_scan_tail_establishes_watermark_without_returning_history(self):
+        event = {'uid': 'SYNTHETIC-UID', 'timestamp': '2026-10-01T00:00:00+00:00',
+                 'status': 'registered'}
+        old_id = self.store.append(event)
+        _, _, tail = self.get_json('/api/scans?tail=1')
+        self.assertEqual(tail, {'events': [], 'next_cursor': old_id, 'has_more': False})
+        new_id = self.store.append(event)
+        _, _, later = self.get_json(f'/api/scans?after={old_id}')
+        self.assertEqual([item['event_id'] for item in later['events']], [new_id])
+        _, _, history = self.get_json('/api/scans?after=0')
+        self.assertEqual([item['event_id'] for item in history['events']], [old_id, new_id])
 
     def test_api_scans_returns_events_in_order_and_bounds_limit(self):
         for index in range(205):

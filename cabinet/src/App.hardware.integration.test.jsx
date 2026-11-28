@@ -99,6 +99,70 @@ describe('Cabinet motor dispatch reporting', () => {
 })
 
 describe('Cabinet real NFC bridge mode', () => {
+  it('loads stations after the bridge comes online without a workflow write', async () => {
+    let reads = 0
+    const fetcher = vi.fn(async (url) => {
+      const requestUrl = new URL(String(url))
+      if (requestUrl.pathname.endsWith('/cabinet/workflow')) {
+        reads += 1
+        if (reads === 1) return new Response('{}', { status: 503 })
+        return new Response(JSON.stringify({
+          mode: 'hardware', stations: [{ name: 'Station 1', status: 'available', session: null }],
+        }))
+      }
+      return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    render(<App />)
+    expect(await screen.findByText(/Station status unavailable/)).toBeTruthy()
+    expect(await screen.findByText('STATION 1', {}, { timeout: 3000 })).toBeTruthy()
+    expect(fetcher.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
+  it('ignores a replayed enrolled card when starting a new group', async () => {
+    let scanning = false
+    let replayed = false
+    let tapped = false
+    const scan = { event_id: 49, status: 'registered', uid: 'OLD-CARD', name: 'Historical Student',
+      student_id: 'OLD-49', role: 'student', django_response: { event_id: 4001 } }
+    const fetcher = vi.fn(async (url, options) => {
+      const requestUrl = new URL(String(url))
+      let payload
+      if (requestUrl.pathname.endsWith('/cabinet/workflow')) {
+        if (options.method === 'POST') {
+          scanning = true
+          payload = { mode: 'hardware', station: 'Station 1',
+            session: { id: 1, station: 'Station 1', status: 'open', workflow_state: 'opening', opened_by: [], closed_by: [] } }
+        } else {
+          payload = { mode: 'hardware', stations: [{ name: 'Station 1', status: 'available', session: null }] }
+        }
+      } else {
+        const sendReplay = scanning && requestUrl.searchParams.get('after') === '49'
+        replayed ||= sendReplay
+        payload = {
+          events: sendReplay
+            ? [scan, ...(tapped ? [{ ...scan, event_id: 50, uid: 'NEW-CARD', name: 'Fresh Student', student_id: 'NEW-50' }] : [])]
+            : [],
+          next_cursor: tapped ? 50 : 49, has_more: false,
+        }
+      }
+      return new Response(JSON.stringify(payload))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: /open cabinet/i }))
+    await user.click((await screen.findByText('STATION 1')).closest('button'))
+    await waitFor(() => expect(replayed).toBe(true), { timeout: 3000 })
+    expect(screen.queryByText('Historical Student')).toBeNull()
+    expect(screen.getByText('Participants scanned: 0')).toBeTruthy()
+    tapped = true
+    expect(await screen.findByText('Participants scanned: 1', {}, { timeout: 3000 })).toBeTruthy()
+    expect(screen.queryByText('Historical Student')).toBeNull()
+    expect(screen.getAllByText('Fresh Student').length).toBeGreaterThan(0)
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/photo/capture'))).toBe(false)
+  })
+
   it('shows bridge unavailability and never renders mock UID controls', async () => {
     const fetcher = vi.fn(async (url) => {
       const requestUrl = String(url)
@@ -146,7 +210,11 @@ describe('Cabinet real NFC bridge mode', () => {
         throw new TypeError('Failed to fetch')
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       throw new Error(`Unexpected request: ${requestUrl}`)
@@ -197,7 +265,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       throw new Error(`Unexpected request: ${requestUrl}`)
@@ -256,7 +328,11 @@ describe('Cabinet real NFC bridge mode', () => {
           student_id: 'HW-001',
           role: 'student',
         }]
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({
           events,
           next_cursor: events.length ? 1 : after,
@@ -323,7 +399,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({
           events: [],
           next_cursor: after,
@@ -388,7 +468,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       throw new Error(`Unexpected request: ${requestUrl}`)
@@ -472,7 +556,11 @@ describe('Cabinet real NFC bridge mode', () => {
         throw new Error(`Unexpected workflow command: ${request.command}`)
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         const events = closeWorkflowStarted && !memberScanned ? [{
           event_id: 2,
           uid: openingMember.uid,
@@ -526,7 +614,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
@@ -609,7 +701,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
@@ -665,7 +761,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       if (requestUrl === 'http://localhost:3000/nfc-bridge/password-reset/queue') {
@@ -728,7 +828,11 @@ describe('Cabinet real NFC bridge mode', () => {
         }), { status: 200 })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) {
+          return new Response(JSON.stringify({ events: [], next_cursor: 0, has_more: false }), { status: 200 })
+        }
+        const after = Number(params.get('after'))
         return new Response(JSON.stringify({ events: [], next_cursor: after, has_more: false }), { status: 200 })
       }
       throw new Error(`Unexpected request: ${requestUrl}`)

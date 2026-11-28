@@ -267,6 +267,10 @@ def create_motor_controller() -> MockMotorController | SerialMotorController:
                 or os.environ.get('TAPTRACK_CABINET_WORKFLOW_INGRESS_VERIFIED') != 'true'):
             raise RuntimeError('Motor actuation requires a verified authenticated Cabinet workflow ingress and proxy token.')
 
+    return create_serial_motor_controller()
+
+
+def create_serial_motor_controller() -> SerialMotorController:
     device = os.environ.get('TAPTRACK_MOTOR_SERIAL_DEVICE', '').strip()
     device_id = device.removeprefix('/dev/serial/by-id/')
     if (
@@ -967,6 +971,10 @@ class SQLiteScanEventStore:
                 json.dumps(event.get('django_response', {}), separators=(',', ':')),
             ))
             return int(cursor.lastrowid)
+
+    def latest_scan_id(self) -> int:
+        with self._lock, self._connection() as connection:
+            return connection.execute('SELECT COALESCE(MAX(event_id), 0) FROM scan_events').fetchone()[0]
 
     def list_after(self, after: int, limit: int) -> tuple[list[dict], bool]:
         with self._lock, self._connection() as connection:
@@ -2032,6 +2040,14 @@ class NFCHandler(BaseHTTPRequestHandler):
             return
 
         parameters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        if 'tail' in parameters:
+            if parameters != {'tail': ['1']}:
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': 'Use tail=1 without other scan parameters.'})
+                return
+            self._send_json(HTTPStatus.OK, {
+                'events': [], 'next_cursor': self.server.store.latest_scan_id(), 'has_more': False,
+            })
+            return
         try:
             after_values = parameters.get('after', ['0'])
             limit_values = parameters.get('limit', [str(DEFAULT_LIMIT)])
@@ -2113,20 +2129,9 @@ class NFCHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.CONFLICT, {'error': sanitize_error(error)})
             return
         if path == '/photo/capture':
-            try:
-                length = int(self.headers.get('Content-Length', '0'))
-                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
-                event_id = payload.get('event_id')
-                if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {'success': False, 'error': 'A valid access event ID is required.'})
-                    return
-                if service.photo_capture is None:
-                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {'success': False, 'event_id': event_id})
-                    return
-                captured = service.capture_access_log_photo(event_id)
-                self._send_json(HTTPStatus.OK, {'success': captured, 'event_id': event_id})
-            except (ValueError, json.JSONDecodeError):
-                self._send_json(HTTPStatus.BAD_REQUEST, {'success': False, 'error': 'Invalid photo capture payload.'})
+            # Older kiosks can still send replayed log IDs. Only a live scan initiates capture.
+            self.close_connection = True
+            self._send_json(HTTPStatus.GONE, {'success': False, 'error': 'Photos are captured by live scans.'})
             return
         if path == '/cabinet/workflow':
             supplied_tokens = self.headers.get_all(WORKFLOW_PROXY_HEADER, [])

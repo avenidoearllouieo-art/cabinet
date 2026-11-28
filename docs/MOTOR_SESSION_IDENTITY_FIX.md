@@ -147,6 +147,9 @@ generic bridge traffic.
 
 ## Authenticated Cabinet workflow ingress
 
+For the d4b64de startup correction and separate unloaded motor procedure, see
+[the targeted kiosk and bench runbook](TAPTRACK_STARTUP_AND_BENCH_REPAIR.md).
+
 All `POST /cabinet/workflow` requests require a credential injected by the
 authenticated local reverse proxy, one allowed browser Origin, and a JSON object
 body. Inspecting an Origin or the source address alone cannot authenticate a caller.

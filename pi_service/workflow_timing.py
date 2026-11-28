@@ -1,6 +1,7 @@
 """Convert trusted, same-host Nginx timestamps into a local monotonic deadline."""
 
 import re
+import threading
 import time
 
 
@@ -32,28 +33,32 @@ def _read_seconds(headers, name: str) -> float:
 
 class WorkflowIngressClock:
     def __init__(self):
-        self._monotonic_start = time.monotonic()
-        self._wall_start = time.time()
-        self._clock_fault = time.monotonic() - self._monotonic_start > MAX_CLOCK_SAMPLE_SECONDS
+        self._baseline = None
+        self._clock_fault = False
+        self._lock = threading.Lock()
 
     def deadline(self, headers) -> float:
         # Only call after validating the loopback proxy's independent credential.
         age = _read_seconds(headers, INGRESS_AGE_HEADER)
         forwarded_at = _read_seconds(headers, INGRESS_FORWARDED_AT_HEADER)
-        monotonic_now = time.monotonic()
-        wall_now = time.time()
-        if self._clock_fault or time.monotonic() - monotonic_now > MAX_CLOCK_SAMPLE_SECONDS:
-            raise IngressTimingError('Workflow clock is unavailable.')
-        wall_shift = (wall_now - self._wall_start) - (monotonic_now - self._monotonic_start)
-        if abs(wall_shift) > MAX_CLOCK_SHIFT_SECONDS:
-            self._clock_fault = True
-            raise IngressTimingError('Workflow clock changed. Operator verification and restart required.')
+        with self._lock:
+            monotonic_now = time.monotonic()
+            wall_now = time.time()
+            if self._clock_fault or time.monotonic() - monotonic_now > MAX_CLOCK_SAMPLE_SECONDS:
+                raise IngressTimingError('Workflow clock is unavailable.')
+            offset = wall_now - monotonic_now
+            if self._baseline is not None and abs(offset - self._baseline) > MAX_CLOCK_SHIFT_SECONDS:
+                self._clock_fault = True
+                raise IngressTimingError('Workflow clock changed. Operator verification and restart required.')
 
-        transit = wall_now - forwarded_at
-        if forwarded_at < 1_500_000_000 or age >= forwarded_at or transit < -MAX_CLOCK_SHIFT_SECONDS:
-            raise IngressTimingError('Implausible workflow proxy timing.')
-        elapsed = age + max(0.0, transit) + CLOCK_GUARD_SECONDS
-        remaining = WORKFLOW_DISPATCH_SECONDS - elapsed
-        if remaining <= 0:
-            raise IngressExpired('Workflow expired before dispatch.')
-        return monotonic_now + remaining
+            transit = wall_now - forwarded_at
+            if forwarded_at < 1_500_000_000 or age >= forwarded_at or transit < -MAX_CLOCK_SHIFT_SECONDS:
+                raise IngressTimingError('Implausible workflow proxy timing.')
+            elapsed = age + max(0.0, transit) + CLOCK_GUARD_SECONDS
+            remaining = WORKFLOW_DISPATCH_SECONDS - elapsed
+            if remaining <= 0:
+                raise IngressExpired('Workflow expired before dispatch.')
+            # Establish the baseline on a valid request, after the deployed boot time-sync gate.
+            if self._baseline is None:
+                self._baseline = offset
+            return monotonic_now + remaining

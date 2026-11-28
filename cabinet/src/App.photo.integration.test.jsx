@@ -56,7 +56,9 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false,
       return jsonResponse({ status: enrollmentStatus })
     }
     if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-      const after = Number(new URL(requestUrl).searchParams.get('after'))
+      const params = new URL(requestUrl).searchParams
+      if (params.has('tail')) return jsonResponse({ events: [], next_cursor: 0, has_more: false })
+      const after = Number(params.get('after'))
       const events = workflowStarted && after < 1
         ? [{
           event_id: 1,
@@ -77,10 +79,6 @@ function createFetchForStation(station, djangoEventId, { photoAvailable = false,
         next_cursor: events.length ? 1 : after,
         has_more: false,
       })
-    }
-    if (requestUrl === 'http://localhost:3000/nfc-bridge/photo/capture') {
-      const request = JSON.parse(options.body)
-      return jsonResponse({ success: true, event_id: request.event_id })
     }
     if (requestUrl === `/api/access-logs/${djangoEventId}/photo/`) {
       if (photoAvailable) {
@@ -155,7 +153,9 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
       })
     }
     if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-      const after = Number(new URL(requestUrl).searchParams.get('after'))
+      const params = new URL(requestUrl).searchParams
+      if (params.has('tail')) return jsonResponse({ events: [], next_cursor: 0, has_more: false })
+      const after = Number(params.get('after'))
       const events = closingStarted && after < 1
         ? [{
           event_id: 1,
@@ -172,10 +172,6 @@ function createFetchForCloseStation(djangoEventId, memberUid) {
         next_cursor: events.length ? 1 : after,
         has_more: false,
       })
-    }
-    if (requestUrl === 'http://localhost:3000/nfc-bridge/photo/capture') {
-      const request = JSON.parse(options.body)
-      return jsonResponse({ success: true, event_id: request.event_id })
     }
     if (requestUrl === `/api/access-logs/${djangoEventId}/photo/`) {
       return jsonResponse({ error: 'Photo service unavailable.' }, 503)
@@ -208,16 +204,10 @@ describe('Cabinet photo scan integration', () => {
     expect(await screen.findByText('Participants scanned: 1')).toBeTruthy()
     expect(screen.queryByText('Photo Captured')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
-      'http://localhost:3000/nfc-bridge/photo/capture',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ event_id: djangoEventId }),
-      }),
-    ))
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/photo/capture'))).toBe(false)
   })
 
-  it('captures the cabinet-opening scan event and refreshes the image display', async () => {
+  it('leaves capture to the Pi during cabinet opening', async () => {
     const djangoEventId = 4303
     const fetcher = createFetchForStation('Station 1', djangoEventId, { photoAvailable: true })
     vi.stubGlobal('fetch', fetcher)
@@ -228,10 +218,7 @@ describe('Cabinet photo scan integration', () => {
     await user.click(screen.getByText('STATION 1').closest('button'))
 
     expect(screen.queryByText('Photo Captured')).toBeNull()
-    expect(fetcher).toHaveBeenCalledWith(
-      'http://localhost:3000/nfc-bridge/photo/capture',
-      expect.objectContaining({ body: JSON.stringify({ event_id: djangoEventId }) }),
-    )
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/photo/capture'))).toBe(false)
   })
 
   it('reports open workflow completion without claiming physical movement', async () => {
@@ -295,7 +282,9 @@ describe('Cabinet photo scan integration', () => {
         })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) return jsonResponse({ events: [], next_cursor: 0, has_more: false })
+        const after = Number(params.get('after'))
         const events = workflowStarted && after < 1
           ? [{
             event_id: 1,
@@ -308,7 +297,6 @@ describe('Cabinet photo scan integration', () => {
           : []
         return jsonResponse({ events, next_cursor: events.length ? 1 : after, has_more: false })
       }
-      if (requestUrl === 'http://localhost:3000/nfc-bridge/photo/capture') return jsonResponse({ success: true, event_id: 5101 })
       if (requestUrl === '/api/access-logs/5101/photo/') return jsonResponse({ error: 'Photo unavailable.' }, 503)
       throw new Error(`Unexpected Cabinet integration request: ${url}`)
     })
@@ -376,7 +364,9 @@ describe('Cabinet photo scan integration', () => {
         return jsonResponse({ mode: 'hardware', station: 'Station 2', session })
       }
       if (requestUrl.startsWith('http://localhost:3000/nfc-bridge/api/scans')) {
-        const after = Number(new URL(requestUrl).searchParams.get('after'))
+        const params = new URL(requestUrl).searchParams
+        if (params.has('tail')) return jsonResponse({ events: [], next_cursor: 0, has_more: false })
+        const after = Number(params.get('after'))
         const events = closingStarted && after < 1
           ? [{
             event_id: 1,
@@ -390,7 +380,6 @@ describe('Cabinet photo scan integration', () => {
           : []
         return jsonResponse({ events, next_cursor: events.length ? 1 : after, has_more: false })
       }
-      if (requestUrl === 'http://localhost:3000/nfc-bridge/photo/capture') return jsonResponse({ success: true, event_id: 6202 })
       if (requestUrl === '/api/access-logs/6202/photo/') return jsonResponse({ error: 'Photo service unavailable.' }, 503)
       throw new Error(`Unexpected Cabinet integration request: ${url}`)
     })

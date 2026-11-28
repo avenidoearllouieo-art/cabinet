@@ -86,7 +86,13 @@ class ProxyTests(unittest.TestCase):
         port = self.rig.server.server_address[1]
         route = (DEPLOY / 'nginx-workflow-ingress.conf').read_text()
         route = route.replace(':5001/', f':{port}/')
-        route = route.replace('/etc/taptrack/nginx/kiosk.htpasswd', f'"{password_file.as_posix()}"')
+        access = (DEPLOY / 'nginx-kiosk-access.conf').read_text()
+        access = access.replace('/etc/taptrack/nginx/kiosk.htpasswd', f'"{password_file.as_posix()}"')
+        (self.root / 'kiosk-access.conf').write_text(access)
+        site = self.root / 'site'
+        site.mkdir()
+        (site / 'index.html').write_text('Cabinet fixture')
+        route = route.replace('/etc/taptrack/nginx/kiosk-access.conf', 'kiosk-access.conf')
         route = route.replace('/etc/taptrack/nginx/workflow-proxy-header.conf', f'"{token_file.as_posix()}"')
         (self.root / 'workflow.conf').write_text(route)
         template = (DEPLOY / 'nginx.conf').read_text()
@@ -117,6 +123,10 @@ http {{
     server {{
         listen 127.0.0.1:{self.https_port} ssl;
         server_name 127.0.0.1;
+        location / {{
+            include kiosk-access.conf;
+            root "{site.as_posix()}";
+        }}
         include workflow.conf;
         {generic}
     }}
@@ -150,16 +160,19 @@ http {{
             self.process.terminate()
             self.process.wait(timeout=10)
 
-    def post(self, path='/nfc-bridge/cabinet/workflow', *, auth=True, tls=True, extra=None, buffer_for=0):
+    def post(self, path='/nfc-bridge/cabinet/workflow', *, auth=True, tls=True, extra=None, buffer_for=0, local=False):
         body = json.dumps({'command': 'finish_open', 'station': 'Station 1'}).encode()
         headers = {'Origin': self.origin, 'Content-Type': 'application/json', 'Content-Length': str(len(body))}
         if auth:
             headers['Authorization'] = self.auth
         headers.update(extra or {})
+        source_address = ('127.0.0.1' if local else '127.0.0.2', 0)
         if tls:
-            client = http.client.HTTPSConnection('127.0.0.1', self.https_port, context=self.context, timeout=22)
+            client = http.client.HTTPSConnection('127.0.0.1', self.https_port, context=self.context, timeout=22,
+                                                 source_address=source_address)
         else:
-            client = http.client.HTTPConnection('127.0.0.1', self.http_port, timeout=5)
+            client = http.client.HTTPConnection('127.0.0.1', self.http_port, timeout=5,
+                                                source_address=source_address)
         try:
             client.putrequest('POST', path, skip_host='Host' in headers)
             for name, value in headers.items():
@@ -198,6 +211,30 @@ http {{
         status, body = self.post()
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)['motor_dispatch']['dispatch_skipped'])
+        self.assertEqual(self.command_count(), 1)
+
+    def test_kiosk_page_at_cold_start_is_available_without_a_basic_prompt(self):
+        for peer, expected in (('127.0.0.1', 200), ('127.0.0.2', 401)):
+            with self.subTest(peer=peer):
+                client = http.client.HTTPSConnection(
+                    '127.0.0.1', self.https_port, context=self.context,
+                    source_address=(peer, 0), timeout=5,
+                )
+                try:
+                    client.request('GET', '/')
+                    response = client.getresponse()
+                    self.assertEqual(response.status, expected)
+                    self.assertEqual('WWW-Authenticate' in response.headers, expected == 401)
+                finally:
+                    client.close()
+        self.assertEqual(self.command_count(), 0)
+
+    def test_loopback_kiosk_needs_no_basic_prompt_but_keeps_trusted_origin(self):
+        self.assertEqual(self.post(auth=False, local=True, extra={'Origin': 'https://untrusted.invalid'})[0], 403)
+        self.assertEqual(self.command_count(), 0)
+        status, body = self.post(auth=False, local=True)
+        self.assertEqual(status, 200, body)
+        self.assertIs(json.loads(body)['motor_dispatch']['serial_command_sent'], True)
         self.assertEqual(self.command_count(), 1)
 
     def test_unauthorized_alternate_routes_never_inject_trusted_headers(self):

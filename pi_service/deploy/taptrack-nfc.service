@@ -1,6 +1,6 @@
 [Unit]
 Description=TapTrack NFC reader and scan bridge
-After=network-online.target
+After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
